@@ -95,8 +95,14 @@ class ASPNetDIPlugin(FrameworkPlugin):
         layer_assignments: dict[str, str] = {}
         warnings: list[str] = []
 
+        # Build name -> FQN index for O(1) lookups
+        name_to_fqn: dict[str, str] = {}
+        for node in graph.nodes.values():
+            if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+                name_to_fqn[node.name] = node.fqn
+
         # Phase 1: Collect DI registrations from Program/Startup class nodes
-        registrations = self._collect_registrations(graph)
+        registrations = self._collect_registrations(graph, name_to_fqn)
         log.info("aspnet_di_registrations_found", count=len(registrations))
 
         # Phase 2: Create INJECTS edges for each registration
@@ -151,7 +157,9 @@ class ASPNetDIPlugin(FrameworkPlugin):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _collect_registrations(self, graph: SymbolGraph) -> list[_DIRegistration]:
+    def _collect_registrations(
+        self, graph: SymbolGraph, name_to_fqn: dict[str, str]
+    ) -> list[_DIRegistration]:
         """Scan all nodes for di_registrations property and resolve FQNs."""
         registrations: list[_DIRegistration] = []
 
@@ -178,25 +186,13 @@ class ASPNetDIPlugin(FrameworkPlugin):
                     method=method,
                 )
 
-                # Resolve FQNs by matching simple names against graph nodes
-                reg.interface_fqn = self._resolve_fqn(graph, interface_name)
-                reg.implementation_fqn = self._resolve_fqn(graph, impl_name)
+                # Resolve FQNs via pre-built index (O(1) per lookup)
+                reg.interface_fqn = name_to_fqn.get(interface_name)
+                reg.implementation_fqn = name_to_fqn.get(impl_name)
 
                 registrations.append(reg)
 
         return registrations
-
-    def _resolve_fqn(self, graph: SymbolGraph, simple_name: str) -> str | None:
-        """Find the FQN for a simple class/interface name in the graph."""
-        if not simple_name:
-            return None
-        for node in graph.nodes.values():
-            if node.name == simple_name and node.kind in (
-                NodeKind.CLASS,
-                NodeKind.INTERFACE,
-            ):
-                return node.fqn
-        return None
 
     def _classify_layers(
         self, graph: SymbolGraph, registrations: list[_DIRegistration]

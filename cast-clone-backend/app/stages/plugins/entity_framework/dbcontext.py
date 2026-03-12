@@ -21,9 +21,11 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.graph import GraphEdge, GraphNode
 from app.stages.plugins.base import (
     FrameworkPlugin,
+    LayerRule,
+    LayerRules,
     PluginDetectionResult,
     PluginResult,
 )
@@ -119,6 +121,13 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
         return PluginDetectionResult.not_detected()
 
+    def get_layer_classification(self) -> LayerRules:
+        return LayerRules(
+            rules=[
+                LayerRule(pattern="DbContext", layer="Data Access"),
+            ]
+        )
+
     async def extract(self, context: AnalysisContext) -> PluginResult:
         log = logger.bind(plugin=self.name)
         log.info("ef_extract_start")
@@ -128,6 +137,12 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         edges: list[GraphEdge] = []
         warnings: list[str] = []
         layer_assignments: dict[str, str] = {}
+
+        # Build name -> FQN index for O(1) lookups
+        name_to_fqn: dict[str, str] = {}
+        for node in graph.nodes.values():
+            if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+                name_to_fqn[node.name] = node.fqn
 
         # Step 1: Find all DbContext subclasses and their DbSet<T> registrations
         db_contexts: list[_DbContextInfo] = []
@@ -151,7 +166,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                 type_args = field_node.properties.get("type_args", [])
                 if "DbSet" in field_type and type_args:
                     entity_simple_name = type_args[0]
-                    entity_fqn = self._resolve_entity_fqn(graph, entity_simple_name)
+                    entity_fqn = name_to_fqn.get(entity_simple_name, entity_simple_name)
                     dbset_prop_name = field_node.name
                     ctx_info.entity_registrations[entity_simple_name] = (
                         entity_fqn,
@@ -347,19 +362,11 @@ class EntityFrameworkPlugin(FrameworkPlugin):
             warnings=warnings,
         )
 
-    def _resolve_entity_fqn(self, graph: SymbolGraph, simple_name: str) -> str:
-        """Resolve a simple entity name (e.g., 'User') to its full FQN in the graph."""
-        for fqn, node in graph.nodes.items():
-            if node.kind == NodeKind.CLASS and node.name == simple_name:
-                return fqn
-        # Fallback: return as-is
-        return simple_name
-
     def _is_collection_navigation(self, field_info: _FieldInfo) -> bool:
         """Check if a field is a collection navigation property (one-to-many)."""
         field_type = field_info.field_type
         for coll_type in _COLLECTION_TYPES:
-            if coll_type in field_type:
+            if field_type == coll_type or field_type.startswith(coll_type + "<"):
                 return True
         return False
 
