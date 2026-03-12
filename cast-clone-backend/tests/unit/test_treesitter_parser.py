@@ -10,6 +10,7 @@ from app.stages.treesitter.extractors import (
     register_extractor,
     clear_extractors,
 )
+from app.stages.treesitter.parser import get_language, get_parser
 
 
 class MockJavaExtractor:
@@ -62,3 +63,41 @@ class TestExtractorRegistry:
         register_extractor("java", MockJavaExtractor())
         clear_extractors()
         assert get_extractor("java") is None
+
+
+class TestGrammarLoading:
+    def test_load_java_language(self) -> None:
+        lang = get_language("java")
+        assert lang is not None
+
+    def test_load_python_language(self) -> None:
+        lang = get_language("python")
+        assert lang is not None
+
+    def test_load_typescript_language(self) -> None:
+        lang = get_language("typescript")
+        assert lang is not None
+
+    def test_load_csharp_language(self) -> None:
+        lang = get_language("csharp")
+        assert lang is not None
+
+    def test_load_javascript_uses_typescript_grammar(self) -> None:
+        lang = get_language("javascript")
+        assert lang is not None
+
+    def test_unknown_language_raises(self) -> None:
+        with pytest.raises(ValueError, match="No grammar for"):
+            get_language("brainfuck")
+
+    def test_language_is_cached(self) -> None:
+        lang1 = get_language("java")
+        lang2 = get_language("java")
+        assert lang1 is lang2
+
+    def test_get_parser_returns_parser(self) -> None:
+        parser = get_parser("java")
+        assert parser is not None
+        tree = parser.parse(b"public class Foo {}")
+        assert tree.root_node is not None
+        assert tree.root_node.type == "program"
