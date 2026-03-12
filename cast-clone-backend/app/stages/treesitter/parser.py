@@ -9,11 +9,16 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tree_sitter import Language, Parser
 
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.treesitter.extractors import get_extractor, registered_languages
 
 if TYPE_CHECKING:
@@ -63,6 +68,95 @@ def get_parser(name: str) -> Parser:
     return Parser(lang)
 
 
-async def parse_with_treesitter(manifest: "ProjectManifest") -> object:
-    """Parse all source files — full implementation in Task 3."""
-    raise NotImplementedError("parse_with_treesitter not yet implemented")
+def _parse_single_file(
+    file_path: str, language: str, root_path: str
+) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Parse a single source file using its language extractor.
+
+    This is a module-level function so it can be pickled for ProcessPoolExecutor.
+    Reads the file from disk, delegates to the registered extractor.
+    """
+    extractor = get_extractor(language)
+    if extractor is None:
+        return [], []
+    full_path = Path(root_path) / file_path
+    source = full_path.read_bytes()
+    return extractor.extract(source, file_path, root_path)
+
+
+def _resolve_symbols(graph: SymbolGraph) -> None:
+    """Post-parse global symbol resolution — implemented in Task 4."""
+    pass
+
+
+_SEQUENTIAL_THRESHOLD = 4
+
+
+async def parse_with_treesitter(manifest: "ProjectManifest") -> SymbolGraph:
+    """Parse all source files using tree-sitter and merge into a SymbolGraph.
+
+    For small file counts (<=4), parsing runs sequentially.
+    For larger counts, uses ProcessPoolExecutor for CPU-bound parallelism.
+    Errors in individual files are logged and skipped.
+    """
+    graph = SymbolGraph()
+    root_path = str(manifest.root_path)
+
+    # Filter to files with registered extractors
+    parseable_files: list[tuple[str, str]] = []
+    for sf in manifest.source_files:
+        if get_extractor(sf.language) is not None:
+            parseable_files.append((sf.path, sf.language))
+        else:
+            logger.debug("Skipping %s: no extractor for %s", sf.path, sf.language)
+
+    if not parseable_files:
+        return graph
+
+    if len(parseable_files) <= _SEQUENTIAL_THRESHOLD:
+        # Sequential execution for small file counts
+        for file_path, language in parseable_files:
+            try:
+                nodes, edges = _parse_single_file(file_path, language, root_path)
+                for node in nodes:
+                    graph.add_node(node)
+                for edge in edges:
+                    graph.add_edge(edge)
+            except Exception:
+                logger.warning(
+                    "Failed to parse %s, skipping", file_path, exc_info=True
+                )
+    else:
+        # Parallel execution via ProcessPoolExecutor
+        max_workers = min(os.cpu_count() or 1, len(parseable_files), 8)
+        loop = asyncio.get_running_loop()
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                loop.run_in_executor(
+                    executor, _parse_single_file, file_path, language, root_path
+                )
+                for file_path, language in parseable_files
+            ]
+            results = await asyncio.gather(*futures, return_exceptions=True)
+
+        for i, result in enumerate(results):
+            file_path = parseable_files[i][0]
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Failed to parse %s, skipping: %s", file_path, result
+                )
+                continue
+            nodes, edges = result
+            for node in nodes:
+                graph.add_node(node)
+            for edge in edges:
+                graph.add_edge(edge)
+
+    logger.info(
+        "Tree-sitter parsing complete: %d nodes, %d edges",
+        len(graph.nodes),
+        len(graph.edges),
+    )
+
+    _resolve_symbols(graph)
+    return graph

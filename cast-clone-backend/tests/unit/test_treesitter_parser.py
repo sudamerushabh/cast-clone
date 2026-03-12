@@ -1,5 +1,10 @@
 """Tests for the tree-sitter parser framework."""
 
+import asyncio
+from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from app.models.enums import EdgeKind, NodeKind, Confidence
@@ -10,7 +15,12 @@ from app.stages.treesitter.extractors import (
     register_extractor,
     clear_extractors,
 )
-from app.stages.treesitter.parser import get_language, get_parser
+from app.stages.treesitter.parser import (
+    _parse_single_file,
+    get_language,
+    get_parser,
+    parse_with_treesitter,
+)
 
 
 class MockJavaExtractor:
@@ -35,6 +45,22 @@ class MockJavaExtractor:
         ]
         edges: list[GraphEdge] = []
         return nodes, edges
+
+
+@dataclass
+class FakeSourceFile:
+    path: str
+    language: str
+    size_bytes: int = 100
+
+
+@dataclass
+class FakeManifest:
+    root_path: Path
+    source_files: list[FakeSourceFile]
+
+    def files_for_language(self, lang: str) -> list[FakeSourceFile]:
+        return [f for f in self.source_files if f.language == lang]
 
 
 class TestExtractorRegistry:
@@ -101,3 +127,133 @@ class TestGrammarLoading:
         tree = parser.parse(b"public class Foo {}")
         assert tree.root_node is not None
         assert tree.root_node.type == "program"
+
+
+class TestParseWithTreesitter:
+    def setup_method(self) -> None:
+        clear_extractors()
+
+    def teardown_method(self) -> None:
+        clear_extractors()
+
+    def test_empty_manifest_returns_empty_graph(self) -> None:
+        manifest = FakeManifest(root_path=Path("/tmp/project"), source_files=[])
+        graph = asyncio.get_event_loop().run_until_complete(
+            parse_with_treesitter(manifest)  # type: ignore[arg-type]
+        )
+        assert len(graph.nodes) == 0
+        assert len(graph.edges) == 0
+
+    def test_unknown_language_is_skipped(self) -> None:
+        manifest = FakeManifest(
+            root_path=Path("/tmp/project"),
+            source_files=[FakeSourceFile(path="main.rs", language="rust")],
+        )
+        graph = asyncio.get_event_loop().run_until_complete(
+            parse_with_treesitter(manifest)  # type: ignore[arg-type]
+        )
+        assert len(graph.nodes) == 0
+        assert len(graph.edges) == 0
+
+    def test_parses_files_with_registered_extractor(self) -> None:
+        register_extractor("java", MockJavaExtractor())
+        manifest = FakeManifest(
+            root_path=Path("/tmp/project"),
+            source_files=[
+                FakeSourceFile(path="src/Foo.java", language="java"),
+                FakeSourceFile(path="src/Bar.java", language="java"),
+            ],
+        )
+
+        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+            ext = get_extractor(language)
+            if ext is None:
+                return [], []
+            return ext.extract(b"// mock source", file_path, root_path)
+
+        with patch(
+            "app.stages.treesitter.parser._parse_single_file",
+            side_effect=mock_parse,
+        ):
+            graph = asyncio.get_event_loop().run_until_complete(
+                parse_with_treesitter(manifest)  # type: ignore[arg-type]
+            )
+
+        assert len(graph.nodes) == 2
+        fqns = set(graph.nodes.keys())
+        assert "com.example.Foo" in fqns
+        assert "com.example.Bar" in fqns
+
+    def test_multiple_languages(self) -> None:
+        class MockPythonExtractor:
+            def extract(
+                self, source: bytes, file_path: str, root_path: str
+            ) -> tuple[list[GraphNode], list[GraphEdge]]:
+                mod_name = file_path.split("/")[-1].replace(".py", "")
+                return [
+                    GraphNode(
+                        fqn=f"mypackage.{mod_name}",
+                        name=mod_name,
+                        kind=NodeKind.MODULE,
+                        language="python",
+                        path=file_path,
+                    )
+                ], []
+
+        register_extractor("java", MockJavaExtractor())
+        register_extractor("python", MockPythonExtractor())
+
+        manifest = FakeManifest(
+            root_path=Path("/tmp/project"),
+            source_files=[
+                FakeSourceFile(path="src/Foo.java", language="java"),
+                FakeSourceFile(path="lib/utils.py", language="python"),
+            ],
+        )
+
+        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+            ext = get_extractor(language)
+            if ext is None:
+                return [], []
+            return ext.extract(b"// mock", file_path, root_path)
+
+        with patch(
+            "app.stages.treesitter.parser._parse_single_file",
+            side_effect=mock_parse,
+        ):
+            graph = asyncio.get_event_loop().run_until_complete(
+                parse_with_treesitter(manifest)  # type: ignore[arg-type]
+            )
+
+        assert len(graph.nodes) == 2
+        assert "com.example.Foo" in graph.nodes
+        assert "mypackage.utils" in graph.nodes
+
+    def test_file_parse_error_is_skipped(self) -> None:
+        register_extractor("java", MockJavaExtractor())
+        manifest = FakeManifest(
+            root_path=Path("/tmp/project"),
+            source_files=[
+                FakeSourceFile(path="src/Good.java", language="java"),
+                FakeSourceFile(path="src/Bad.java", language="java"),
+            ],
+        )
+
+        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+            if "Bad" in file_path:
+                raise RuntimeError("Parse error in bad file")
+            ext = get_extractor(language)
+            if ext is None:
+                return [], []
+            return ext.extract(b"// mock", file_path, root_path)
+
+        with patch(
+            "app.stages.treesitter.parser._parse_single_file",
+            side_effect=mock_parse,
+        ):
+            graph = asyncio.get_event_loop().run_until_complete(
+                parse_with_treesitter(manifest)  # type: ignore[arg-type]
+            )
+
+        assert len(graph.nodes) == 1
+        assert "com.example.Good" in graph.nodes
