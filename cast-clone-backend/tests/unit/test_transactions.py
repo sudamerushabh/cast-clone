@@ -3,7 +3,7 @@
 
 import pytest
 
-from app.models.context import AnalysisContext
+from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import ProjectManifest
@@ -414,6 +414,58 @@ class TestDiscoverTransactions:
             n for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION
         ]
         assert len(txn_nodes) == 3
+
+    @pytest.mark.asyncio
+    async def test_entrypoint_dataclass_http_endpoint_kind(self):
+        """EntryPoint with kind='http_endpoint' produces correct HTTP naming."""
+        g = SymbolGraph()
+        g.add_node(_fn("com.Ctrl.list", "list"))
+        g.add_node(GraphNode(fqn="items", name="items", kind=NodeKind.TABLE))
+        g.add_edge(_edge("com.Ctrl.list", "items", EdgeKind.READS))
+
+        ctx = _make_context(g)
+        ctx.entry_points = [
+            EntryPoint(
+                fqn="com.Ctrl.list",
+                kind="http_endpoint",
+                metadata={"method": "GET", "path": "/api/items"},
+            )
+        ]
+
+        await discover_transactions(ctx)
+
+        assert ctx.transaction_count == 1
+        txn_nodes = [
+            n for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION
+        ]
+        assert len(txn_nodes) == 1
+        assert "GET" in txn_nodes[0].name
+        assert "/api/items" in txn_nodes[0].name
+
+    @pytest.mark.asyncio
+    async def test_entrypoint_dataclass_message_consumer_kind(self):
+        """EntryPoint with kind='message_consumer' produces correct MSG naming."""
+        g = SymbolGraph()
+        g.add_node(_fn("com.Handler.on", "on"))
+
+        ctx = _make_context(g)
+        ctx.entry_points = [
+            EntryPoint(
+                fqn="com.Handler.on",
+                kind="message_consumer",
+                metadata={"topic": "user-events"},
+            )
+        ]
+
+        await discover_transactions(ctx)
+
+        assert ctx.transaction_count == 1
+        txn_nodes = [
+            n for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION
+        ]
+        assert len(txn_nodes) == 1
+        assert "user-events" in txn_nodes[0].name
+        assert txn_nodes[0].name.startswith("MSG")
 
     @pytest.mark.asyncio
     async def test_default_max_depth_is_15(self):

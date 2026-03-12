@@ -131,17 +131,34 @@ def trace_transaction_flow(
 # ── Transaction Node Builder ───────────────────────────────
 
 
+_KIND_TO_TYPE: dict[str, str] = {
+    "http_endpoint": "http",
+    "http": "http",
+    "message_consumer": "message",
+    "message": "message",
+    "scheduled": "scheduled",
+    "main": "main",
+}
+
+
 def _entry_point_to_dict(ep: Any) -> dict[str, Any]:
     """Normalize entry point to dict.
 
-    Handles both dict and EntryPoint dataclass.
+    Handles both dict and EntryPoint dataclass.  Maps EntryPoint.kind
+    values (e.g. "http_endpoint") to the short type names used by
+    _build_transaction_name (e.g. "http").
     """
     if isinstance(ep, dict):
+        # Normalize "type" if it uses the long-form kind values
+        ep_type = ep.get("type", "unknown")
+        if ep_type in _KIND_TO_TYPE:
+            ep = {**ep, "type": _KIND_TO_TYPE[ep_type]}
         return ep
     # EntryPoint dataclass: fqn, kind, metadata
+    raw_kind = getattr(ep, "kind", "unknown")
     result: dict[str, Any] = {
         "fqn": getattr(ep, "fqn", ""),
-        "type": getattr(ep, "kind", "unknown"),
+        "type": _KIND_TO_TYPE.get(raw_kind, raw_kind),
     }
     metadata = getattr(ep, "metadata", {})
     if metadata:
