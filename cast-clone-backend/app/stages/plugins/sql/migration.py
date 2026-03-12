@@ -11,14 +11,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+import structlog
 
 import sqlglot
 from sqlglot import exp
 
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode
+from app.models.context import AnalysisContext
 from app.stages.plugins.base import FrameworkPlugin, PluginDetectionResult, PluginResult
+
+logger = structlog.get_logger(__name__)
 
 
 # -- Data Structures --------------------------------------------------
@@ -159,10 +162,6 @@ def parse_ddl_statements(sql: str, schema: SchemaState, dialect: str | None = No
             _handle_create(ast, schema)
         elif isinstance(ast, exp.Alter):
             _handle_alter_table(ast, schema)
-        # sqlglot may parse CREATE INDEX differently depending on dialect
-        # Check for Create with kind="INDEX" as well
-        if isinstance(ast, exp.Create) and _is_index_create(ast):
-            _handle_create_index(ast, schema)
 
 
 def _is_index_create(ast: exp.Create) -> bool:
@@ -449,13 +448,51 @@ class SQLMigrationPlugin(FrameworkPlugin):
         self.supported_languages = {"sql", "java", "python", "csharp"}
         self.depends_on: list[str] = []
 
-    def detect(self, context: Any) -> PluginDetectionResult:
+    def detect(self, context: AnalysisContext) -> PluginDetectionResult:
         """Detect migration files in the project."""
-        return PluginDetectionResult(confidence=Confidence.LOW, reason="no migration dirs provided")
+        if context.manifest is None:
+            return PluginDetectionResult.not_detected()
+        root = context.manifest.root_path
+        confidence = self.detect_from_paths([root])
+        if confidence in (Confidence.HIGH, Confidence.MEDIUM):
+            return PluginDetectionResult(
+                confidence=confidence,
+                reason=f"Migration files found under {root}",
+            )
+        return PluginDetectionResult.not_detected()
 
-    async def extract(self, context: Any) -> PluginResult:
+    async def extract(self, context: AnalysisContext) -> PluginResult:
         """Extract schema from migration files in the analysis context."""
-        return PluginResult.empty()
+        if context.manifest is None:
+            return PluginResult.empty()
+
+        root = context.manifest.root_path
+        combined = PluginResult.empty()
+
+        # Search common migration directories
+        search_dirs = [
+            root / "db/migration",
+            root / "src/main/resources/db/migration",
+            root / "migrations",
+            root / "alembic",
+            root / "Migrations",
+            root,  # root itself (e.g. Flyway files at top level)
+        ]
+
+        for d in search_dirs:
+            if not d.is_dir():
+                continue
+            framework = detect_migration_framework(d)
+            if framework is not None:
+                logger.info(
+                    "sql_migration.extracting",
+                    directory=str(d),
+                    framework=framework,
+                )
+                result = self.extract_from_migration_dir(d, framework)
+                combined = combined.merge(result)
+
+        return combined
 
     def detect_from_paths(self, search_dirs: list[Path]) -> Confidence:
         """Check for migration files in known locations."""
