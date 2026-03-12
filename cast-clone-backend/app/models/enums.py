@@ -48,6 +48,7 @@ class EdgeKind(StrEnum):
     ENDS_AT = "ENDS_AT"
     INCLUDES = "INCLUDES"
     PASSES_PROP = "PASSES_PROP"
+    MANAGES = "MANAGES"
 
 
 class Confidence(int, Enum):
