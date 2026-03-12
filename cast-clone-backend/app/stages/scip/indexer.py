@@ -16,6 +16,7 @@ On failure, the language is queued for LSP fallback in Stage 4b.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -240,6 +241,9 @@ async def run_scip_indexers(context: AnalysisContext) -> SCIPResult:
     Returns:
         Aggregated SCIPResult with counts.
     """
+    start_time = time.perf_counter()
+    logger.info("scip.stage.start", project_id=context.project_id)
+
     result = SCIPResult()
 
     if context.manifest is None:
@@ -285,5 +289,15 @@ async def run_scip_indexers(context: AnalysisContext) -> SCIPResult:
             result.resolved_count += outcome.resolved_count
             result.languages_resolved.append(cfg.language)
             context.scip_resolved_languages.add(cfg.language)
+
+    elapsed = time.perf_counter() - start_time
+    logger.info(
+        "scip.stage.complete",
+        project_id=context.project_id,
+        resolved_count=result.resolved_count,
+        languages_resolved=result.languages_resolved,
+        languages_failed=result.languages_failed,
+        elapsed_seconds=round(elapsed, 3),
+    )
 
     return result
