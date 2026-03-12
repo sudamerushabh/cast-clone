@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     analysis_router,
     graph_router,
+    graph_views_router,
     health_router,
     projects_router,
     websocket_router,
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     application.include_router(projects_router)
     application.include_router(analysis_router)
     application.include_router(graph_router)
+    application.include_router(graph_views_router)
     application.include_router(websocket_router)
 
     return application
