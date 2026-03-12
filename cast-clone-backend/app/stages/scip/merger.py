@@ -1,0 +1,379 @@
+"""Merge SCIP index data into the SymbolGraph built by tree-sitter.
+
+The merge algorithm:
+1. For each SCIP symbol definition: find matching GraphNode by file:line or FQN
+2. Update the node's FQN if SCIP provides a more precise one
+3. Add hover documentation from SCIP
+4. For each SCIP reference occurrence:
+   - Find the containing function (caller) by file:line
+   - Find or resolve the target symbol (callee) by FQN
+   - Upgrade existing CALLS edge confidence from LOW -> HIGH
+5. For SCIP implementation relationships:
+   - Add/update IMPLEMENTS edges with HIGH confidence
+6. Return stats: resolved_count, new_nodes, upgraded_edges, new_implements_edges
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+import structlog
+
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.stages.scip.protobuf_parser import (
+    SCIPIndex,
+)
+
+logger = structlog.get_logger(__name__)
+
+
+# -- Result Type -------------------------------------------------------------
+
+
+@dataclass
+class MergeStats:
+    """Statistics from merging SCIP data into the graph."""
+
+    resolved_count: int = 0
+    new_nodes: int = 0
+    upgraded_edges: int = 0
+    new_implements_edges: int = 0
+
+
+# -- SCIP Symbol -> FQN Conversion ------------------------------------------
+
+
+def scip_symbol_to_fqn(scip_symbol: str) -> str:
+    """Convert a SCIP symbol string to our internal FQN format.
+
+    SCIP symbol format examples:
+        maven . com/example 1.0 UserService#
+        maven . com/example 1.0 UserService#createUser().
+        npm @sourcegraph/scip-typescript 0.2.0 src/index.ts/App#
+        pip . myproject 0.1.0 app/main.py/create_app().
+        local 42
+
+    We extract the descriptor portion and convert:
+    - Package separators: `/` -> `.`
+    - Class suffix: `#` -> removed
+    - Method suffix: `().` -> removed
+    - Field suffix: `.` (trailing) -> removed
+
+    Args:
+        scip_symbol: Raw SCIP symbol string.
+
+    Returns:
+        Converted FQN string, or empty string for local/invalid symbols.
+    """
+    if not scip_symbol:
+        return ""
+
+    # Local symbols have no stable FQN
+    if scip_symbol.startswith("local "):
+        return ""
+
+    # SCIP symbol format: <scheme> <manager> <package> <version> <descriptors>
+    # We need the package + descriptors parts
+    parts = scip_symbol.split(" ")
+    if len(parts) < 4:
+        return ""
+
+    # Determine which part is the package and which are descriptors.
+    # Standard form (5+ parts): scheme manager package version descriptor...
+    # Short form (4 parts): scheme package version descriptor
+    # The manager field can be "." (empty) or a real name.
+    if len(parts) >= 5:
+        package = parts[2]
+        descriptors = " ".join(parts[4:])
+    else:
+        # 4 parts: the manager might be the package itself (e.g. npm scoped)
+        # Heuristic: if parts[1] starts with @ or parts[2] looks like a version,
+        # treat parts[1] as package and parts[3] as descriptor
+        package = parts[1]
+        descriptors = parts[3] if len(parts) > 3 else ""
+
+    # Convert package: com/example -> com.example
+    # Handle scoped packages like @sourcegraph/scip-typescript
+    # Strip @ prefix and convert / to .
+    fqn_base = package.lstrip("@").replace("/", ".")
+
+    if descriptors:
+        # Clean descriptor suffixes
+        desc = descriptors
+        # Remove trailing method marker: ().
+        desc = re.sub(r"\(\)\.$", "", desc)
+        # Remove trailing class marker: #
+        desc = desc.rstrip("#")
+        # Remove trailing field marker (single .)
+        desc = desc.rstrip(".")
+        # Convert remaining # to . (nested class/member separator)
+        desc = desc.replace("#", ".")
+        # Convert / to . (path separators in TypeScript/Python symbols)
+        desc = desc.replace("/", ".")
+
+        if desc:
+            fqn_base = f"{fqn_base}.{desc}" if fqn_base else desc
+
+    # Clean up any double dots
+    fqn_base = re.sub(r"\.{2,}", ".", fqn_base)
+    # Remove leading/trailing dots
+    fqn_base = fqn_base.strip(".")
+
+    return fqn_base
+
+
+# -- Node Matching -----------------------------------------------------------
+
+
+def match_scip_symbol_to_node(
+    graph: SymbolGraph,
+    fqn: str,
+    file_path: str,
+    line: int,
+) -> GraphNode | None:
+    """Find the GraphNode matching a SCIP symbol.
+
+    Strategy:
+    1. Direct FQN lookup (fast path)
+    2. File:line scan (fallback for short/mismatched FQNs)
+
+    Args:
+        graph: The current symbol graph.
+        fqn: SCIP-derived FQN for the symbol.
+        file_path: Relative path from the SCIP document.
+        line: Line number of the occurrence (0-indexed in SCIP).
+
+    Returns:
+        Matching GraphNode or None.
+    """
+    # Strategy 1: direct FQN lookup
+    node = graph.get_node(fqn)
+    if node is not None:
+        return node
+
+    # Strategy 2: file:line scan
+    for candidate in graph.nodes.values():
+        if candidate.path and candidate.line is not None:
+            # Normalize paths for comparison (remove leading ./ or src/ differences)
+            cand_path = candidate.path.lstrip("./")
+            scip_path = file_path.lstrip("./")
+            if cand_path == scip_path and candidate.line == line:
+                return candidate
+
+    return None
+
+
+# -- Edge Upgrade ------------------------------------------------------------
+
+
+def _find_containing_function(
+    graph: SymbolGraph,
+    file_path: str,
+    line: int,
+) -> GraphNode | None:
+    """Find the function/method that contains a given line in a file.
+
+    Used to determine the caller for a SCIP reference occurrence.
+    """
+    best: GraphNode | None = None
+    best_distance = float("inf")
+
+    for node in graph.nodes.values():
+        if node.kind not in (NodeKind.FUNCTION,):
+            continue
+        if node.path is None or node.line is None:
+            continue
+
+        cand_path = node.path.lstrip("./")
+        scip_path = file_path.lstrip("./")
+        if cand_path != scip_path:
+            continue
+
+        end_line = node.end_line or (node.line + 100)
+        if node.line <= line <= end_line:
+            distance = line - node.line
+            if distance < best_distance:
+                best = node
+                best_distance = distance
+
+    return best
+
+
+def _upgrade_edge(
+    graph: SymbolGraph,
+    caller_fqn: str,
+    callee_fqn: str,
+) -> bool:
+    """Upgrade confidence of a CALLS edge from caller to callee.
+
+    Returns True if an edge was upgraded.
+    """
+    for edge in graph.get_edges_from(caller_fqn):
+        if edge.kind == EdgeKind.CALLS and edge.target_fqn == callee_fqn:
+            edge.confidence = Confidence.HIGH
+            edge.evidence = "scip"
+            return True
+    return False
+
+
+# -- Main Merge Function -----------------------------------------------------
+
+
+def merge_scip_into_context(
+    context: AnalysisContext,
+    scip_index: SCIPIndex,
+    language: str,
+) -> MergeStats:
+    """Merge SCIP index data into the context's SymbolGraph.
+
+    This is the core merge algorithm:
+    1. Process definitions: match to nodes, upgrade FQNs, add docs
+    2. Process references: upgrade call edge confidence
+    3. Process relationships: add IMPLEMENTS edges
+
+    Args:
+        context: Pipeline analysis context (graph is modified in place).
+        scip_index: Parsed SCIP index from protobuf_parser.
+        language: Language identifier for logging.
+
+    Returns:
+        MergeStats with counts of changes made.
+    """
+    stats = MergeStats()
+    graph = context.graph
+
+    # Build a symbol -> documentation lookup from SymbolInformation
+    symbol_docs: dict[str, list[str]] = {}
+    symbol_rels: dict[str, list] = {}
+    for doc in scip_index.documents:
+        for sym_info in doc.symbols:
+            if sym_info.documentation:
+                symbol_docs[sym_info.symbol] = sym_info.documentation
+            if sym_info.relationships:
+                symbol_rels[sym_info.symbol] = sym_info.relationships
+
+    # Build a FQN -> SCIP symbol mapping for reference resolution
+    scip_fqn_map: dict[str, str] = {}  # scip_symbol -> our_fqn
+
+    # -- Pass 1: Process definitions -----------------------------------------
+    for doc in scip_index.documents:
+        for occ in doc.occurrences:
+            if not occ.is_definition:
+                continue
+
+            scip_fqn = scip_symbol_to_fqn(occ.symbol)
+            if not scip_fqn:
+                continue  # skip local symbols
+
+            scip_fqn_map[occ.symbol] = scip_fqn
+
+            matched_node = match_scip_symbol_to_node(
+                graph, scip_fqn, doc.relative_path, occ.start_line
+            )
+
+            if matched_node is None:
+                continue
+
+            stats.resolved_count += 1
+
+            # Upgrade FQN if SCIP has a more precise one
+            if matched_node.fqn != scip_fqn and len(scip_fqn) > len(matched_node.fqn):
+                old_fqn = matched_node.fqn
+                # Remove old entry, update FQN, re-add
+                del graph.nodes[old_fqn]
+                matched_node.fqn = scip_fqn
+                graph.add_node(matched_node)
+
+                # Update edges that reference the old FQN
+                for edge in graph.edges:
+                    if edge.source_fqn == old_fqn:
+                        edge.source_fqn = scip_fqn
+                    if edge.target_fqn == old_fqn:
+                        edge.target_fqn = scip_fqn
+                graph._index_dirty = True
+
+            # Add documentation
+            if occ.symbol in symbol_docs:
+                matched_node.properties["documentation"] = "\n".join(
+                    symbol_docs[occ.symbol]
+                )
+
+    # -- Pass 2: Process references (upgrade call edges) ---------------------
+    for doc in scip_index.documents:
+        for occ in doc.occurrences:
+            if occ.is_definition:
+                continue
+
+            callee_fqn = scip_fqn_map.get(occ.symbol)
+            if not callee_fqn:
+                callee_fqn = scip_symbol_to_fqn(occ.symbol)
+            if not callee_fqn:
+                continue
+
+            # Find the containing function (caller)
+            caller_node = _find_containing_function(
+                graph, doc.relative_path, occ.start_line
+            )
+            if caller_node is None:
+                continue
+
+            # Try to upgrade an existing edge
+            if _upgrade_edge(graph, caller_node.fqn, callee_fqn):
+                stats.upgraded_edges += 1
+
+    # -- Pass 3: Process implementation relationships ------------------------
+    for scip_symbol, relationships in symbol_rels.items():
+        impl_fqn = scip_fqn_map.get(scip_symbol)
+        if not impl_fqn:
+            impl_fqn = scip_symbol_to_fqn(scip_symbol)
+        if not impl_fqn:
+            continue
+
+        for rel in relationships:
+            if not rel.is_implementation:
+                continue
+
+            iface_fqn = scip_symbol_to_fqn(rel.symbol)
+            if not iface_fqn:
+                continue
+
+            # Check both nodes exist
+            impl_node = graph.get_node(impl_fqn)
+            iface_node = graph.get_node(iface_fqn)
+            if impl_node is None or iface_node is None:
+                continue
+
+            # Check if edge already exists
+            existing = False
+            for edge in graph.get_edges_from(impl_fqn):
+                if edge.kind == EdgeKind.IMPLEMENTS and edge.target_fqn == iface_fqn:
+                    edge.confidence = Confidence.HIGH
+                    edge.evidence = "scip"
+                    existing = True
+                    break
+
+            if not existing:
+                graph.add_edge(
+                    GraphEdge(
+                        source_fqn=impl_fqn,
+                        target_fqn=iface_fqn,
+                        kind=EdgeKind.IMPLEMENTS,
+                        confidence=Confidence.HIGH,
+                        evidence="scip",
+                    )
+                )
+                stats.new_implements_edges += 1
+
+    logger.info(
+        "scip.merge.complete",
+        language=language,
+        resolved=stats.resolved_count,
+        upgraded_edges=stats.upgraded_edges,
+        new_implements=stats.new_implements_edges,
+        project_id=context.project_id,
+    )
+
+    return stats
