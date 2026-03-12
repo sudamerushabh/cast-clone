@@ -529,7 +529,9 @@ class SQLMigrationPlugin(FrameworkPlugin):
             self._process_flyway(migration_dir, schema)
         elif framework == "alembic":
             self._process_alembic(migration_dir, schema)
-        # liquibase and ef are planned for later implementation
+        elif framework == "ef":
+            self._process_ef(migration_dir, schema)
+        # liquibase is planned for later implementation
 
         return schema_to_graph(schema)
 
@@ -623,3 +625,120 @@ class SQLMigrationPlugin(FrameworkPlugin):
                 name=col_name,
                 type=col_type,
             )
+
+    def _process_ef(self, directory: Path, schema: SchemaState) -> None:
+        """Process EF Core C# migration files in version order."""
+        migration_files: list[Path] = []
+        for f in sorted(directory.iterdir()):
+            if f.is_file() and f.suffix == ".cs":
+                migration_files.append(f)
+
+        for path in migration_files:
+            content = path.read_text(encoding="utf-8")
+            _parse_ef_content(content, schema)
+
+
+# -- EF Core Migration Parsing -------------------------------------------
+
+# Regex patterns for EF Core migration statements
+_EF_CREATE_TABLE = re.compile(
+    r'migrationBuilder\.CreateTable\(\s*name:\s*"(\w+)"',
+    re.MULTILINE,
+)
+_EF_COLUMN = re.compile(
+    r'(\w+)\s*=\s*table\.Column<(\w+)>\(',
+    re.MULTILINE,
+)
+_EF_ADD_FOREIGN_KEY = re.compile(
+    r'migrationBuilder\.AddForeignKey\('
+    r'\s*name:\s*"([^"]+)"'
+    r',\s*table:\s*"(\w+)"'
+    r',\s*column:\s*"(\w+)"'
+    r',\s*principalTable:\s*"(\w+)"'
+    r',\s*principalColumn:\s*"(\w+)"',
+    re.MULTILINE | re.DOTALL,
+)
+_EF_ADD_COLUMN = re.compile(
+    r'migrationBuilder\.AddColumn<(\w+)>\('
+    r'\s*name:\s*"(\w+)"'
+    r',\s*table:\s*"(\w+)"',
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _parse_ef_content(content: str, schema: SchemaState) -> None:
+    """Parse EF Core migration C# content and update the schema state.
+
+    Handles CreateTable, AddForeignKey, and AddColumn statements.
+    """
+    # CreateTable
+    for match in _EF_CREATE_TABLE.finditer(content):
+        table_name = match.group(1)
+        table_def = SchemaState.TableDef(name=table_name)
+
+        # Find columns within the CreateTable block (next ~2000 chars)
+        start = match.end()
+        block = content[start : start + 2000]
+        for col_match in _EF_COLUMN.finditer(block):
+            col_name = col_match.group(1)
+            col_type = col_match.group(2)
+            table_def.columns[col_name] = SchemaState.ColumnDef(
+                name=col_name,
+                type=col_type,
+            )
+
+        schema.tables[table_name] = table_def
+
+    # AddForeignKey
+    for match in _EF_ADD_FOREIGN_KEY.finditer(content):
+        constraint_name = match.group(1)
+        source_table = match.group(2)
+        source_column = match.group(3)
+        target_table = match.group(4)
+        target_column = match.group(5)
+
+        # Ensure tables exist as stubs
+        if source_table not in schema.tables:
+            schema.tables[source_table] = SchemaState.TableDef(name=source_table)
+        if target_table not in schema.tables:
+            schema.tables[target_table] = SchemaState.TableDef(name=target_table)
+
+        # Mark the source column as FK if it exists
+        if source_column in schema.tables[source_table].columns:
+            schema.tables[source_table].columns[source_column].is_foreign_key = True
+
+        schema.foreign_keys.append(
+            SchemaState.ForeignKeyDef(
+                source_table=source_table,
+                source_column=source_column,
+                target_table=target_table,
+                target_column=target_column,
+                constraint_name=constraint_name,
+            )
+        )
+
+    # AddColumn
+    for match in _EF_ADD_COLUMN.finditer(content):
+        col_type = match.group(1)
+        col_name = match.group(2)
+        table_name = match.group(3)
+
+        if table_name not in schema.tables:
+            schema.tables[table_name] = SchemaState.TableDef(name=table_name)
+
+        schema.tables[table_name].columns[col_name] = SchemaState.ColumnDef(
+            name=col_name,
+            type=col_type,
+        )
+
+
+def parse_ef_migration(path: Path) -> PluginResult:
+    """Parse a single EF Core migration file and return a PluginResult.
+
+    This is a convenience function that reads the file, parses it into a
+    SchemaState, and converts to graph nodes/edges.
+    """
+    schema = SchemaState()
+    content = path.read_text(encoding="utf-8")
+    _parse_ef_content(content, schema)
+    return schema_to_graph(schema)
