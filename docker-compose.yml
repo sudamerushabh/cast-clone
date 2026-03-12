@@ -24,7 +24,7 @@ services:
       - "17687:7687"
     environment:
       NEO4J_AUTH: neo4j/codelens
-      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
     volumes:
       - neo4j_data:/data
     healthcheck:

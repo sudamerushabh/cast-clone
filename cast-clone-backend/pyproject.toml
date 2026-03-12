@@ -18,6 +18,7 @@ dependencies = [
     "tree-sitter-c-sharp>=0.23.1",
     "sqlglot>=29.0.1",
     "pytest-cov>=7.0.0",
+    "structlog>=24.0.0",
 ]
 
 [dependency-groups]
@@ -27,6 +28,10 @@ dev = [
     "pytest-asyncio",
     "httpx",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88

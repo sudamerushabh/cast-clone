@@ -1,18 +1,33 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.config import Settings
+from app.services.neo4j import close_neo4j, init_neo4j
+from app.services.postgres import close_postgres, init_postgres
+from app.services.redis import close_redis, init_redis
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    print("Starting up codelens-backend...")
+    settings = Settings()
+    # Startup
+    await init_postgres(settings)
+    await init_neo4j(settings)
+    await init_redis(settings)
+    await logger.ainfo("All services initialized")
     yield
-    print("Shutting down codelens-backend...")
+    # Shutdown
+    await close_redis()
+    await close_neo4j()
+    await close_postgres()
+    await logger.ainfo("All services shut down")
 
 
 def create_app() -> FastAPI:

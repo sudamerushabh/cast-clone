@@ -16,3 +16,10 @@ class Settings(BaseSettings):
     minio_secret_key: str = "codelens123"
     minio_secure: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    # Analysis defaults
+    scip_timeout: int = 600
+    total_analysis_timeout: int = 3600
+    max_traversal_depth: int = 15
+    treesitter_workers: int | None = None  # None = os.cpu_count()
+    log_level: str = "info"
