@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Language, Parser
 
+from app.models.enums import Confidence, EdgeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.treesitter.extractors import get_extractor, registered_languages
 
@@ -85,8 +86,99 @@ def _parse_single_file(
 
 
 def _resolve_symbols(graph: SymbolGraph) -> None:
-    """Post-parse global symbol resolution — implemented in Task 4."""
-    pass
+    """Post-parse global symbol resolution.
+
+    Resolves unresolved CALLS edges (confidence=LOW, target not in FQN index)
+    using three strategies in priority order:
+      1. Import-based: caller's parent class imports a class containing the target method
+      2. Same-package: a class in the same package contains the target method
+      3. Unique global: exactly one node in the graph matches the short name
+
+    Resolved edges get their target_fqn updated and confidence raised to MEDIUM.
+    """
+    fqn_index: dict[str, GraphNode] = dict(graph.nodes)
+
+    # Short-name -> list of FQNs
+    short_name_index: dict[str, list[str]] = {}
+    for fqn, node in fqn_index.items():
+        short_name_index.setdefault(node.name, []).append(fqn)
+
+    # Containment: child_fqn -> parent_fqn
+    containment: dict[str, str] = {}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CONTAINS:
+            containment[edge.target_fqn] = edge.source_fqn
+
+    # Per-class import index: class_fqn -> {imported_short_name: imported_fqn}
+    import_index: dict[str, dict[str, str]] = {}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.IMPORTS:
+            target_node = fqn_index.get(edge.target_fqn)
+            if target_node is not None:
+                import_index.setdefault(edge.source_fqn, {})[target_node.name] = edge.target_fqn
+
+    def _get_package(fqn: str) -> str:
+        """Extract the package prefix from a fully-qualified name."""
+        parts = fqn.rsplit(".", 1)
+        return parts[0] if len(parts) > 1 else ""
+
+    for i, edge in enumerate(graph.edges):
+        # Only resolve LOW-confidence CALLS with unresolved targets
+        if edge.kind != EdgeKind.CALLS:
+            continue
+        if edge.confidence != Confidence.LOW:
+            continue
+        if edge.target_fqn in fqn_index:
+            continue
+
+        target_short = edge.target_fqn  # e.g. "findById"
+        resolved_fqn: str | None = None
+
+        # Find the caller's parent class
+        caller_class = containment.get(edge.source_fqn)
+
+        # Strategy 1: Import-based resolution
+        if caller_class and caller_class in import_index:
+            for _short_name, imported_fqn in import_index[caller_class].items():
+                candidate = f"{imported_fqn}.{target_short}"
+                if candidate in fqn_index:
+                    resolved_fqn = candidate
+                    break
+
+        # Strategy 2: Same-package resolution
+        if resolved_fqn is None and caller_class:
+            caller_pkg = _get_package(caller_class)
+            candidates = short_name_index.get(target_short, [])
+            same_pkg = [
+                c for c in candidates
+                if _get_package(_get_package(c)) == caller_pkg  # grandparent package
+                or _get_package(c).startswith(caller_pkg + ".")
+                or caller_pkg == _get_package(c)
+            ]
+            if len(same_pkg) == 1:
+                resolved_fqn = same_pkg[0]
+
+        # Strategy 3: Unique global match
+        if resolved_fqn is None:
+            candidates = short_name_index.get(target_short, [])
+            if len(candidates) == 1:
+                resolved_fqn = candidates[0]
+
+        if resolved_fqn is not None:
+            graph.edges[i] = GraphEdge(
+                source_fqn=edge.source_fqn,
+                target_fqn=resolved_fqn,
+                kind=edge.kind,
+                confidence=Confidence.MEDIUM,
+                evidence=edge.evidence,
+                properties=edge.properties,
+            )
+            logger.debug(
+                "Resolved %s -> %s to %s",
+                edge.source_fqn,
+                target_short,
+                resolved_fqn,
+            )
 
 
 _SEQUENTIAL_THRESHOLD = 4
