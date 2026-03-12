@@ -271,3 +271,62 @@ class TestLayerClassification:
 
         assert "MyApp.Data.AppDbContext" in result.layer_assignments
         assert result.layer_assignments["MyApp.Data.AppDbContext"] == "Data Access"
+
+
+# ---------------------------------------------------------------------------
+# Test: Fluent API configuration
+# ---------------------------------------------------------------------------
+
+class TestFluentApi:
+    @pytest.mark.asyncio
+    async def test_fluent_to_table_overrides_name(self):
+        """Fluent .ToTable('users') overrides default table name."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "People", "DbSet<Person>", is_property=True, type_args=["Person"])
+        add_class(ctx.graph, "MyApp.Models.Person", "Person")
+        # Fluent config on DbContext
+        ctx.graph.get_node("MyApp.Data.AppDbContext").properties["fluent_configurations"] = [
+            {"entity": "Person", "table": "people_tbl"},
+        ]
+        result = await plugin.extract(ctx)
+        table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
+        assert any(n.name == "people_tbl" for n in table_nodes)
+
+    @pytest.mark.asyncio
+    async def test_fluent_has_one_creates_reference(self):
+        """Fluent HasOne().WithMany().HasForeignKey() creates REFERENCES edge."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Books", "DbSet<Book>", is_property=True, type_args=["Book"])
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Authors", "DbSet<Author>", is_property=True, type_args=["Author"])
+        add_class(ctx.graph, "MyApp.Models.Book", "Book")
+        add_field(ctx.graph, "MyApp.Models.Book", "AuthorId", "int", is_property=True)
+        add_class(ctx.graph, "MyApp.Models.Author", "Author")
+        ctx.graph.get_node("MyApp.Data.AppDbContext").properties["fluent_configurations"] = [
+            {"entity": "Book", "has_one": "Author", "with_many": "Books", "foreign_key": "AuthorId"},
+        ]
+        result = await plugin.extract(ctx)
+        refs = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
+        assert len(refs) >= 1
+        assert any("Book" in e.source_fqn and "Author" in e.target_fqn for e in refs)
+
+    @pytest.mark.asyncio
+    async def test_fluent_overrides_data_annotation(self):
+        """Fluent API takes precedence over [Table] data annotation."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        # Data annotation says "old_users"
+        add_class(ctx.graph, "MyApp.Models.User", "User", annotations=["Table"], annotation_args={"": "old_users"})
+        # Fluent API says "new_users" (should win)
+        ctx.graph.get_node("MyApp.Data.AppDbContext").properties["fluent_configurations"] = [
+            {"entity": "User", "table": "new_users"},
+        ]
+        result = await plugin.extract(ctx)
+        table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
+        assert any(n.name == "new_users" for n in table_nodes)
+        assert not any(n.name == "old_users" for n in table_nodes)

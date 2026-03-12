@@ -245,6 +245,11 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                     )
                 )
 
+        # Step 2b: Apply Fluent API configurations (overrides data annotations)
+        self._apply_fluent_configurations(
+            db_contexts, entities, name_to_fqn, edges, warnings, graph,
+        )
+
         # Step 3: Create Table/Column nodes and relationship edges
         for entity in entities.values():
             table_fqn = f"table:{entity.table_name}"
@@ -428,3 +433,82 @@ class EntityFrameworkPlugin(FrameworkPlugin):
             f"Collection navigation {owner_entity.name} -> {target_entity.name} "
             f"but no FK property '{expected_fk_name}' found on {target_entity.name}"
         )
+
+    def _apply_fluent_configurations(
+        self,
+        db_contexts: list[_DbContextInfo],
+        entities: dict[str, _EntityInfo],
+        name_to_fqn: dict[str, str],
+        edges: list[GraphEdge],
+        warnings: list[str],
+        graph: object,
+    ) -> None:
+        """Apply Fluent API configurations from DbContext.OnModelCreating.
+
+        Fluent API has higher precedence than data annotations in EF Core,
+        so this is called after the initial entity/table name resolution to
+        allow overrides.
+        """
+        for ctx_info in db_contexts:
+            ctx_node = graph.get_node(ctx_info.fqn)  # type: ignore[union-attr]
+            if ctx_node is None:
+                continue
+            fluent_configs: list[dict[str, str]] = ctx_node.properties.get(
+                "fluent_configurations", []
+            )
+            if not fluent_configs:
+                continue
+
+            for config in fluent_configs:
+                entity_name = config.get("entity", "")
+                entity_info = entities.get(entity_name)
+                if entity_info is None:
+                    warnings.append(
+                        f"Fluent config references unknown entity '{entity_name}'"
+                    )
+                    continue
+
+                # Table name override: .ToTable("name")
+                if "table" in config:
+                    entity_info.table_name = config["table"]
+
+                # Column name override: .Property(x => x.Prop).HasColumnName("name")
+                if "property" in config and "column" in config:
+                    prop_name = config["property"]
+                    col_name = config["column"]
+                    for field_info in entity_info.fields:
+                        if field_info.name == prop_name:
+                            # Inject a Column annotation override so Step 3 picks it up
+                            field_info.annotations.add("Column")
+                            field_info.annotation_args[""] = col_name
+                            break
+
+                # Relationship: .HasOne().WithMany().HasForeignKey()
+                if "has_one" in config and "foreign_key" in config:
+                    target_entity_name = config["has_one"]
+                    fk_field_name = config["foreign_key"]
+                    target_entity = entities.get(target_entity_name)
+                    if target_entity is None:
+                        warnings.append(
+                            f"Fluent relationship on '{entity_name}' references "
+                            f"unknown target entity '{target_entity_name}'"
+                        )
+                        continue
+
+                    target_pk = self._find_pk_column(target_entity)
+                    fk_col_fqn = f"table:{entity_info.table_name}.{fk_field_name}"
+                    if target_pk:
+                        pk_col_fqn = f"table:{target_entity.table_name}.{target_pk}"
+                    else:
+                        # Fallback: reference the table itself
+                        pk_col_fqn = f"table:{target_entity.table_name}"
+
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=fk_col_fqn,
+                            target_fqn=pk_col_fqn,
+                            kind=EdgeKind.REFERENCES,
+                            confidence=Confidence.HIGH,
+                            evidence="entity-framework:fluent-api",
+                        )
+                    )
