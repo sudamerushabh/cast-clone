@@ -1,0 +1,646 @@
+# tests/unit/test_enricher.py
+"""Tests for Stage 7: Graph Enricher."""
+
+import pytest
+
+from app.models.context import AnalysisContext
+from app.models.enums import EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.stages.enricher import (
+    aggregate_class_depends_on,
+    aggregate_module_imports,
+    assign_architectural_layers,
+    compute_fan_metrics,
+    detect_communities,
+    enrich_graph,
+)
+
+# ── Helpers ──────────────────────────────────────────────
+
+
+def _make_context(graph: SymbolGraph | None = None) -> AnalysisContext:
+    ctx = AnalysisContext(project_id="test-project")
+    if graph is not None:
+        ctx.graph = graph
+    return ctx
+
+
+def _make_class(fqn: str, module_fqn: str | None = None) -> GraphNode:
+    node = GraphNode(fqn=fqn, name=fqn.split(".")[-1], kind=NodeKind.CLASS)
+    if module_fqn is not None:
+        node.properties["module_fqn"] = module_fqn
+    return node
+
+
+def _make_function(fqn: str) -> GraphNode:
+    return GraphNode(fqn=fqn, name=fqn.split(".")[-1], kind=NodeKind.FUNCTION)
+
+
+def _make_module(fqn: str) -> GraphNode:
+    return GraphNode(fqn=fqn, name=fqn.split(".")[-1], kind=NodeKind.MODULE)
+
+
+def _calls_edge(src: str, tgt: str) -> GraphEdge:
+    return GraphEdge(source_fqn=src, target_fqn=tgt, kind=EdgeKind.CALLS)
+
+
+def _contains_edge(src: str, tgt: str) -> GraphEdge:
+    return GraphEdge(source_fqn=src, target_fqn=tgt, kind=EdgeKind.CONTAINS)
+
+
+def _injects_edge(src: str, tgt: str) -> GraphEdge:
+    return GraphEdge(source_fqn=src, target_fqn=tgt, kind=EdgeKind.INJECTS)
+
+
+# ── Test 1: Fan-in / Fan-out ────────────────────────────
+
+
+class TestFanMetrics:
+    def test_fan_in_fan_out_basic(self):
+        """Graph with known CALLS edges: verify correct counts on CLASS nodes."""
+        g = SymbolGraph()
+
+        # Classes
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_class("com.app.B"))
+        g.add_node(_make_class("com.app.C"))
+
+        # Methods
+        g.add_node(_make_function("com.app.A.m1"))
+        g.add_node(_make_function("com.app.A.m2"))
+        g.add_node(_make_function("com.app.B.m1"))
+        g.add_node(_make_function("com.app.C.m1"))
+
+        # Containment: class -> method
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m1"))
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m2"))
+        g.add_edge(_contains_edge("com.app.B", "com.app.B.m1"))
+        g.add_edge(_contains_edge("com.app.C", "com.app.C.m1"))
+
+        # Calls: A.m1 -> B.m1, A.m2 -> B.m1, B.m1 -> C.m1
+        g.add_edge(_calls_edge("com.app.A.m1", "com.app.B.m1"))
+        g.add_edge(_calls_edge("com.app.A.m2", "com.app.B.m1"))
+        g.add_edge(_calls_edge("com.app.B.m1", "com.app.C.m1"))
+
+        compute_fan_metrics(g)
+
+        # A: fan_in=0 (nobody calls A's methods), fan_out=2 (A.m1->B.m1, A.m2->B.m1)
+        assert g.get_node("com.app.A").properties["fan_in"] == 0
+        assert g.get_node("com.app.A").properties["fan_out"] == 2
+
+        # B: fan_in=2 (A.m1->B.m1, A.m2->B.m1), fan_out=1 (B.m1->C.m1)
+        assert g.get_node("com.app.B").properties["fan_in"] == 2
+        assert g.get_node("com.app.B").properties["fan_out"] == 1
+
+        # C: fan_in=1 (B.m1->C.m1), fan_out=0
+        assert g.get_node("com.app.C").properties["fan_in"] == 1
+        assert g.get_node("com.app.C").properties["fan_out"] == 0
+
+    def test_fan_in_includes_injects_edges(self):
+        """INJECTS edges should also count toward fan_in."""
+        g = SymbolGraph()
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_class("com.app.B"))
+
+        # A injects B (DI)
+        g.add_edge(_injects_edge("com.app.A", "com.app.B"))
+
+        compute_fan_metrics(g)
+
+        assert g.get_node("com.app.B").properties["fan_in"] == 1
+
+
+# ── Test 2: Class-level DEPENDS_ON Aggregation ──────────
+
+
+class TestClassDependsOn:
+    def test_methods_calling_across_classes_create_depends_on(self):
+        """Methods calling across classes -> DEPENDS_ON edges with correct weights."""
+        g = SymbolGraph()
+
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_class("com.app.B"))
+        g.add_node(_make_function("com.app.A.m1"))
+        g.add_node(_make_function("com.app.A.m2"))
+        g.add_node(_make_function("com.app.B.m1"))
+        g.add_node(_make_function("com.app.B.m2"))
+
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m1"))
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m2"))
+        g.add_edge(_contains_edge("com.app.B", "com.app.B.m1"))
+        g.add_edge(_contains_edge("com.app.B", "com.app.B.m2"))
+
+        # A.m1 -> B.m1, A.m1 -> B.m2, A.m2 -> B.m1
+        g.add_edge(_calls_edge("com.app.A.m1", "com.app.B.m1"))
+        g.add_edge(_calls_edge("com.app.A.m1", "com.app.B.m2"))
+        g.add_edge(_calls_edge("com.app.A.m2", "com.app.B.m1"))
+
+        aggregate_class_depends_on(g)
+
+        depends_on = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.DEPENDS_ON
+            and e.source_fqn == "com.app.A"
+            and e.target_fqn == "com.app.B"
+        ]
+        assert len(depends_on) == 1
+        assert depends_on[0].properties["weight"] == 3
+
+    def test_no_duplicate_depends_on(self):
+        """If DEPENDS_ON already exists between two classes, don't add another."""
+        g = SymbolGraph()
+
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_class("com.app.B"))
+        g.add_node(_make_function("com.app.A.m1"))
+        g.add_node(_make_function("com.app.B.m1"))
+
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m1"))
+        g.add_edge(_contains_edge("com.app.B", "com.app.B.m1"))
+        g.add_edge(_calls_edge("com.app.A.m1", "com.app.B.m1"))
+
+        # Pre-existing DEPENDS_ON edge
+        existing = GraphEdge(
+            source_fqn="com.app.A",
+            target_fqn="com.app.B",
+            kind=EdgeKind.DEPENDS_ON,
+            properties={"weight": 99},
+        )
+        g.add_edge(existing)
+
+        aggregate_class_depends_on(g)
+
+        depends_on = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.DEPENDS_ON
+            and e.source_fqn == "com.app.A"
+            and e.target_fqn == "com.app.B"
+        ]
+        # Should still be exactly 1 (the pre-existing one is left as-is)
+        assert len(depends_on) == 1
+
+
+# ── Test 3: Module-level IMPORTS Aggregation ─────────────
+
+
+class TestModuleImports:
+    def test_classes_across_modules_create_imports(self):
+        """Classes across modules -> module-level IMPORTS edges."""
+        g = SymbolGraph()
+
+        # Modules
+        g.add_node(_make_module("com.app.user"))
+        g.add_node(_make_module("com.app.order"))
+
+        # Classes with module_fqn property
+        g.add_node(_make_class("com.app.user.UserService", module_fqn="com.app.user"))
+        g.add_node(
+            _make_class("com.app.order.OrderService", module_fqn="com.app.order")
+        )
+
+        # Module containment
+        g.add_edge(_contains_edge("com.app.user", "com.app.user.UserService"))
+        g.add_edge(_contains_edge("com.app.order", "com.app.order.OrderService"))
+
+        # Class-level DEPENDS_ON
+        g.add_edge(
+            GraphEdge(
+                source_fqn="com.app.user.UserService",
+                target_fqn="com.app.order.OrderService",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 5},
+            )
+        )
+
+        aggregate_module_imports(g)
+
+        imports = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.IMPORTS
+            and e.source_fqn == "com.app.user"
+            and e.target_fqn == "com.app.order"
+        ]
+        assert len(imports) == 1
+        assert imports[0].properties["weight"] == 5
+
+    def test_multiple_classes_sum_weights(self):
+        """Multiple class-level DEPENDS_ON between modules -> sum weights."""
+        g = SymbolGraph()
+
+        g.add_node(_make_module("mod.A"))
+        g.add_node(_make_module("mod.B"))
+        g.add_node(_make_class("mod.A.C1", module_fqn="mod.A"))
+        g.add_node(_make_class("mod.A.C2", module_fqn="mod.A"))
+        g.add_node(_make_class("mod.B.C1", module_fqn="mod.B"))
+
+        g.add_edge(_contains_edge("mod.A", "mod.A.C1"))
+        g.add_edge(_contains_edge("mod.A", "mod.A.C2"))
+        g.add_edge(_contains_edge("mod.B", "mod.B.C1"))
+
+        g.add_edge(
+            GraphEdge(
+                source_fqn="mod.A.C1",
+                target_fqn="mod.B.C1",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 3},
+            )
+        )
+        g.add_edge(
+            GraphEdge(
+                source_fqn="mod.A.C2",
+                target_fqn="mod.B.C1",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 2},
+            )
+        )
+
+        aggregate_module_imports(g)
+
+        imports = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.IMPORTS
+            and e.source_fqn == "mod.A"
+            and e.target_fqn == "mod.B"
+        ]
+        assert len(imports) == 1
+        assert imports[0].properties["weight"] == 5
+
+
+# ── Test 4: No Self-Edges ───────────────────────────────
+
+
+class TestNoSelfEdges:
+    def test_class_does_not_depend_on_itself(self):
+        """Internal method calls within the same class must NOT
+        produce a DEPENDS_ON self-edge."""
+        g = SymbolGraph()
+
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_function("com.app.A.m1"))
+        g.add_node(_make_function("com.app.A.m2"))
+
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m1"))
+        g.add_edge(_contains_edge("com.app.A", "com.app.A.m2"))
+        g.add_edge(_calls_edge("com.app.A.m1", "com.app.A.m2"))
+
+        aggregate_class_depends_on(g)
+
+        self_edges = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.DEPENDS_ON
+            and e.source_fqn == "com.app.A"
+            and e.target_fqn == "com.app.A"
+        ]
+        assert len(self_edges) == 0
+
+    def test_module_does_not_import_itself(self):
+        """Classes in the same module depending on each other
+        must NOT produce a module self-IMPORTS."""
+        g = SymbolGraph()
+
+        g.add_node(_make_module("com.app"))
+        g.add_node(_make_class("com.app.A", module_fqn="com.app"))
+        g.add_node(_make_class("com.app.B", module_fqn="com.app"))
+
+        g.add_edge(_contains_edge("com.app", "com.app.A"))
+        g.add_edge(_contains_edge("com.app", "com.app.B"))
+        g.add_edge(
+            GraphEdge(
+                source_fqn="com.app.A",
+                target_fqn="com.app.B",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 2},
+            )
+        )
+
+        aggregate_module_imports(g)
+
+        self_imports = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.IMPORTS
+            and e.source_fqn == "com.app"
+            and e.target_fqn == "com.app"
+        ]
+        assert len(self_imports) == 0
+
+
+# ── Test 5: Layer Assignment ─────────────────────────────
+
+
+class TestLayerAssignment:
+    def test_layer_nodes_created_from_assignments(self):
+        """Nodes with layer_assignments produce Layer nodes
+        with CONTAINS edges."""
+        g = SymbolGraph()
+
+        # Classes with layer hints (set by framework plugins)
+        svc = _make_class("com.app.UserService")
+        svc.properties["layer"] = "Business Logic"
+        g.add_node(svc)
+
+        ctrl = _make_class("com.app.UserController")
+        ctrl.properties["layer"] = "Presentation"
+        g.add_node(ctrl)
+
+        repo = _make_class("com.app.UserRepository")
+        repo.properties["layer"] = "Data Access"
+        g.add_node(repo)
+
+        assign_architectural_layers(g, app_name="test-app")
+
+        # Layer nodes should exist
+        layer_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.LAYER]
+        layer_names = {n.name for n in layer_nodes}
+        assert "Business Logic" in layer_names
+        assert "Presentation" in layer_names
+        assert "Data Access" in layer_names
+
+        # Each layer should have a CONTAINS edge to the class
+        contains_from_layers = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.CONTAINS
+            and g.get_node(e.source_fqn) is not None
+            and g.get_node(e.source_fqn).kind == NodeKind.LAYER
+        ]
+        assert len(contains_from_layers) == 3
+
+    def test_layer_node_count_property(self):
+        """Layer nodes should have node_count reflecting member count."""
+        g = SymbolGraph()
+
+        c1 = _make_class("com.app.A")
+        c1.properties["layer"] = "Business Logic"
+        g.add_node(c1)
+
+        c2 = _make_class("com.app.B")
+        c2.properties["layer"] = "Business Logic"
+        g.add_node(c2)
+
+        assign_architectural_layers(g, app_name="test-app")
+
+        bl_layer = g.get_node("layer:test-app:Business Logic")
+        assert bl_layer is not None
+        assert bl_layer.properties["node_count"] == 2
+
+
+# ── Test 6: Empty Graph ─────────────────────────────────
+
+
+class TestEmptyGraph:
+    @pytest.mark.asyncio
+    async def test_empty_graph_no_crash(self):
+        """Enriching an empty graph should not crash."""
+        ctx = _make_context(SymbolGraph())
+        await enrich_graph(ctx)
+        assert ctx.community_count == 0
+        assert ctx.warnings == [] or all(isinstance(w, str) for w in ctx.warnings)
+
+
+# ── Test 7: Single Class ────────────────────────────────
+
+
+class TestSingleClass:
+    def test_single_class_zero_metrics(self):
+        """One class with no calls: fan_in=0, fan_out=0."""
+        g = SymbolGraph()
+        g.add_node(_make_class("com.app.Lonely"))
+        g.add_node(_make_function("com.app.Lonely.doNothing"))
+        g.add_edge(_contains_edge("com.app.Lonely", "com.app.Lonely.doNothing"))
+
+        compute_fan_metrics(g)
+
+        assert g.get_node("com.app.Lonely").properties["fan_in"] == 0
+        assert g.get_node("com.app.Lonely").properties["fan_out"] == 0
+
+
+# ── Test 8: Community Detection ──────────────────────────
+
+
+class TestCommunityDetection:
+    def test_two_disconnected_components(self):
+        """Two disconnected clusters should yield 2 communities."""
+        g = SymbolGraph()
+
+        # Cluster 1: A -> B
+        g.add_node(_make_class("com.app.A"))
+        g.add_node(_make_class("com.app.B"))
+        g.add_edge(
+            GraphEdge(
+                source_fqn="com.app.A",
+                target_fqn="com.app.B",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 1},
+            )
+        )
+
+        # Cluster 2: X -> Y
+        g.add_node(_make_class("com.app.X"))
+        g.add_node(_make_class("com.app.Y"))
+        g.add_edge(
+            GraphEdge(
+                source_fqn="com.app.X",
+                target_fqn="com.app.Y",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 1},
+            )
+        )
+
+        count = detect_communities(g, app_name="test-app")
+
+        assert count == 2
+
+        # Community nodes should exist
+        community_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.COMMUNITY]
+        assert len(community_nodes) == 2
+
+        # Each class should have a community_id property
+        for fqn in ["com.app.A", "com.app.B", "com.app.X", "com.app.Y"]:
+            node = g.get_node(fqn)
+            assert "community_id" in node.properties
+
+        # A and B should be in the same community
+        assert (
+            g.get_node("com.app.A").properties["community_id"]
+            == g.get_node("com.app.B").properties["community_id"]
+        )
+
+        # X and Y should be in the same community
+        assert (
+            g.get_node("com.app.X").properties["community_id"]
+            == g.get_node("com.app.Y").properties["community_id"]
+        )
+
+        # But different from A/B's community
+        assert (
+            g.get_node("com.app.A").properties["community_id"]
+            != g.get_node("com.app.X").properties["community_id"]
+        )
+
+    def test_single_connected_component(self):
+        """Fully connected graph -> 1 community."""
+        g = SymbolGraph()
+
+        g.add_node(_make_class("a.A"))
+        g.add_node(_make_class("a.B"))
+        g.add_node(_make_class("a.C"))
+        g.add_edge(
+            GraphEdge(
+                source_fqn="a.A",
+                target_fqn="a.B",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 1},
+            )
+        )
+        g.add_edge(
+            GraphEdge(
+                source_fqn="a.B",
+                target_fqn="a.C",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 1},
+            )
+        )
+
+        count = detect_communities(g, app_name="test-app")
+        assert count == 1
+
+    def test_community_includes_edges(self):
+        """Community nodes should have INCLUDES edges to their member classes."""
+        g = SymbolGraph()
+        g.add_node(_make_class("a.A"))
+        g.add_node(_make_class("a.B"))
+        g.add_edge(
+            GraphEdge(
+                source_fqn="a.A",
+                target_fqn="a.B",
+                kind=EdgeKind.DEPENDS_ON,
+                properties={"weight": 1},
+            )
+        )
+
+        detect_communities(g, app_name="test-app")
+
+        includes_edges = [e for e in g.edges if e.kind == EdgeKind.INCLUDES]
+        assert len(includes_edges) == 2  # One for each class
+
+
+# ── Test 9: Full Integration ─────────────────────────────
+
+
+class TestEnrichGraphIntegration:
+    @pytest.mark.asyncio
+    async def test_realistic_graph_all_enrichments(self):
+        """Realistic graph with multiple classes across modules
+        -- all enrichments applied."""
+        g = SymbolGraph()
+
+        # Modules
+        g.add_node(_make_module("com.app.web"))
+        g.add_node(_make_module("com.app.service"))
+        g.add_node(_make_module("com.app.data"))
+
+        # Classes with layer assignments
+        ctrl = _make_class("com.app.web.UserController", module_fqn="com.app.web")
+        ctrl.properties["layer"] = "Presentation"
+        g.add_node(ctrl)
+
+        svc = _make_class("com.app.service.UserService", module_fqn="com.app.service")
+        svc.properties["layer"] = "Business Logic"
+        g.add_node(svc)
+
+        repo = _make_class("com.app.data.UserRepository", module_fqn="com.app.data")
+        repo.properties["layer"] = "Data Access"
+        g.add_node(repo)
+
+        # Methods
+        g.add_node(_make_function("com.app.web.UserController.getUser"))
+        g.add_node(_make_function("com.app.service.UserService.findUser"))
+        g.add_node(_make_function("com.app.data.UserRepository.findById"))
+
+        # Containment: module -> class
+        g.add_edge(_contains_edge("com.app.web", "com.app.web.UserController"))
+        g.add_edge(_contains_edge("com.app.service", "com.app.service.UserService"))
+        g.add_edge(_contains_edge("com.app.data", "com.app.data.UserRepository"))
+
+        # Containment: class -> method
+        g.add_edge(
+            _contains_edge(
+                "com.app.web.UserController",
+                "com.app.web.UserController.getUser",
+            )
+        )
+        g.add_edge(
+            _contains_edge(
+                "com.app.service.UserService",
+                "com.app.service.UserService.findUser",
+            )
+        )
+        g.add_edge(
+            _contains_edge(
+                "com.app.data.UserRepository",
+                "com.app.data.UserRepository.findById",
+            )
+        )
+
+        # Call chain: controller -> service -> repository
+        g.add_edge(
+            _calls_edge(
+                "com.app.web.UserController.getUser",
+                "com.app.service.UserService.findUser",
+            )
+        )
+        g.add_edge(
+            _calls_edge(
+                "com.app.service.UserService.findUser",
+                "com.app.data.UserRepository.findById",
+            )
+        )
+
+        ctx = _make_context(g)
+        await enrich_graph(ctx)
+
+        # 1. Fan metrics computed
+        assert g.get_node("com.app.web.UserController").properties["fan_in"] == 0
+        assert g.get_node("com.app.web.UserController").properties["fan_out"] == 1
+        assert g.get_node("com.app.service.UserService").properties["fan_in"] == 1
+        assert g.get_node("com.app.service.UserService").properties["fan_out"] == 1
+        assert g.get_node("com.app.data.UserRepository").properties["fan_in"] == 1
+        assert g.get_node("com.app.data.UserRepository").properties["fan_out"] == 0
+
+        # 2. Class-level DEPENDS_ON edges created
+        depends_on_edges = [e for e in g.edges if e.kind == EdgeKind.DEPENDS_ON]
+        assert len(depends_on_edges) >= 2  # ctrl->svc, svc->repo
+
+        # 3. Module-level IMPORTS edges created
+        import_edges = [e for e in g.edges if e.kind == EdgeKind.IMPORTS]
+        assert len(import_edges) >= 2  # web->service, service->data
+
+        # 4. Layer nodes created
+        layer_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.LAYER]
+        assert len(layer_nodes) == 3
+
+        # 5. Community detection ran
+        assert ctx.community_count >= 1
+        community_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.COMMUNITY]
+        assert len(community_nodes) >= 1
+
+
+# ── Test 10: Isolated Class in Community Detection ───────
+
+
+class TestIsolatedCommunity:
+    def test_isolated_class_gets_own_community(self):
+        """A class with no DEPENDS_ON edges should still get a community assignment."""
+        g = SymbolGraph()
+        g.add_node(_make_class("com.app.Isolated"))
+
+        count = detect_communities(g, app_name="test-app")
+
+        assert count == 1
+        assert "community_id" in g.get_node("com.app.Isolated").properties
