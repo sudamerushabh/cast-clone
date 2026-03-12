@@ -8,93 +8,7 @@ from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import DetectedFramework, ProjectManifest
-
-
-# ---------------------------------------------------------------------------
-# Test helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_context() -> AnalysisContext:
-    ctx = AnalysisContext(project_id="test-dotnet")
-    ctx.graph = SymbolGraph()
-    ctx.manifest = ProjectManifest(root_path="/code")
-    ctx.manifest.detected_frameworks = [
-        DetectedFramework(
-            name="aspnet",
-            language="csharp",
-            confidence=Confidence.HIGH,
-            evidence=["csproj"],
-        ),
-    ]
-    return ctx
-
-
-def _add_class(
-    graph: SymbolGraph,
-    fqn: str,
-    name: str,
-    *,
-    base_class: str = "",
-    implements: list[str] | None = None,
-    annotations: list[str] | None = None,
-    annotation_args: dict[str, str] | None = None,
-    is_interface: bool = False,
-    type_args: list[str] | None = None,
-) -> GraphNode:
-    node = GraphNode(
-        fqn=fqn,
-        name=name,
-        kind=NodeKind.INTERFACE if is_interface else NodeKind.CLASS,
-        language="csharp",
-        properties={
-            "annotations": annotations or [],
-            "annotation_args": annotation_args or {},
-            "base_class": base_class,
-            "implements": implements or [],
-            "type_args": type_args or [],
-        },
-    )
-    graph.add_node(node)
-    return node
-
-
-def _add_method(
-    graph: SymbolGraph,
-    class_fqn: str,
-    method_name: str,
-    *,
-    annotations: list[str] | None = None,
-    annotation_args: dict[str, str] | None = None,
-    parameters: list[dict[str, str]] | None = None,
-    return_type: str = "void",
-    is_constructor: bool = False,
-) -> GraphNode:
-    fqn = f"{class_fqn}.{method_name}"
-    node = GraphNode(
-        fqn=fqn,
-        name=method_name,
-        kind=NodeKind.FUNCTION,
-        language="csharp",
-        properties={
-            "annotations": annotations or [],
-            "annotation_args": annotation_args or {},
-            "parameters": parameters or [],
-            "return_type": return_type,
-            "is_constructor": is_constructor,
-        },
-    )
-    graph.add_node(node)
-    graph.add_edge(
-        GraphEdge(
-            source_fqn=class_fqn,
-            target_fqn=fqn,
-            kind=EdgeKind.CONTAINS,
-            confidence=Confidence.HIGH,
-            evidence="treesitter",
-        )
-    )
-    return node
+from tests.unit.helpers import make_dotnet_context, add_class, add_method
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +24,10 @@ class TestControllerDetection:
         """[ApiController] + [Route("api/[controller]")] + [HttpGet("{id}")] -> GET /api/users/:id."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
-        _add_class(
+        add_class(
             graph,
             "MyApp.Controllers.UsersController",
             "UsersController",
@@ -121,7 +35,7 @@ class TestControllerDetection:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.UsersController",
             "GetById",
@@ -144,10 +58,10 @@ class TestControllerDetection:
         """[HttpPost] with no path argument -> POST /api/users."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
-        _add_class(
+        add_class(
             graph,
             "MyApp.Controllers.UsersController",
             "UsersController",
@@ -155,7 +69,7 @@ class TestControllerDetection:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.UsersController",
             "Create",
@@ -176,10 +90,10 @@ class TestControllerDetection:
         """[Route("api/v1/[controller]")] replaces [controller] with class name minus 'Controller'."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
-        _add_class(
+        add_class(
             graph,
             "MyApp.Controllers.ProductsController",
             "ProductsController",
@@ -187,7 +101,7 @@ class TestControllerDetection:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/v1/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.ProductsController",
             "GetAll",
@@ -207,10 +121,10 @@ class TestControllerDetection:
         """A controller with GET, POST, PUT, DELETE methods produces 4 endpoints."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
-        _add_class(
+        add_class(
             graph,
             "MyApp.Controllers.OrdersController",
             "OrdersController",
@@ -218,26 +132,26 @@ class TestControllerDetection:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.OrdersController",
             "GetAll",
             annotations=["HttpGet"],
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.OrdersController",
             "Create",
             annotations=["HttpPost"],
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.OrdersController",
             "Update",
             annotations=["HttpPut"],
             annotation_args={"": "{id}"},
         )
-        _add_method(
+        add_method(
             graph,
             "MyApp.Controllers.OrdersController",
             "Delete",
@@ -266,11 +180,11 @@ class TestEdgesAndEntryPoints:
         """Each endpoint gets a HANDLES edge (method->endpoint) and EXPOSES edge (class->endpoint)."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
         class_fqn = "MyApp.Controllers.UsersController"
-        _add_class(
+        add_class(
             graph,
             class_fqn,
             "UsersController",
@@ -278,7 +192,7 @@ class TestEdgesAndEntryPoints:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "GetById",
@@ -302,11 +216,11 @@ class TestEdgesAndEntryPoints:
         """Each endpoint handler method is registered as an http_endpoint entry point."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
         class_fqn = "MyApp.Controllers.UsersController"
-        _add_class(
+        add_class(
             graph,
             class_fqn,
             "UsersController",
@@ -314,13 +228,13 @@ class TestEdgesAndEntryPoints:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "GetAll",
             annotations=["HttpGet"],
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "Create",
@@ -351,11 +265,11 @@ class TestLayerClassification:
         """Controller classes should be assigned to the Presentation layer."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
         class_fqn = "MyApp.Controllers.UsersController"
-        _add_class(
+        add_class(
             graph,
             class_fqn,
             "UsersController",
@@ -363,7 +277,7 @@ class TestLayerClassification:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "GetAll",
@@ -390,11 +304,11 @@ class TestEdgeCases:
         """Route constraints like {id:int} and {id?} are normalized to :param."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
         class_fqn = "MyApp.Controllers.ItemsController"
-        _add_class(
+        add_class(
             graph,
             class_fqn,
             "ItemsController",
@@ -402,14 +316,14 @@ class TestEdgeCases:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "GetById",
             annotations=["HttpGet"],
             annotation_args={"": "{id:int}"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "GetOptional",
@@ -430,11 +344,11 @@ class TestEdgeCases:
         """[action] token in route is replaced with lowercased method name."""
         from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         graph = ctx.graph
 
         class_fqn = "MyApp.Controllers.ReportsController"
-        _add_class(
+        add_class(
             graph,
             class_fqn,
             "ReportsController",
@@ -442,7 +356,7 @@ class TestEdgeCases:
             annotations=["ApiController", "Route"],
             annotation_args={"": "api/[controller]/[action]"},
         )
-        _add_method(
+        add_method(
             graph,
             class_fqn,
             "Generate",

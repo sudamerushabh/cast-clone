@@ -9,115 +9,7 @@ from app.models.context import AnalysisContext
 from app.models.manifest import ProjectManifest, DetectedFramework
 from app.stages.plugins.base import PluginDetectionResult
 from app.stages.plugins.aspnet.di import ASPNetDIPlugin
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_context() -> AnalysisContext:
-    ctx = AnalysisContext(project_id="test-dotnet")
-    ctx.graph = SymbolGraph()
-    ctx.manifest = ProjectManifest(root_path=Path("/code"))
-    ctx.manifest.detected_frameworks = [
-        DetectedFramework(name="aspnet", language="csharp", confidence=Confidence.HIGH, evidence=["csproj"]),
-    ]
-    return ctx
-
-
-def _add_class(
-    graph: SymbolGraph,
-    fqn: str,
-    name: str,
-    *,
-    base_class: str = "",
-    implements: list[str] | None = None,
-    annotations: list[str] | None = None,
-    annotation_args: dict[str, str] | None = None,
-    is_interface: bool = False,
-    type_args: list[str] | None = None,
-) -> GraphNode:
-    node = GraphNode(
-        fqn=fqn,
-        name=name,
-        kind=NodeKind.INTERFACE if is_interface else NodeKind.CLASS,
-        language="csharp",
-        properties={
-            "annotations": annotations or [],
-            "annotation_args": annotation_args or {},
-            "base_class": base_class,
-            "implements": implements or [],
-            "type_args": type_args or [],
-        },
-    )
-    graph.add_node(node)
-    return node
-
-
-def _add_method(
-    graph: SymbolGraph,
-    class_fqn: str,
-    method_name: str,
-    *,
-    annotations: list[str] | None = None,
-    annotation_args: dict[str, str] | None = None,
-    parameters: list[dict] | None = None,
-    return_type: str = "void",
-    is_constructor: bool = False,
-) -> GraphNode:
-    fqn = f"{class_fqn}.{method_name}"
-    node = GraphNode(
-        fqn=fqn,
-        name=method_name,
-        kind=NodeKind.FUNCTION,
-        language="csharp",
-        properties={
-            "annotations": annotations or [],
-            "annotation_args": annotation_args or {},
-            "parameters": parameters or [],
-            "return_type": return_type,
-            "is_constructor": is_constructor,
-        },
-    )
-    graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=class_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-        confidence=Confidence.HIGH, evidence="treesitter",
-    ))
-    return node
-
-
-def _add_field(
-    graph: SymbolGraph,
-    class_fqn: str,
-    field_name: str,
-    field_type: str,
-    *,
-    annotations: list[str] | None = None,
-    annotation_args: dict[str, str] | None = None,
-    is_property: bool = False,
-    type_args: list[str] | None = None,
-) -> GraphNode:
-    fqn = f"{class_fqn}.{field_name}"
-    node = GraphNode(
-        fqn=fqn,
-        name=field_name,
-        kind=NodeKind.FIELD,
-        language="csharp",
-        properties={
-            "type": field_type,
-            "annotations": annotations or [],
-            "annotation_args": annotation_args or {},
-            "is_property": is_property,
-            "type_args": type_args or [],
-        },
-    )
-    graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=class_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-        confidence=Confidence.HIGH, evidence="treesitter",
-    ))
-    return node
+from tests.unit.helpers import make_dotnet_context, add_class, add_method, add_field
 
 
 def _add_di_registrations(graph: SymbolGraph, class_fqn: str, registrations: list[dict]) -> None:
@@ -135,7 +27,7 @@ class TestDetection:
     def test_detects_aspnet_framework(self):
         """Plugin detects ASP.NET when 'aspnet' framework is in manifest."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
         result = plugin.detect(ctx)
         assert result.confidence == Confidence.HIGH
         assert result.is_active is True
@@ -160,17 +52,17 @@ class TestServiceRegistration:
     async def test_addscoped_creates_injects_edge(self):
         """AddScoped<IService, ServiceImpl> creates INJECTS edge with lifetime=scoped."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
         # Program class with DI registration
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddScoped", "interface": "IUserService", "implementation": "UserService"},
         ])
 
         # The interface and implementation
-        _add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
-        _add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
+        add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
+        add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
 
         result = await plugin.extract(ctx)
         inject_edges = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
@@ -186,15 +78,15 @@ class TestServiceRegistration:
     async def test_addsingleton_lifetime(self):
         """AddSingleton registration records lifetime=singleton."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddSingleton", "interface": "ICacheService", "implementation": "CacheService"},
         ])
 
-        _add_class(ctx.graph, "MyApp.ICacheService", "ICacheService", is_interface=True)
-        _add_class(ctx.graph, "MyApp.CacheService", "CacheService", implements=["ICacheService"])
+        add_class(ctx.graph, "MyApp.ICacheService", "ICacheService", is_interface=True)
+        add_class(ctx.graph, "MyApp.CacheService", "CacheService", implements=["ICacheService"])
 
         result = await plugin.extract(ctx)
         inject_edges = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
@@ -205,15 +97,15 @@ class TestServiceRegistration:
     async def test_addtransient_lifetime(self):
         """AddTransient registration records lifetime=transient."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddTransient", "interface": "IEmailSender", "implementation": "EmailSender"},
         ])
 
-        _add_class(ctx.graph, "MyApp.IEmailSender", "IEmailSender", is_interface=True)
-        _add_class(ctx.graph, "MyApp.EmailSender", "EmailSender", implements=["IEmailSender"])
+        add_class(ctx.graph, "MyApp.IEmailSender", "IEmailSender", is_interface=True)
+        add_class(ctx.graph, "MyApp.EmailSender", "EmailSender", implements=["IEmailSender"])
 
         result = await plugin.extract(ctx)
         inject_edges = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
@@ -230,26 +122,26 @@ class TestConstructorInjection:
     async def test_constructor_params_resolved_via_di(self):
         """Constructor with interface-typed params resolves to concrete impl via DI registration."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
         # DI registrations
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddScoped", "interface": "IUserService", "implementation": "UserService"},
             {"method": "AddScoped", "interface": "IOrderService", "implementation": "OrderService"},
         ])
 
         # Interfaces
-        _add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
-        _add_class(ctx.graph, "MyApp.IOrderService", "IOrderService", is_interface=True)
+        add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
+        add_class(ctx.graph, "MyApp.IOrderService", "IOrderService", is_interface=True)
 
         # Implementations
-        _add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
-        _add_class(ctx.graph, "MyApp.OrderService", "OrderService", implements=["IOrderService"])
+        add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
+        add_class(ctx.graph, "MyApp.OrderService", "OrderService", implements=["IOrderService"])
 
         # Controller with constructor injection
-        _add_class(ctx.graph, "MyApp.UserController", "UserController")
-        _add_method(
+        add_class(ctx.graph, "MyApp.UserController", "UserController")
+        add_method(
             ctx.graph, "MyApp.UserController", ".ctor",
             is_constructor=True,
             parameters=[
@@ -284,15 +176,15 @@ class TestLayerClassification:
     async def test_service_classified_as_business_logic(self):
         """Classes registered as services are classified as Business Logic."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddScoped", "interface": "IUserService", "implementation": "UserService"},
         ])
 
-        _add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
-        _add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
+        add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
+        add_class(ctx.graph, "MyApp.UserService", "UserService", implements=["IUserService"])
 
         result = await plugin.extract(ctx)
         assert result.layer_assignments.get("MyApp.UserService") == "Business Logic"
@@ -301,15 +193,15 @@ class TestLayerClassification:
     async def test_repository_classified_as_data_access(self):
         """Classes ending in 'Repository' are classified as Data Access."""
         plugin = ASPNetDIPlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
-        _add_class(ctx.graph, "MyApp.Program", "Program")
+        add_class(ctx.graph, "MyApp.Program", "Program")
         _add_di_registrations(ctx.graph, "MyApp.Program", [
             {"method": "AddScoped", "interface": "IUserRepository", "implementation": "UserRepository"},
         ])
 
-        _add_class(ctx.graph, "MyApp.IUserRepository", "IUserRepository", is_interface=True)
-        _add_class(ctx.graph, "MyApp.UserRepository", "UserRepository", implements=["IUserRepository"])
+        add_class(ctx.graph, "MyApp.IUserRepository", "IUserRepository", is_interface=True)
+        add_class(ctx.graph, "MyApp.UserRepository", "UserRepository", implements=["IUserRepository"])
 
         result = await plugin.extract(ctx)
         assert result.layer_assignments.get("MyApp.UserRepository") == "Data Access"

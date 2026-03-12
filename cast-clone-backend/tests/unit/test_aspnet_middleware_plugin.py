@@ -8,20 +8,7 @@ from app.models.graph import GraphNode, GraphEdge, SymbolGraph
 from app.models.context import AnalysisContext
 from app.models.manifest import ProjectManifest, DetectedFramework
 from app.stages.plugins.aspnet.middleware import ASPNetMiddlewarePlugin
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_context() -> AnalysisContext:
-    ctx = AnalysisContext(project_id="test-dotnet")
-    ctx.graph = SymbolGraph()
-    ctx.manifest = ProjectManifest(root_path=Path("/code"))
-    ctx.manifest.detected_frameworks = [
-        DetectedFramework(name="aspnet", language="csharp", confidence=Confidence.HIGH, evidence=["csproj"]),
-    ]
-    return ctx
+from tests.unit.helpers import make_dotnet_context
 
 
 def _add_program_class(
@@ -52,7 +39,7 @@ class TestMiddlewareExtraction:
     async def test_extracts_middleware_chain(self):
         """Given 4 middleware calls, should produce 3 MIDDLEWARE_CHAIN edges linking consecutive items."""
         plugin = ASPNetMiddlewarePlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
         _add_program_class(
             ctx.graph, "MyApp.Program", "Program",
@@ -81,7 +68,7 @@ class TestMiddlewareExtraction:
     async def test_warns_on_wrong_auth_order(self):
         """UseAuthorization before UseAuthentication should produce a warning."""
         plugin = ASPNetMiddlewarePlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
         _add_program_class(
             ctx.graph, "MyApp.Program", "Program",
@@ -99,7 +86,7 @@ class TestMiddlewareExtraction:
     async def test_warns_cors_after_auth(self):
         """UseCors after UseAuthentication should produce a warning."""
         plugin = ASPNetMiddlewarePlugin()
-        ctx = _make_context()
+        ctx = make_dotnet_context()
 
         _add_program_class(
             ctx.graph, "MyApp.Program", "Program",
