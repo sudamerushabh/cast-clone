@@ -10,6 +10,26 @@ from app.models.manifest import ProjectManifest, DetectedFramework
 from app.stages.plugins.aspnet.middleware import ASPNetMiddlewarePlugin
 from tests.unit.helpers import make_dotnet_context
 
+# ---------------------------------------------------------------------------
+# Detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestDetection:
+    def test_detects_via_middleware_calls_fallback(self):
+        """Detects ASP.NET middleware via middleware_calls property."""
+        plugin = ASPNetMiddlewarePlugin()
+        ctx = AnalysisContext(project_id="test")
+        ctx.graph = SymbolGraph()
+        ctx.manifest = ProjectManifest(root_path=Path("/code"))
+        ctx.manifest.detected_frameworks = []
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"middleware_calls": ["UseRouting", "UseAuthorization"]},
+        ))
+        result = plugin.detect(ctx)
+        assert result.is_active
+
 
 def _add_program_class(
     graph: SymbolGraph,

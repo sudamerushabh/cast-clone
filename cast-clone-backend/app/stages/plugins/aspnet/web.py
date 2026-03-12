@@ -21,7 +21,7 @@ import structlog
 
 from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -39,6 +39,15 @@ _HTTP_METHODS: dict[str, str] = {
     "HttpPut": "PUT",
     "HttpDelete": "DELETE",
     "HttpPatch": "PATCH",
+}
+
+# Minimal API MapXxx -> HTTP verb
+_MAP_METHODS: dict[str, str] = {
+    "MapGet": "GET",
+    "MapPost": "POST",
+    "MapPut": "PUT",
+    "MapDelete": "DELETE",
+    "MapPatch": "PATCH",
 }
 
 # Base classes that indicate a controller
@@ -172,6 +181,11 @@ class ASPNetWebPlugin(FrameworkPlugin):
                     )
                 )
 
+        # Extract Minimal API endpoints (app.MapGet, MapPost, etc.)
+        self._extract_minimal_apis(
+            graph, nodes, edges, entry_points, layer_assignments
+        )
+
         log.info("aspnet_web_extract_done", endpoints=len(nodes))
 
         return PluginResult(
@@ -193,6 +207,102 @@ class ASPNetWebPlugin(FrameworkPlugin):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _extract_minimal_apis(
+        self,
+        graph: SymbolGraph,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+        entry_points: list[EntryPoint],
+        layer_assignments: dict[str, str],
+    ) -> None:
+        """Extract Minimal API endpoints (app.MapGet/MapPost/etc.) from class nodes."""
+        for class_node in graph.nodes.values():
+            if class_node.kind != NodeKind.CLASS:
+                continue
+
+            # Process direct minimal API endpoints
+            minimal_endpoints = class_node.properties.get("minimal_api_endpoints", [])
+            for ep_data in minimal_endpoints:
+                self._create_minimal_endpoint(
+                    graph, ep_data, "", nodes, edges, entry_points
+                )
+
+            # Process map groups (prefixed endpoint groups)
+            minimal_groups = class_node.properties.get("minimal_api_groups", [])
+            for group in minimal_groups:
+                prefix = group.get("prefix", "")
+                for ep_data in group.get("endpoints", []):
+                    self._create_minimal_endpoint(
+                        graph, ep_data, prefix, nodes, edges, entry_points
+                    )
+
+    def _create_minimal_endpoint(
+        self,
+        graph: SymbolGraph,
+        ep_data: dict,
+        prefix: str,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+        entry_points: list[EntryPoint],
+    ) -> None:
+        """Create an API_ENDPOINT node from a minimal API registration dict."""
+        map_method = ep_data.get("method", "")
+        http_method = _MAP_METHODS.get(map_method)
+        if http_method is None:
+            return
+
+        path = ep_data.get("path", "")
+        handler_fqn = ep_data.get("handler_fqn", "")
+
+        # Combine group prefix with endpoint path
+        full_path = prefix + path if prefix else path
+
+        # Ensure leading slash
+        if full_path and not full_path.startswith("/"):
+            full_path = "/" + full_path
+        if not full_path:
+            full_path = "/"
+
+        # Normalize route parameters
+        full_path = _ROUTE_PARAM_RE.sub(r":\1", full_path)
+
+        endpoint_fqn = f"endpoint:{http_method}:{full_path}"
+        endpoint_node = GraphNode(
+            fqn=endpoint_fqn,
+            name=f"{http_method} {full_path}",
+            kind=NodeKind.API_ENDPOINT,
+            language="csharp",
+            properties={
+                "method": http_method,
+                "path": full_path,
+                "framework": "aspnet-minimal",
+                "handler_fqn": handler_fqn,
+            },
+        )
+        nodes.append(endpoint_node)
+
+        # HANDLES edge: handler -> endpoint (if handler exists in graph)
+        if handler_fqn:
+            edges.append(
+                GraphEdge(
+                    source_fqn=handler_fqn,
+                    target_fqn=endpoint_fqn,
+                    kind=EdgeKind.HANDLES,
+                    confidence=Confidence.HIGH,
+                    evidence="aspnet-web",
+                )
+            )
+
+        # Entry point for transaction discovery
+        entry_point_fqn = handler_fqn if handler_fqn else endpoint_fqn
+        entry_points.append(
+            EntryPoint(
+                fqn=entry_point_fqn,
+                kind="http_endpoint",
+                metadata={"method": http_method, "path": full_path},
+            )
+        )
 
     def _is_controller(self, node: GraphNode) -> bool:
         """Check if a class node is an ASP.NET controller."""

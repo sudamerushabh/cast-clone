@@ -42,6 +42,22 @@ class TestDetection:
         result = plugin.detect(ctx)
         assert result.is_active is False
 
+    def test_detects_via_di_registrations_fallback(self):
+        """Detects ASP.NET via di_registrations property when no framework in manifest."""
+        plugin = ASPNetDIPlugin()
+        ctx = AnalysisContext(project_id="test")
+        ctx.graph = SymbolGraph()
+        ctx.manifest = ProjectManifest(root_path=Path("/code"))
+        ctx.manifest.detected_frameworks = []
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"di_registrations": [
+                {"method": "AddScoped", "interface": "IService", "implementation": "ServiceImpl"},
+            ]},
+        ))
+        result = plugin.detect(ctx)
+        assert result.is_active
+
 
 # ---------------------------------------------------------------------------
 # Service registration tests
@@ -111,6 +127,23 @@ class TestServiceRegistration:
         inject_edges = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
         assert len(inject_edges) == 1
         assert inject_edges[0].properties.get("lifetime") == "transient"
+
+    @pytest.mark.asyncio
+    async def test_self_registration_without_interface(self):
+        """AddScoped<Service>() with no interface -> registers class as its own type."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.EmailService", "EmailService")
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"di_registrations": [
+                {"method": "AddScoped", "interface": "EmailService", "implementation": "EmailService"},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        injects = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
+        assert len(injects) >= 1
+        assert injects[0].properties.get("lifetime") == "scoped"
 
 
 # ---------------------------------------------------------------------------

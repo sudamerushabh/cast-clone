@@ -8,6 +8,7 @@ from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.aspnet.web import ASPNetWebPlugin
 from tests.unit.helpers import make_dotnet_context, add_class, add_method
 
 
@@ -368,3 +369,115 @@ class TestEdgeCases:
 
         assert result.node_count == 1
         assert result.nodes[0].properties["path"] == "/api/reports/generate"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Minimal APIs
+# ---------------------------------------------------------------------------
+
+
+class TestMinimalApis:
+    """Test Minimal API endpoint extraction (app.MapGet, MapPost, etc.)."""
+
+    @pytest.mark.asyncio
+    async def test_map_get_creates_endpoint(self) -> None:
+        """app.MapGet('/api/users', handler) -> GET /api/users endpoint."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_endpoints": [
+                {"method": "MapGet", "path": "/api/users", "handler_fqn": "MyApp.Handlers.GetUsers"},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+        assert len(endpoints) == 1
+        assert endpoints[0].properties["method"] == "GET"
+        assert endpoints[0].properties["path"] == "/api/users"
+
+    @pytest.mark.asyncio
+    async def test_map_post_creates_endpoint(self) -> None:
+        """app.MapPost('/api/users', handler) -> POST /api/users endpoint."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_endpoints": [
+                {"method": "MapPost", "path": "/api/users", "handler_fqn": "MyApp.Handlers.CreateUser"},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+        assert len(endpoints) == 1
+        assert endpoints[0].properties["method"] == "POST"
+        assert endpoints[0].properties["path"] == "/api/users"
+
+    @pytest.mark.asyncio
+    async def test_map_group_combines_prefix(self) -> None:
+        """MapGroup('/api/v1').MapGet('/products') -> GET /api/v1/products."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_groups": [
+                {"prefix": "/api/v1", "endpoints": [
+                    {"method": "MapGet", "path": "/products", "handler_fqn": "MyApp.Handlers.GetProducts"},
+                ]},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+        assert len(endpoints) == 1
+        assert endpoints[0].properties["path"] == "/api/v1/products"
+
+    @pytest.mark.asyncio
+    async def test_handles_edge_created_for_minimal_api(self) -> None:
+        """Minimal API endpoint creates a HANDLES edge from handler to endpoint."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_endpoints": [
+                {"method": "MapGet", "path": "/api/users", "handler_fqn": "MyApp.Handlers.GetUsers"},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        handles_edges = [e for e in result.edges if e.kind == EdgeKind.HANDLES]
+        assert len(handles_edges) == 1
+        assert handles_edges[0].source_fqn == "MyApp.Handlers.GetUsers"
+
+    @pytest.mark.asyncio
+    async def test_entry_point_created_for_minimal_api(self) -> None:
+        """Minimal API endpoint registers an http_endpoint entry point."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_endpoints": [
+                {"method": "MapDelete", "path": "/api/users/{id}", "handler_fqn": "MyApp.Handlers.DeleteUser"},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        assert len(result.entry_points) == 1
+        assert result.entry_points[0].kind == "http_endpoint"
+        assert result.entry_points[0].metadata["method"] == "DELETE"
+
+    @pytest.mark.asyncio
+    async def test_all_map_methods_supported(self) -> None:
+        """MapGet, MapPost, MapPut, MapDelete, MapPatch all produce correct verbs."""
+        plugin = ASPNetWebPlugin()
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"minimal_api_endpoints": [
+                {"method": "MapGet", "path": "/a", "handler_fqn": ""},
+                {"method": "MapPost", "path": "/b", "handler_fqn": ""},
+                {"method": "MapPut", "path": "/c", "handler_fqn": ""},
+                {"method": "MapDelete", "path": "/d", "handler_fqn": ""},
+                {"method": "MapPatch", "path": "/e", "handler_fqn": ""},
+            ]},
+        ))
+        result = await plugin.extract(ctx)
+        methods = {n.properties["method"] for n in result.nodes if n.kind == NodeKind.API_ENDPOINT}
+        assert methods == {"GET", "POST", "PUT", "DELETE", "PATCH"}
