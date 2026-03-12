@@ -11,11 +11,19 @@ from app.stages.plugins.base import (
     PluginDetectionResult,
     PluginResult,
 )
+from app.stages.plugins.registry import (
+    PluginRegistry,
+    global_registry,
+    run_framework_plugins,
+)
 
 __all__ = [
     "FrameworkPlugin",
     "LayerRule",
     "LayerRules",
     "PluginDetectionResult",
+    "PluginRegistry",
     "PluginResult",
+    "global_registry",
+    "run_framework_plugins",
 ]
