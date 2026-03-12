@@ -17,6 +17,17 @@ from app.stages.plugins.registry import (
     run_framework_plugins,
 )
 
+# Register all built-in plugins with the global registry
+from app.stages.plugins.spring.di import SpringDIPlugin
+from app.stages.plugins.spring.web import SpringWebPlugin
+from app.stages.plugins.spring.data import SpringDataPlugin
+from app.stages.plugins.hibernate.jpa import HibernateJPAPlugin
+
+global_registry.register(SpringDIPlugin)
+global_registry.register(HibernateJPAPlugin)
+global_registry.register(SpringWebPlugin)
+global_registry.register(SpringDataPlugin)
+
 __all__ = [
     "FrameworkPlugin",
     "LayerRule",

@@ -225,14 +225,19 @@ class SpringDIPlugin(FrameworkPlugin):
                     if child.properties.get("is_constructor"):
                         params = child.properties.get("params", [])
                         for param in params:
-                            param_type = param.get("type", "")
-                            param_qualifier = None
-                            param_annotations = param.get("annotations", [])
-                            # Check if param has @Qualifier
-                            if isinstance(param_annotations, list):
-                                for pa in param_annotations:
-                                    if isinstance(pa, dict) and pa.get("name") == "Qualifier":
-                                        param_qualifier = pa.get("value")
+                            # Params may be strings ("Type name") or dicts
+                            if isinstance(param, str):
+                                parts = param.strip().split()
+                                param_type = parts[0] if parts else ""
+                                param_qualifier = None
+                            else:
+                                param_type = param.get("type", "")
+                                param_qualifier = None
+                                param_annotations = param.get("annotations", [])
+                                if isinstance(param_annotations, list):
+                                    for pa in param_annotations:
+                                        if isinstance(pa, dict) and pa.get("name") == "Qualifier":
+                                            param_qualifier = pa.get("value")
                             new_edges = self._resolve_type_to_beans(
                                 source_fqn=node.fqn,
                                 target_type=param_type,

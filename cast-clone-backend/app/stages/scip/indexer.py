@@ -111,6 +111,7 @@ def build_scip_command(
     config: SCIPIndexerConfig,
     project_name: str,
     root_path: Path,
+    build_tool: str | None = None,
 ) -> list[str]:
     """Build the CLI command for a SCIP indexer.
 
@@ -118,6 +119,7 @@ def build_scip_command(
         config: Indexer configuration.
         project_name: Project name (used by scip-python).
         root_path: Project root directory.
+        build_tool: Explicit build tool name for scip-java when multiple are detected.
 
     Returns:
         Command list suitable for subprocess execution.
@@ -125,6 +127,8 @@ def build_scip_command(
     cmd = []
     for part in config.command_template:
         cmd.append(part.format(project_name=project_name, root_path=str(root_path)))
+    if build_tool and config.name == "scip-java":
+        cmd.append(f"--build-tool={build_tool}")
     return cmd
 
 
@@ -176,7 +180,19 @@ async def run_single_scip_indexer(
         RuntimeError: If the indexer subprocess exits with non-zero code.
     """
     root_path = context.manifest.root_path
-    command = build_scip_command(indexer_config, project_name, root_path)
+
+    # Detect build tool for scip-java when multiple build tools are present
+    build_tool: str | None = None
+    if indexer_config.name == "scip-java" and context.manifest:
+        java_build_tools = [
+            bt.name for bt in context.manifest.build_tools
+            if bt.language == "java" and bt.name in ("maven", "gradle")
+        ]
+        if len(java_build_tools) > 1:
+            # Prefer Maven over Gradle for SCIP indexing
+            build_tool = "maven" if "maven" in java_build_tools else java_build_tools[0]
+
+    command = build_scip_command(indexer_config, project_name, root_path, build_tool)
 
     logger.info(
         "scip.indexer.start",

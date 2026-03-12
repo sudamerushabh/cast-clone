@@ -49,18 +49,33 @@ class MergeStats:
 def scip_symbol_to_fqn(scip_symbol: str) -> str:
     """Convert a SCIP symbol string to our internal FQN format.
 
-    SCIP symbol format examples:
-        maven . com/example 1.0 UserService#
-        maven . com/example 1.0 UserService#createUser().
-        npm @sourcegraph/scip-typescript 0.2.0 src/index.ts/App#
-        pip . myproject 0.1.0 app/main.py/create_app().
-        local 42
+    SCIP symbol format: ``<scheme> <manager> <package> <version> <descriptors>``
 
-    We extract the descriptor portion and convert:
-    - Package separators: `/` -> `.`
-    - Class suffix: `#` -> removed
-    - Method suffix: `().` -> removed
-    - Field suffix: `.` (trailing) -> removed
+    For Java (semanticdb/maven), the descriptors already contain the full
+    Java package path, so the SCIP "package" field (Maven artifact coords)
+    must be ignored.  For other schemes (npm, pip) the package field
+    contributes to the FQN.
+
+    Examples::
+
+        semanticdb maven maven/org.example/myapp 1.0 com/example/UserService#
+          -> com.example.UserService
+
+        semanticdb maven maven/org.example/myapp 1.0 com/example/UserService#createUser().
+          -> com.example.UserService.createUser
+
+        npm @sourcegraph/scip-typescript 0.2.0 src/index.ts/App#
+          -> sourcegraph.scip-typescript.src.index.ts.App
+
+        local 42
+          -> (empty)
+
+    Conversion rules:
+    - ``/`` -> ``.``
+    - Class suffix ``#`` -> removed
+    - Method suffix ``().`` -> removed
+    - Field suffix ``.`` (trailing) -> removed
+    - Back-ticked names like ```<init>``` -> stripped of back-ticks
 
     Args:
         scip_symbol: Raw SCIP symbol string.
@@ -76,33 +91,43 @@ def scip_symbol_to_fqn(scip_symbol: str) -> str:
         return ""
 
     # SCIP symbol format: <scheme> <manager> <package> <version> <descriptors>
-    # We need the package + descriptors parts
     parts = scip_symbol.split(" ")
     if len(parts) < 4:
         return ""
 
-    # Determine which part is the package and which are descriptors.
     # Standard form (5+ parts): scheme manager package version descriptor...
-    # Short form (4 parts): scheme package version descriptor
-    # The manager field can be "." (empty) or a real name.
     if len(parts) >= 5:
+        scheme = parts[0]
+        manager = parts[1]
         package = parts[2]
         descriptors = " ".join(parts[4:])
     else:
-        # 4 parts: the manager might be the package itself (e.g. npm scoped)
-        # Heuristic: if parts[1] starts with @ or parts[2] looks like a version,
-        # treat parts[1] as package and parts[3] as descriptor
+        scheme = parts[0]
+        manager = ""
         package = parts[1]
         descriptors = parts[3] if len(parts) > 3 else ""
 
-    # Convert package: com/example -> com.example
-    # Handle scoped packages like @sourcegraph/scip-typescript
-    # Strip @ prefix and convert / to .
-    fqn_base = package.lstrip("@").replace("/", ".")
+    # For Java/Scala (semanticdb maven), the descriptors already contain the
+    # full package path (e.g. org/springframework/.../ClassName#).  The SCIP
+    # "package" field holds Maven coordinates (maven/groupId/artifactId) which
+    # should NOT be included in the FQN.
+    is_java_maven = (
+        manager == "maven"
+        or scheme == "semanticdb"
+        or package.startswith("maven/")
+    )
+
+    if is_java_maven:
+        # Use only the descriptors for the FQN
+        fqn_base = ""
+    else:
+        # For npm/pip/etc., the package contributes to the FQN
+        fqn_base = package.lstrip("@").replace("/", ".")
 
     if descriptors:
-        # Clean descriptor suffixes
         desc = descriptors
+        # Remove back-ticks around special names like `<init>`
+        desc = desc.replace("`", "")
         # Remove trailing method marker: ().
         desc = re.sub(r"\(\)\.$", "", desc)
         # Remove trailing class marker: #
@@ -111,7 +136,7 @@ def scip_symbol_to_fqn(scip_symbol: str) -> str:
         desc = desc.rstrip(".")
         # Convert remaining # to . (nested class/member separator)
         desc = desc.replace("#", ".")
-        # Convert / to . (path separators in TypeScript/Python symbols)
+        # Convert / to . (path separators)
         desc = desc.replace("/", ".")
 
         if desc:

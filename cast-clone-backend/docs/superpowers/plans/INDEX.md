@@ -1,4 +1,10 @@
-# Phase 1 Implementation Plans — Master Index
+# Implementation Plans — Master Index
+
+Plans for all phases. Execute in dependency order shown below.
+
+---
+
+# Phase 1 — Core Analysis Engine
 
 All plans for Phase 1 (Core Analysis Engine). Execute in dependency order shown below.
 
@@ -53,3 +59,39 @@ M1 (foundation)
 - **17 plans**, ~150 tasks, ~400 test cases
 - Estimated: ~50 source files created, ~5 modified
 - All plans follow TDD: write failing test → implement → verify → commit
+
+---
+
+# Phase 2 — Visualization & Navigation
+
+Spec: `cast-clone-backend/docs/02-PHASE-2-VISUALIZATION.md`
+
+## Execution Order
+
+```
+M1 (Backend APIs) ─────────────────────────┐
+                                            ├──> M4 (Graph Visualization)
+M2 (Frontend Foundation) ──> M3 (Pages) ───┤
+                                            ├──> M5 (Panels + Search)  ── parallel ──┐
+                                            └──> M6 (Transaction View) ── parallel ──┘
+                                                      └──> M7 (Code Viewer + Export)
+```
+
+## Plan Files
+
+| Milestone | File | Description | Depends On |
+|-----------|------|-------------|------------|
+| **M1** | `2026-03-12-phase2-m1-backend-api.md` | 7 new API endpoints: modules, classes-in-module, methods-in-class, aggregated edges, transaction list/detail, code viewer (with path traversal protection) | — |
+| **M2** | `2026-03-12-phase2-m2-frontend-foundation.md` | TypeScript types (mirroring backend schemas), API client (fetch-based), AppLayout shell, Sidebar, shadcn components | — |
+| **M3** | `2026-03-12-phase2-m3-frontend-pages.md` | Project list page (card grid + status badges), project dashboard (analysis trigger + status polling + "View Graph" link), landing redirect | M2 |
+| **M4** | `2026-03-12-phase2-m4-graph-visualization.md` | Cytoscape.js integration, extension registration, graph styles, element converters, useGraph hook, GraphView wrapper, GraphToolbar, Architecture (dagre TB) + Dependency (fcose) views, compound node drill-down | M1, M3 |
+| **M5** | `2026-03-12-phase2-m5-panels-search.md` | NodeProperties right sidebar, Cmd+K SearchDialog, useSearch hook, FilterPanel (client-side hide/show), Breadcrumbs | M4 |
+| **M6** | `2026-03-12-phase2-m6-transaction-view.md` | TransactionSelector dropdown, useTransactions hook, transactionToElements converter, dagre LR layout, entry-point/terminal styling | M4 |
+| **M7** | `2026-03-12-phase2-m7-code-viewer-export.md` | Monaco Editor code viewer (bottom panel, read-only, line highlight), PNG/SVG/JSON export buttons via Cytoscape built-ins | M5 |
+
+## Totals
+
+- **7 plans**, ~50 tasks
+- Backend: ~3 new files, ~1 modified
+- Frontend: ~20 new files, ~5 modified
+- All backend tasks follow TDD; frontend verified via typecheck + manual testing

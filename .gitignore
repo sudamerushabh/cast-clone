@@ -39,6 +39,14 @@ docker-compose.override.yml
 # Worktrees
 .worktrees/
 
+# SCIP / Maven build artifacts in test fixtures
+**/target/
+index.scip
+*.scip
+
+# Coverage
+.coverage
+
 # OS
 .DS_Store
 Thumbs.db

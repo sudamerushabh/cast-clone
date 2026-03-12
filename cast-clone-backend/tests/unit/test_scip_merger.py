@@ -39,6 +39,36 @@ class TestSCIPSymbolToFQN:
         fqn = scip_symbol_to_fqn("maven . com/example 1.0 UserService#userRepository.")
         assert fqn == "com.example.UserService.userRepository"
 
+    def test_semanticdb_java_class(self):
+        """Real scip-java output uses semanticdb scheme with Maven coordinates."""
+        fqn = scip_symbol_to_fqn(
+            "semanticdb maven maven/org.springframework.samples/spring-petclinic "
+            "4.0.0-SNAPSHOT org/springframework/samples/petclinic/owner/OwnerController#"
+        )
+        assert fqn == "org.springframework.samples.petclinic.owner.OwnerController"
+
+    def test_semanticdb_java_method(self):
+        fqn = scip_symbol_to_fqn(
+            "semanticdb maven maven/org.springframework.samples/spring-petclinic "
+            "4.0.0-SNAPSHOT org/springframework/samples/petclinic/owner/OwnerController#showOwner()."
+        )
+        assert fqn == "org.springframework.samples.petclinic.owner.OwnerController.showOwner"
+
+    def test_semanticdb_java_nested_class(self):
+        fqn = scip_symbol_to_fqn(
+            "semanticdb maven maven/org.example/app "
+            "1.0 com/example/Outer#Inner#method()."
+        )
+        assert fqn == "com.example.Outer.Inner.method"
+
+    def test_semanticdb_java_init(self):
+        """Back-ticked <init> should have back-ticks stripped."""
+        fqn = scip_symbol_to_fqn(
+            "semanticdb maven maven/org.example/app "
+            "1.0 com/example/Foo#`<init>`()."
+        )
+        assert fqn == "com.example.Foo.<init>"
+
     def test_typescript_symbol(self):
         fqn = scip_symbol_to_fqn(
             "npm @sourcegraph/scip-typescript 0.2.0 src/index.ts/App#"
