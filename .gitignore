@@ -1,6 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+*.whl
+
+# Node
 node_modules/
 .next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
+
+# OS
 .DS_Store
-*.pem
+Thumbs.db
