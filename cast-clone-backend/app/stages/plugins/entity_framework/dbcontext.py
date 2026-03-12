@@ -1,4 +1,4 @@
-"""Entity Framework Core plugin — extracts entity-to-database mappings from DbContext classes.
+"""Entity Framework Core plugin — DbContext entity-to-database mappings.
 
 Finds DbContext subclasses, resolves DbSet<T> properties to entity registrations,
 extracts [Table], [Column], [Key], [ForeignKey] data annotations, and infers
@@ -14,15 +14,16 @@ Produces:
 
 from __future__ import annotations
 
-import structlog
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
+import structlog
+
+from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.models.context import AnalysisContext
 from app.stages.plugins.base import (
     FrameworkPlugin,
-    LayerRules,
     PluginDetectionResult,
     PluginResult,
 )
@@ -30,9 +31,16 @@ from app.stages.plugins.base import (
 logger = structlog.get_logger()
 
 # Collection types that indicate a one-to-many navigation property
-_COLLECTION_TYPES = frozenset({
-    "ICollection", "IEnumerable", "IList", "List", "HashSet", "ISet",
-})
+_COLLECTION_TYPES = frozenset(
+    {
+        "ICollection",
+        "IEnumerable",
+        "IList",
+        "List",
+        "HashSet",
+        "ISet",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +63,7 @@ class _FieldInfo:
 @dataclass
 class _EntityInfo:
     """An entity class registered in a DbContext via DbSet<T>."""
+
     fqn: str
     name: str
     table_name: str  # from [Table] annotation or DbSet property name
@@ -66,7 +75,9 @@ class _DbContextInfo:
     fqn: str
     name: str
     # Maps entity simple name -> (entity FQN, DbSet property name)
-    entity_registrations: dict[str, tuple[str, str]] = dataclass_field(default_factory=dict)
+    entity_registrations: dict[str, tuple[str, str]] = dataclass_field(
+        default_factory=dict,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +96,14 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         if context.manifest:
             for fw in context.manifest.detected_frameworks:
                 name_lower = fw.name.lower()
-                if "aspnet" in name_lower or "entity" in name_lower or "efcore" in name_lower:
+                if any(
+                    k in name_lower
+                    for k in (
+                        "aspnet",
+                        "entity",
+                        "efcore",
+                    )
+                ):
                     return PluginDetectionResult(
                         confidence=Confidence.HIGH,
                         reason=f"Framework '{fw.name}' detected in manifest",
@@ -136,7 +154,8 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                     entity_fqn = self._resolve_entity_fqn(graph, entity_simple_name)
                     dbset_prop_name = field_node.name
                     ctx_info.entity_registrations[entity_simple_name] = (
-                        entity_fqn, dbset_prop_name
+                        entity_fqn,
+                        dbset_prop_name,
                     )
 
             db_contexts.append(ctx_info)
@@ -144,10 +163,13 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         # Step 2: Collect all entities and build _EntityInfo
         entities: dict[str, _EntityInfo] = {}  # keyed by simple name
         for ctx_info in db_contexts:
-            for entity_simple_name, (entity_fqn, dbset_prop_name) in ctx_info.entity_registrations.items():
+            for entity_simple_name, (
+                entity_fqn,
+                dbset_prop_name,
+            ) in ctx_info.entity_registrations.items():
                 entity_node = graph.get_node(entity_fqn)
 
-                # Determine table name: [Table("x")] annotation on entity, else DbSet property name
+                # Table name: [Table("x")] annotation or DbSet prop name
                 table_name = dbset_prop_name  # default
                 if entity_node:
                     ann_args = entity_node.properties.get("annotation_args", {})
@@ -172,31 +194,41 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                         if field_node is None or field_node.kind != NodeKind.FIELD:
                             continue
 
-                        field_annotations = set(field_node.properties.get("annotations", []))
-                        field_annotation_args = field_node.properties.get("annotation_args", {})
+                        field_annotations = set(
+                            field_node.properties.get("annotations", [])
+                        )
+                        field_annotation_args = field_node.properties.get(
+                            "annotation_args", {}
+                        )
                         field_type_args = field_node.properties.get("type_args", [])
 
-                        entity_info.fields.append(_FieldInfo(
-                            fqn=field_node.fqn,
-                            name=field_node.name,
-                            field_type=field_node.properties.get("type", ""),
-                            annotations=field_annotations,
-                            annotation_args=field_annotation_args,
-                            type_args=field_type_args,
-                            is_property=field_node.properties.get("is_property", False),
-                            is_key="Key" in field_annotations,
-                        ))
+                        entity_info.fields.append(
+                            _FieldInfo(
+                                fqn=field_node.fqn,
+                                name=field_node.name,
+                                field_type=field_node.properties.get("type", ""),
+                                annotations=field_annotations,
+                                annotation_args=field_annotation_args,
+                                type_args=field_type_args,
+                                is_property=field_node.properties.get(
+                                    "is_property", False
+                                ),
+                                is_key="Key" in field_annotations,
+                            )
+                        )
 
                 entities[entity_simple_name] = entity_info
 
                 # MANAGES edge: DbContext -> entity
-                edges.append(GraphEdge(
-                    source_fqn=ctx_info.fqn,
-                    target_fqn=entity_fqn,
-                    kind=EdgeKind.MANAGES,
-                    confidence=Confidence.HIGH,
-                    evidence="entity-framework",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=ctx_info.fqn,
+                        target_fqn=entity_fqn,
+                        kind=EdgeKind.MANAGES,
+                        confidence=Confidence.HIGH,
+                        evidence="entity-framework",
+                    )
+                )
 
         # Step 3: Create Table/Column nodes and relationship edges
         for entity in entities.values():
@@ -212,25 +244,33 @@ class EntityFrameworkPlugin(FrameworkPlugin):
             nodes.append(table_node)
 
             # MAPS_TO edge: entity class -> table
-            edges.append(GraphEdge(
-                source_fqn=entity.fqn,
-                target_fqn=table_fqn,
-                kind=EdgeKind.MAPS_TO,
-                confidence=Confidence.HIGH,
-                evidence="entity-framework",
-                properties={"orm": "entity-framework"},
-            ))
+            edges.append(
+                GraphEdge(
+                    source_fqn=entity.fqn,
+                    target_fqn=table_fqn,
+                    kind=EdgeKind.MAPS_TO,
+                    confidence=Confidence.HIGH,
+                    evidence="entity-framework",
+                    properties={"orm": "entity-framework"},
+                )
+            )
 
             # Process fields -> columns
             for field_info in entity.fields:
-                # Skip navigation properties (collection types and reference types to other entities)
+                # Skip navigation properties (collections / references)
                 if self._is_collection_navigation(field_info):
                     # One-to-many: infer FK on the "many" side
-                    target_entity_name = field_info.type_args[0] if field_info.type_args else ""
+                    target_entity_name = (
+                        field_info.type_args[0] if field_info.type_args else ""
+                    )
                     target_entity = entities.get(target_entity_name)
                     if target_entity:
                         self._infer_fk_from_navigation(
-                            entity, target_entity, entities, edges, warnings,
+                            entity,
+                            target_entity,
+                            entities,
+                            edges,
+                            warnings,
                         )
                     continue
 
@@ -261,13 +301,15 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                 nodes.append(col_node)
 
                 # HAS_COLUMN edge
-                edges.append(GraphEdge(
-                    source_fqn=table_fqn,
-                    target_fqn=col_fqn,
-                    kind=EdgeKind.HAS_COLUMN,
-                    confidence=Confidence.HIGH,
-                    evidence="entity-framework",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=table_fqn,
+                        target_fqn=col_fqn,
+                        kind=EdgeKind.HAS_COLUMN,
+                        confidence=Confidence.HIGH,
+                        evidence="entity-framework",
+                    )
+                )
 
                 # [ForeignKey("Author")] -> REFERENCES edge
                 if is_fk:
@@ -277,14 +319,18 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                         if target_entity:
                             target_pk = self._find_pk_column(target_entity)
                             if target_pk:
-                                target_col_fqn = f"table:{target_entity.table_name}.{target_pk}"
-                                edges.append(GraphEdge(
-                                    source_fqn=col_fqn,
-                                    target_fqn=target_col_fqn,
-                                    kind=EdgeKind.REFERENCES,
-                                    confidence=Confidence.HIGH,
-                                    evidence="entity-framework",
-                                ))
+                                target_col_fqn = (
+                                    f"table:{target_entity.table_name}.{target_pk}"
+                                )
+                                edges.append(
+                                    GraphEdge(
+                                        source_fqn=col_fqn,
+                                        target_fqn=target_col_fqn,
+                                        kind=EdgeKind.REFERENCES,
+                                        confidence=Confidence.HIGH,
+                                        evidence="entity-framework",
+                                    )
+                                )
 
         log.info(
             "ef_extract_done",
@@ -320,7 +366,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
     def _is_reference_navigation(
         self, field_info: _FieldInfo, entities: dict[str, _EntityInfo]
     ) -> bool:
-        """Check if a field is a reference navigation property (single entity reference)."""
+        """Check if a field is a reference navigation property."""
         # If the field type matches a known entity name, it's a navigation property
         field_type = field_info.field_type
         return field_type in entities
@@ -345,9 +391,10 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         edges: list[GraphEdge],
         warnings: list[str],
     ) -> None:
-        """Infer FK from a collection navigation: Author.Books -> Book.AuthorId references Author.Id.
+        """Infer FK from a collection navigation.
 
-        Looks for a conventional FK property on the target entity named <OwnerName>Id.
+        E.g. Author.Books -> Book.AuthorId references Author.Id.
+        Looks for a conventional FK on the target named <OwnerName>Id.
         """
         expected_fk_name = f"{owner_entity.name}Id"
         owner_pk = self._find_pk_column(owner_entity)
@@ -359,13 +406,15 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                 # Found the FK property — create REFERENCES edge
                 fk_col_fqn = f"table:{target_entity.table_name}.{field_info.name}"
                 pk_col_fqn = f"table:{owner_entity.table_name}.{owner_pk}"
-                edges.append(GraphEdge(
-                    source_fqn=fk_col_fqn,
-                    target_fqn=pk_col_fqn,
-                    kind=EdgeKind.REFERENCES,
-                    confidence=Confidence.MEDIUM,
-                    evidence="entity-framework:convention",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=fk_col_fqn,
+                        target_fqn=pk_col_fqn,
+                        kind=EdgeKind.REFERENCES,
+                        confidence=Confidence.MEDIUM,
+                        evidence="entity-framework:convention",
+                    )
+                )
                 return
 
         warnings.append(

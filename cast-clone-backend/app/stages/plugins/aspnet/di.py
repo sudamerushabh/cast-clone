@@ -15,20 +15,20 @@ interface-typed parameters, looks up the DI registration to find the concrete
 implementation, and creates INJECTS edges.
 
 Produces:
-- INJECTS edges: (:Interface)-[:INJECTS {framework, lifetime}]->(:Class) for registrations
-- INJECTS edges: (:Class)-[:INJECTS {framework, injection_type}]->(:Class) for constructor injection
-- Layer assignments: services->Business Logic, repositories->Data Access, DbContext->Data Access
+- INJECTS edges: (:Interface)-[:INJECTS]->(:Class) for registrations
+- INJECTS edges: (:Class)-[:INJECTS]->(:Class) for constructor injection
+- Layer assignments: services->Business Logic, repos->Data Access
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
-from app.models.context import AnalysisContext, EntryPoint
+from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.graph import GraphEdge, SymbolGraph
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -99,20 +99,22 @@ class ASPNetDIPlugin(FrameworkPlugin):
         registrations = self._collect_registrations(graph)
         log.info("aspnet_di_registrations_found", count=len(registrations))
 
-        # Phase 2: Create INJECTS edges for each registration (interface -> implementation)
+        # Phase 2: Create INJECTS edges for each registration
         for reg in registrations:
             if reg.interface_fqn and reg.implementation_fqn:
-                edges.append(GraphEdge(
-                    source_fqn=reg.interface_fqn,
-                    target_fqn=reg.implementation_fqn,
-                    kind=EdgeKind.INJECTS,
-                    confidence=Confidence.HIGH,
-                    evidence="aspnet-di",
-                    properties={
-                        "framework": "aspnet",
-                        "lifetime": reg.lifetime,
-                    },
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=reg.interface_fqn,
+                        target_fqn=reg.implementation_fqn,
+                        kind=EdgeKind.INJECTS,
+                        confidence=Confidence.HIGH,
+                        evidence="aspnet-di",
+                        properties={
+                            "framework": "aspnet",
+                            "lifetime": reg.lifetime,
+                        },
+                    )
+                )
 
         # Phase 3: Classify layers
         layer_assignments.update(self._classify_layers(graph, registrations))
@@ -122,7 +124,11 @@ class ASPNetDIPlugin(FrameworkPlugin):
         edges.extend(ctor_edges)
         log.info("aspnet_di_constructor_injections", count=len(ctor_edges))
 
-        log.info("aspnet_di_extract_done", edges=len(edges), layers=len(layer_assignments))
+        log.info(
+            "aspnet_di_extract_done",
+            edges=len(edges),
+            layers=len(layer_assignments),
+        )
 
         return PluginResult(
             nodes=[],
@@ -133,11 +139,13 @@ class ASPNetDIPlugin(FrameworkPlugin):
         )
 
     def get_layer_classification(self) -> LayerRules:
-        return LayerRules(rules=[
-            LayerRule(pattern="Repository", layer="Data Access"),
-            LayerRule(pattern="DbContext", layer="Data Access"),
-            LayerRule(pattern="Service", layer="Business Logic"),
-        ])
+        return LayerRules(
+            rules=[
+                LayerRule(pattern="Repository", layer="Data Access"),
+                LayerRule(pattern="DbContext", layer="Data Access"),
+                LayerRule(pattern="Service", layer="Business Logic"),
+            ]
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -183,14 +191,17 @@ class ASPNetDIPlugin(FrameworkPlugin):
         if not simple_name:
             return None
         for node in graph.nodes.values():
-            if node.name == simple_name and node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+            if node.name == simple_name and node.kind in (
+                NodeKind.CLASS,
+                NodeKind.INTERFACE,
+            ):
                 return node.fqn
         return None
 
     def _classify_layers(
         self, graph: SymbolGraph, registrations: list[_DIRegistration]
     ) -> dict[str, str]:
-        """Assign architectural layers based on naming conventions and DI registrations."""
+        """Assign architectural layers based on naming conventions."""
         assignments: dict[str, str] = {}
 
         for reg in registrations:
@@ -221,7 +232,7 @@ class ASPNetDIPlugin(FrameworkPlugin):
     def _resolve_constructor_injection(
         self, graph: SymbolGraph, registrations: list[_DIRegistration]
     ) -> list[GraphEdge]:
-        """For each constructor with interface-typed params, resolve via DI registrations."""
+        """Resolve constructor params via DI registrations."""
         edges: list[GraphEdge] = []
 
         # Build lookup: interface_name -> implementation_fqn
@@ -248,23 +259,27 @@ class ASPNetDIPlugin(FrameworkPlugin):
                 # Resolve each parameter
                 params = child.properties.get("parameters", [])
                 for param in params:
-                    param_type = param.get("type", "") if isinstance(param, dict) else ""
+                    param_type = (
+                        param.get("type", "") if isinstance(param, dict) else ""
+                    )
                     if not param_type:
                         continue
 
                     # Look up in DI registrations
                     impl_fqn = di_lookup.get(param_type)
                     if impl_fqn:
-                        edges.append(GraphEdge(
-                            source_fqn=node.fqn,
-                            target_fqn=impl_fqn,
-                            kind=EdgeKind.INJECTS,
-                            confidence=Confidence.HIGH,
-                            evidence="aspnet-di",
-                            properties={
-                                "framework": "aspnet",
-                                "injection_type": "constructor",
-                            },
-                        ))
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=node.fqn,
+                                target_fqn=impl_fqn,
+                                kind=EdgeKind.INJECTS,
+                                confidence=Confidence.HIGH,
+                                evidence="aspnet-di",
+                                properties={
+                                    "framework": "aspnet",
+                                    "injection_type": "constructor",
+                                },
+                            )
+                        )
 
         return edges

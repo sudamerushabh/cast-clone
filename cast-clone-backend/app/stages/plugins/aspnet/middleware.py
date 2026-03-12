@@ -17,7 +17,7 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.graph import GraphEdge, GraphNode
 from app.stages.plugins.base import (
     FrameworkPlugin,
     PluginDetectionResult,

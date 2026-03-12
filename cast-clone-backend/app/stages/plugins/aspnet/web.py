@@ -21,7 +21,7 @@ import structlog
 
 from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.graph import GraphEdge, GraphNode
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -99,9 +99,7 @@ class ASPNetWebPlugin(FrameworkPlugin):
                 if method_node is None or method_node.kind != NodeKind.FUNCTION:
                     continue
 
-                method_annotations = set(
-                    method_node.properties.get("annotations", [])
-                )
+                method_annotations = set(method_node.properties.get("annotations", []))
                 method_annotation_args = method_node.properties.get(
                     "annotation_args", {}
                 )
@@ -237,7 +235,7 @@ class ASPNetWebPlugin(FrameworkPlugin):
         class_name: str,
         method_name: str,
     ) -> str:
-        """Combine class prefix and method path, apply token replacement and normalization."""
+        """Combine class prefix and method path with token replacement."""
         # Replace [action] token with lowercased method name
         if "[action]" in class_prefix:
             class_prefix = class_prefix.replace("[action]", method_name.lower())
