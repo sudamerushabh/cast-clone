@@ -1,16 +1,16 @@
 package org.springframework.samples.petclinic.owner;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/owners")
 public class OwnerController {
+
     @Autowired
     private OwnerRepository ownerRepository;
 
@@ -21,6 +21,12 @@ public class OwnerController {
 
     @GetMapping("/{id}")
     public Owner getOwner(@PathVariable Integer id) {
-        return ownerRepository.findById(id).orElseThrow();
+        return ownerRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Owner not found"));
+    }
+
+    @GetMapping("/search")
+    public List<Owner> findByLastName(String lastName) {
+        return ownerRepository.findByLastName(lastName);
     }
 }

@@ -12,11 +12,11 @@ M1 (foundation)
  └─> M3 (discovery + deps)       ── parallel ──┘
       └─> M4a (tree-sitter base)
            ├─> M4b (Java extractor)       ── parallel ──┐
-           ├─> M4c (TypeScript extractor)  ── parallel ──┤
-           ├─> M4d (Python extractor)      ── parallel ──┤
+           ├─> M4c (TypeScript extractor) ── parallel ──┤
+           ├─> M4d (Python extractor)     ── parallel ──┤
            └─> M4e (C# extractor)         ── parallel ──┘
-                └─> M5 (SCIP indexers)     ── parallel ──┐
-                └─> M6a (plugin base)      ── parallel ──┘
+                └─> M5 (SCIP indexers)    ── parallel ──┐
+                └─> M6a (plugin base)     ── parallel ──┘
                      ├─> M6b (Spring + Hibernate)  ── parallel ──┐
                      └─> M6c (SQL plugins)         ── parallel ──┘
                           ├─> M7a (cross-tech linker)   ── parallel ──┐

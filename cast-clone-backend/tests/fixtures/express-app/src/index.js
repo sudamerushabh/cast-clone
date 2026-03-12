@@ -1,12 +1,54 @@
 const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.get('/api/users', (req, res) => {
-    res.json([{ id: 1, name: 'Alice' }]);
+app.use(cors());
+app.use(express.json());
+
+// User schema
+const userSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    createdAt: { type: Date, default: Date.now }
 });
 
-app.post('/api/users', (req, res) => {
-    res.status(201).json({ id: 2, name: req.body.name });
+const User = mongoose.model('User', userSchema);
+
+// Routes
+app.get('/api/users', async (req, res) => {
+    try {
+        const users = await User.find();
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.listen(3000, () => console.log('Listening on port 3000'));
+app.post('/api/users', async (req, res) => {
+    try {
+        const user = new User(req.body);
+        await user.save();
+        res.status(201).json(user);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.get('/api/users/:id', async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ error: 'Not found' });
+        res.json(user);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+module.exports = app;

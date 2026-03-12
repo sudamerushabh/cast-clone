@@ -1,34 +1,32 @@
 package com.example;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import java.util.List;
+import java.util.Optional;
 
+@Service
 public class UserService {
-    private final UserRepository userRepository;
 
-    public UserService(UserRepository userRepository) {
-        this.userRepository = userRepository;
+    @Autowired
+    private UserRepository userRepository;
+
+    public List<User> findAll() {
+        return userRepository.findAll();
     }
 
-    public User findById(Long id) {
+    public Optional<User> findById(Long id) {
         return userRepository.findById(id);
     }
 
-    public void createUser(String name, String email) {
-        User user = new User(name, email);
-        userRepository.save(user);
+    public User create(User user) {
+        validateUser(user);
+        return userRepository.save(user);
     }
 
-    public String getUserNameById(Connection conn, Long id) throws Exception {
-        PreparedStatement ps = conn.prepareStatement(
-            "SELECT name FROM users WHERE id = ?"
-        );
-        ps.setLong(1, id);
-        ResultSet rs = ps.executeQuery();
-        if (rs.next()) {
-            return rs.getString("name");
+    private void validateUser(User user) {
+        if (user.getName() == null || user.getName().isEmpty()) {
+            throw new IllegalArgumentException("Name is required");
         }
-        return null;
     }
 }
