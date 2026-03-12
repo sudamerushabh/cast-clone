@@ -17,6 +17,7 @@ class LanguageExtractor(Protocol):
         file_path: str,
         root_path: str,
     ) -> tuple[list[GraphNode], list[GraphEdge]]:
+        """Parse source bytes and return extracted nodes and edges."""
         ...
 
 
@@ -24,16 +25,20 @@ _EXTRACTORS: dict[str, LanguageExtractor] = {}
 
 
 def register_extractor(language: str, extractor: LanguageExtractor) -> None:
+    """Register a language extractor for the given language name."""
     _EXTRACTORS[language] = extractor
 
 
 def get_extractor(language: str) -> LanguageExtractor | None:
+    """Return the extractor for the given language, or None if not registered."""
     return _EXTRACTORS.get(language)
 
 
 def clear_extractors() -> None:
+    """Remove all registered extractors."""
     _EXTRACTORS.clear()
 
 
 def registered_languages() -> list[str]:
+    """Return a list of all languages with registered extractors."""
     return list(_EXTRACTORS.keys())

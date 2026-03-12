@@ -10,22 +10,23 @@ Provides:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import structlog
 from tree_sitter import Language, Parser
 
 from app.models.enums import Confidence, EdgeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.stages.treesitter.extractors import get_extractor, registered_languages
+from app.stages.treesitter.extractors import get_extractor
 
 if TYPE_CHECKING:
     from app.models.manifest import ProjectManifest
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _LANGUAGES: dict[str, Language] = {}
 
@@ -90,7 +91,7 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
 
     Resolves unresolved CALLS edges (confidence=LOW, target not in FQN index)
     using three strategies in priority order:
-      1. Import-based: caller's parent class imports a class containing the target method
+      1. Import-based: caller's parent imports a class with the target method
       2. Same-package: a class in the same package contains the target method
       3. Unique global: exactly one node in the graph matches the short name
 
@@ -115,7 +116,9 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
         if edge.kind == EdgeKind.IMPORTS:
             target_node = fqn_index.get(edge.target_fqn)
             if target_node is not None:
-                import_index.setdefault(edge.source_fqn, {})[target_node.name] = edge.target_fqn
+                import_index.setdefault(edge.source_fqn, {})[target_node.name] = (
+                    edge.target_fqn
+                )
 
     def _get_package(fqn: str) -> str:
         """Extract the package prefix from a fully-qualified name."""
@@ -150,7 +153,8 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
             caller_pkg = _get_package(caller_class)
             candidates = short_name_index.get(target_short, [])
             same_pkg = [
-                c for c in candidates
+                c
+                for c in candidates
                 if _get_package(_get_package(c)) == caller_pkg  # grandparent package
                 or _get_package(c).startswith(caller_pkg + ".")
                 or caller_pkg == _get_package(c)
@@ -173,6 +177,7 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
                 evidence=edge.evidence,
                 properties=edge.properties,
             )
+            graph._index_dirty = True
             logger.debug(
                 "Resolved %s -> %s to %s",
                 edge.source_fqn,
@@ -184,13 +189,15 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
 _SEQUENTIAL_THRESHOLD = 4
 
 
-async def parse_with_treesitter(manifest: "ProjectManifest") -> SymbolGraph:
+async def parse_with_treesitter(manifest: ProjectManifest) -> SymbolGraph:
     """Parse all source files using tree-sitter and merge into a SymbolGraph.
 
     For small file counts (<=4), parsing runs sequentially.
     For larger counts, uses ProcessPoolExecutor for CPU-bound parallelism.
     Errors in individual files are logged and skipped.
     """
+    t0 = time.perf_counter()
+    logger.info("Starting tree-sitter parsing")
     graph = SymbolGraph()
     root_path = str(manifest.root_path)
 
@@ -215,9 +222,7 @@ async def parse_with_treesitter(manifest: "ProjectManifest") -> SymbolGraph:
                 for edge in edges:
                     graph.add_edge(edge)
             except Exception:
-                logger.warning(
-                    "Failed to parse %s, skipping", file_path, exc_info=True
-                )
+                logger.warning("Failed to parse %s, skipping", file_path, exc_info=True)
     else:
         # Parallel execution via ProcessPoolExecutor
         max_workers = min(os.cpu_count() or 1, len(parseable_files), 8)
@@ -234,9 +239,7 @@ async def parse_with_treesitter(manifest: "ProjectManifest") -> SymbolGraph:
         for i, result in enumerate(results):
             file_path = parseable_files[i][0]
             if isinstance(result, Exception):
-                logger.warning(
-                    "Failed to parse %s, skipping: %s", file_path, result
-                )
+                logger.warning("Failed to parse %s, skipping: %s", file_path, result)
                 continue
             nodes, edges = result
             for node in nodes:
@@ -244,10 +247,12 @@ async def parse_with_treesitter(manifest: "ProjectManifest") -> SymbolGraph:
             for edge in edges:
                 graph.add_edge(edge)
 
+    elapsed = time.perf_counter() - t0
     logger.info(
-        "Tree-sitter parsing complete: %d nodes, %d edges",
-        len(graph.nodes),
-        len(graph.edges),
+        "Tree-sitter parsing complete",
+        node_count=len(graph.nodes),
+        edge_count=len(graph.edges),
+        elapsed_seconds=round(elapsed, 3),
     )
 
     _resolve_symbols(graph)

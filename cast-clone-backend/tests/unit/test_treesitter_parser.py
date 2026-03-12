@@ -1,23 +1,21 @@
 """Tests for the tree-sitter parser framework."""
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from app.models.enums import EdgeKind, NodeKind, Confidence
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.treesitter.extractors import (
     LanguageExtractor,
+    clear_extractors,
     get_extractor,
     register_extractor,
-    clear_extractors,
     registered_languages,
 )
 from app.stages.treesitter.parser import (
-    _parse_single_file,
     _resolve_symbols,
     get_language,
     get_parser,
@@ -138,26 +136,25 @@ class TestParseWithTreesitter:
     def teardown_method(self) -> None:
         clear_extractors()
 
-    def test_empty_manifest_returns_empty_graph(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_manifest_returns_empty_graph(self) -> None:
         manifest = FakeManifest(root_path=Path("/tmp/project"), source_files=[])
-        graph = asyncio.get_event_loop().run_until_complete(
-            parse_with_treesitter(manifest)  # type: ignore[arg-type]
-        )
+        graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
         assert len(graph.nodes) == 0
         assert len(graph.edges) == 0
 
-    def test_unknown_language_is_skipped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_unknown_language_is_skipped(self) -> None:
         manifest = FakeManifest(
             root_path=Path("/tmp/project"),
             source_files=[FakeSourceFile(path="main.rs", language="rust")],
         )
-        graph = asyncio.get_event_loop().run_until_complete(
-            parse_with_treesitter(manifest)  # type: ignore[arg-type]
-        )
+        graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
         assert len(graph.nodes) == 0
         assert len(graph.edges) == 0
 
-    def test_parses_files_with_registered_extractor(self) -> None:
+    @pytest.mark.asyncio
+    async def test_parses_files_with_registered_extractor(self) -> None:
         register_extractor("java", MockJavaExtractor())
         manifest = FakeManifest(
             root_path=Path("/tmp/project"),
@@ -167,7 +164,9 @@ class TestParseWithTreesitter:
             ],
         )
 
-        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+        def mock_parse(
+            file_path: str, language: str, root_path: str
+        ) -> tuple[list[GraphNode], list[GraphEdge]]:
             ext = get_extractor(language)
             if ext is None:
                 return [], []
@@ -177,16 +176,15 @@ class TestParseWithTreesitter:
             "app.stages.treesitter.parser._parse_single_file",
             side_effect=mock_parse,
         ):
-            graph = asyncio.get_event_loop().run_until_complete(
-                parse_with_treesitter(manifest)  # type: ignore[arg-type]
-            )
+            graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
 
         assert len(graph.nodes) == 2
         fqns = set(graph.nodes.keys())
         assert "com.example.Foo" in fqns
         assert "com.example.Bar" in fqns
 
-    def test_multiple_languages(self) -> None:
+    @pytest.mark.asyncio
+    async def test_multiple_languages(self) -> None:
         class MockPythonExtractor:
             def extract(
                 self, source: bytes, file_path: str, root_path: str
@@ -213,7 +211,9 @@ class TestParseWithTreesitter:
             ],
         )
 
-        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+        def mock_parse(
+            file_path: str, language: str, root_path: str
+        ) -> tuple[list[GraphNode], list[GraphEdge]]:
             ext = get_extractor(language)
             if ext is None:
                 return [], []
@@ -223,15 +223,14 @@ class TestParseWithTreesitter:
             "app.stages.treesitter.parser._parse_single_file",
             side_effect=mock_parse,
         ):
-            graph = asyncio.get_event_loop().run_until_complete(
-                parse_with_treesitter(manifest)  # type: ignore[arg-type]
-            )
+            graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
 
         assert len(graph.nodes) == 2
         assert "com.example.Foo" in graph.nodes
         assert "mypackage.utils" in graph.nodes
 
-    def test_file_parse_error_is_skipped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_file_parse_error_is_skipped(self) -> None:
         register_extractor("java", MockJavaExtractor())
         manifest = FakeManifest(
             root_path=Path("/tmp/project"),
@@ -241,7 +240,9 @@ class TestParseWithTreesitter:
             ],
         )
 
-        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+        def mock_parse(
+            file_path: str, language: str, root_path: str
+        ) -> tuple[list[GraphNode], list[GraphEdge]]:
             if "Bad" in file_path:
                 raise RuntimeError("Parse error in bad file")
             ext = get_extractor(language)
@@ -253,9 +254,7 @@ class TestParseWithTreesitter:
             "app.stages.treesitter.parser._parse_single_file",
             side_effect=mock_parse,
         ):
-            graph = asyncio.get_event_loop().run_until_complete(
-                parse_with_treesitter(manifest)  # type: ignore[arg-type]
-            )
+            graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
 
         assert len(graph.nodes) == 1
         assert "com.example.Good" in graph.nodes
@@ -276,66 +275,82 @@ class TestGlobalSymbolResolution:
         """
         graph = SymbolGraph()
 
-        graph.add_node(GraphNode(
-            fqn="com.example.service.UserService",
-            name="UserService",
-            kind=NodeKind.CLASS,
-            language="java",
-            path="src/main/java/com/example/service/UserService.java",
-            line=3,
-        ))
-        graph.add_node(GraphNode(
-            fqn="com.example.service.UserService.createUser",
-            name="createUser",
-            kind=NodeKind.FUNCTION,
-            language="java",
-            path="src/main/java/com/example/service/UserService.java",
-            line=10,
-        ))
-        graph.add_node(GraphNode(
-            fqn="com.example.repo.UserRepository",
-            name="UserRepository",
-            kind=NodeKind.CLASS,
-            language="java",
-            path="src/main/java/com/example/repo/UserRepository.java",
-            line=3,
-        ))
-        graph.add_node(GraphNode(
-            fqn="com.example.repo.UserRepository.findById",
-            name="findById",
-            kind=NodeKind.FUNCTION,
-            language="java",
-            path="src/main/java/com/example/repo/UserRepository.java",
-            line=5,
-        ))
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.UserService",
+                name="UserService",
+                kind=NodeKind.CLASS,
+                language="java",
+                path="src/main/java/com/example/service/UserService.java",
+                line=3,
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.UserService.createUser",
+                name="createUser",
+                kind=NodeKind.FUNCTION,
+                language="java",
+                path="src/main/java/com/example/service/UserService.java",
+                line=10,
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.repo.UserRepository",
+                name="UserRepository",
+                kind=NodeKind.CLASS,
+                language="java",
+                path="src/main/java/com/example/repo/UserRepository.java",
+                line=3,
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.repo.UserRepository.findById",
+                name="findById",
+                kind=NodeKind.FUNCTION,
+                language="java",
+                path="src/main/java/com/example/repo/UserRepository.java",
+                line=5,
+            )
+        )
 
         # Containment edges
-        graph.add_edge(GraphEdge(
-            source_fqn="com.example.service.UserService",
-            target_fqn="com.example.service.UserService.createUser",
-            kind=EdgeKind.CONTAINS,
-        ))
-        graph.add_edge(GraphEdge(
-            source_fqn="com.example.repo.UserRepository",
-            target_fqn="com.example.repo.UserRepository.findById",
-            kind=EdgeKind.CONTAINS,
-        ))
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.UserService",
+                target_fqn="com.example.service.UserService.createUser",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.repo.UserRepository",
+                target_fqn="com.example.repo.UserRepository.findById",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
 
         # Import edge
-        graph.add_edge(GraphEdge(
-            source_fqn="com.example.service.UserService",
-            target_fqn="com.example.repo.UserRepository",
-            kind=EdgeKind.IMPORTS,
-        ))
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.UserService",
+                target_fqn="com.example.repo.UserRepository",
+                kind=EdgeKind.IMPORTS,
+            )
+        )
 
         # Unresolved call
-        graph.add_edge(GraphEdge(
-            source_fqn="com.example.service.UserService.createUser",
-            target_fqn="findById",
-            kind=EdgeKind.CALLS,
-            confidence=Confidence.LOW,
-            evidence="tree-sitter",
-        ))
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.UserService.createUser",
+                target_fqn="findById",
+                kind=EdgeKind.CALLS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
 
         return graph
 
@@ -351,28 +366,107 @@ class TestGlobalSymbolResolution:
     def test_resolves_call_via_same_package(self) -> None:
         graph = SymbolGraph()
 
-        graph.add_node(GraphNode(fqn="com.example.service.OrderService", name="OrderService", kind=NodeKind.CLASS, language="java", path="src/main/java/com/example/service/OrderService.java"))
-        graph.add_node(GraphNode(fqn="com.example.service.OrderService.placeOrder", name="placeOrder", kind=NodeKind.FUNCTION, language="java", path="src/main/java/com/example/service/OrderService.java"))
-        graph.add_node(GraphNode(fqn="com.example.service.OrderValidator", name="OrderValidator", kind=NodeKind.CLASS, language="java", path="src/main/java/com/example/service/OrderValidator.java"))
-        graph.add_node(GraphNode(fqn="com.example.service.OrderValidator.validate", name="validate", kind=NodeKind.FUNCTION, language="java", path="src/main/java/com/example/service/OrderValidator.java"))
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.OrderService",
+                name="OrderService",
+                kind=NodeKind.CLASS,
+                language="java",
+                path="src/main/java/com/example/service/OrderService.java",
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.OrderService.placeOrder",
+                name="placeOrder",
+                kind=NodeKind.FUNCTION,
+                language="java",
+                path="src/main/java/com/example/service/OrderService.java",
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.OrderValidator",
+                name="OrderValidator",
+                kind=NodeKind.CLASS,
+                language="java",
+                path="src/main/java/com/example/service/OrderValidator.java",
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.service.OrderValidator.validate",
+                name="validate",
+                kind=NodeKind.FUNCTION,
+                language="java",
+                path="src/main/java/com/example/service/OrderValidator.java",
+            )
+        )
 
-        graph.add_edge(GraphEdge(source_fqn="com.example.service.OrderService", target_fqn="com.example.service.OrderService.placeOrder", kind=EdgeKind.CONTAINS))
-        graph.add_edge(GraphEdge(source_fqn="com.example.service.OrderValidator", target_fqn="com.example.service.OrderValidator.validate", kind=EdgeKind.CONTAINS))
-        graph.add_edge(GraphEdge(source_fqn="com.example.service.OrderService.placeOrder", target_fqn="validate", kind=EdgeKind.CALLS, confidence=Confidence.LOW, evidence="tree-sitter"))
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.OrderService",
+                target_fqn="com.example.service.OrderService.placeOrder",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.OrderValidator",
+                target_fqn="com.example.service.OrderValidator.validate",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.service.OrderService.placeOrder",
+                target_fqn="validate",
+                kind=EdgeKind.CALLS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
 
         _resolve_symbols(graph)
 
         calls_edges = [e for e in graph.edges if e.kind == EdgeKind.CALLS]
         assert len(calls_edges) == 1
-        assert calls_edges[0].target_fqn == "com.example.service.OrderValidator.validate"
+        assert (
+            calls_edges[0].target_fqn == "com.example.service.OrderValidator.validate"
+        )
         assert calls_edges[0].confidence == Confidence.MEDIUM
 
     def test_unresolvable_call_stays_low(self) -> None:
         graph = SymbolGraph()
-        graph.add_node(GraphNode(fqn="com.example.Foo", name="Foo", kind=NodeKind.CLASS, language="java"))
-        graph.add_node(GraphNode(fqn="com.example.Foo.doStuff", name="doStuff", kind=NodeKind.FUNCTION, language="java"))
-        graph.add_edge(GraphEdge(source_fqn="com.example.Foo", target_fqn="com.example.Foo.doStuff", kind=EdgeKind.CONTAINS))
-        graph.add_edge(GraphEdge(source_fqn="com.example.Foo.doStuff", target_fqn="unknownMethod", kind=EdgeKind.CALLS, confidence=Confidence.LOW, evidence="tree-sitter"))
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.Foo", name="Foo", kind=NodeKind.CLASS, language="java"
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.Foo.doStuff",
+                name="doStuff",
+                kind=NodeKind.FUNCTION,
+                language="java",
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.Foo",
+                target_fqn="com.example.Foo.doStuff",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.Foo.doStuff",
+                target_fqn="unknownMethod",
+                kind=EdgeKind.CALLS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
 
         _resolve_symbols(graph)
 
@@ -383,9 +477,29 @@ class TestGlobalSymbolResolution:
 
     def test_inherits_edge_verified(self) -> None:
         graph = SymbolGraph()
-        graph.add_node(GraphNode(fqn="com.example.Base", name="Base", kind=NodeKind.CLASS, language="java"))
-        graph.add_node(GraphNode(fqn="com.example.Child", name="Child", kind=NodeKind.CLASS, language="java"))
-        graph.add_edge(GraphEdge(source_fqn="com.example.Child", target_fqn="com.example.Base", kind=EdgeKind.INHERITS))
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.Base",
+                name="Base",
+                kind=NodeKind.CLASS,
+                language="java",
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.Child",
+                name="Child",
+                kind=NodeKind.CLASS,
+                language="java",
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.Child",
+                target_fqn="com.example.Base",
+                kind=EdgeKind.INHERITS,
+            )
+        )
 
         _resolve_symbols(graph)
 
@@ -401,10 +515,36 @@ class TestGlobalSymbolResolution:
 
     def test_high_confidence_calls_not_modified(self) -> None:
         graph = SymbolGraph()
-        graph.add_node(GraphNode(fqn="com.example.A", name="A", kind=NodeKind.CLASS, language="java"))
-        graph.add_node(GraphNode(fqn="com.example.A.foo", name="foo", kind=NodeKind.FUNCTION, language="java"))
-        graph.add_node(GraphNode(fqn="com.example.B.bar", name="bar", kind=NodeKind.FUNCTION, language="java"))
-        graph.add_edge(GraphEdge(source_fqn="com.example.A.foo", target_fqn="com.example.B.bar", kind=EdgeKind.CALLS, confidence=Confidence.HIGH, evidence="scip"))
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.A", name="A", kind=NodeKind.CLASS, language="java"
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.A.foo",
+                name="foo",
+                kind=NodeKind.FUNCTION,
+                language="java",
+            )
+        )
+        graph.add_node(
+            GraphNode(
+                fqn="com.example.B.bar",
+                name="bar",
+                kind=NodeKind.FUNCTION,
+                language="java",
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="com.example.A.foo",
+                target_fqn="com.example.B.bar",
+                kind=EdgeKind.CALLS,
+                confidence=Confidence.HIGH,
+                evidence="scip",
+            )
+        )
 
         _resolve_symbols(graph)
 
@@ -424,6 +564,7 @@ class TestProtocolCompliance:
     def test_non_extractor_fails_protocol(self) -> None:
         class NotAnExtractor:
             pass
+
         obj = NotAnExtractor()
         assert not isinstance(obj, LanguageExtractor)
 
@@ -445,7 +586,8 @@ class TestEndToEndWithResolution:
     def teardown_method(self) -> None:
         clear_extractors()
 
-    def test_full_pipeline_with_mock(self) -> None:
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_mock(self) -> None:
         """Simulate a two-file project with imports and unresolved calls."""
 
         class DetailedMockExtractor:
@@ -456,61 +598,77 @@ class TestEndToEndWithResolution:
                 edges: list[GraphEdge] = []
 
                 if "UserService" in file_path:
-                    nodes.append(GraphNode(
-                        fqn="com.example.service.UserService",
-                        name="UserService",
-                        kind=NodeKind.CLASS,
-                        language="java",
-                        path=file_path,
-                        line=1,
-                    ))
-                    nodes.append(GraphNode(
-                        fqn="com.example.service.UserService.createUser",
-                        name="createUser",
-                        kind=NodeKind.FUNCTION,
-                        language="java",
-                        path=file_path,
-                        line=5,
-                    ))
-                    edges.append(GraphEdge(
-                        source_fqn="com.example.service.UserService",
-                        target_fqn="com.example.service.UserService.createUser",
-                        kind=EdgeKind.CONTAINS,
-                    ))
-                    edges.append(GraphEdge(
-                        source_fqn="com.example.service.UserService",
-                        target_fqn="com.example.repo.UserRepository",
-                        kind=EdgeKind.IMPORTS,
-                    ))
-                    edges.append(GraphEdge(
-                        source_fqn="com.example.service.UserService.createUser",
-                        target_fqn="save",
-                        kind=EdgeKind.CALLS,
-                        confidence=Confidence.LOW,
-                        evidence="tree-sitter",
-                    ))
+                    nodes.append(
+                        GraphNode(
+                            fqn="com.example.service.UserService",
+                            name="UserService",
+                            kind=NodeKind.CLASS,
+                            language="java",
+                            path=file_path,
+                            line=1,
+                        )
+                    )
+                    nodes.append(
+                        GraphNode(
+                            fqn="com.example.service.UserService.createUser",
+                            name="createUser",
+                            kind=NodeKind.FUNCTION,
+                            language="java",
+                            path=file_path,
+                            line=5,
+                        )
+                    )
+                    edges.append(
+                        GraphEdge(
+                            source_fqn="com.example.service.UserService",
+                            target_fqn="com.example.service.UserService.createUser",
+                            kind=EdgeKind.CONTAINS,
+                        )
+                    )
+                    edges.append(
+                        GraphEdge(
+                            source_fqn="com.example.service.UserService",
+                            target_fqn="com.example.repo.UserRepository",
+                            kind=EdgeKind.IMPORTS,
+                        )
+                    )
+                    edges.append(
+                        GraphEdge(
+                            source_fqn="com.example.service.UserService.createUser",
+                            target_fqn="save",
+                            kind=EdgeKind.CALLS,
+                            confidence=Confidence.LOW,
+                            evidence="tree-sitter",
+                        )
+                    )
                 elif "UserRepository" in file_path:
-                    nodes.append(GraphNode(
-                        fqn="com.example.repo.UserRepository",
-                        name="UserRepository",
-                        kind=NodeKind.CLASS,
-                        language="java",
-                        path=file_path,
-                        line=1,
-                    ))
-                    nodes.append(GraphNode(
-                        fqn="com.example.repo.UserRepository.save",
-                        name="save",
-                        kind=NodeKind.FUNCTION,
-                        language="java",
-                        path=file_path,
-                        line=3,
-                    ))
-                    edges.append(GraphEdge(
-                        source_fqn="com.example.repo.UserRepository",
-                        target_fqn="com.example.repo.UserRepository.save",
-                        kind=EdgeKind.CONTAINS,
-                    ))
+                    nodes.append(
+                        GraphNode(
+                            fqn="com.example.repo.UserRepository",
+                            name="UserRepository",
+                            kind=NodeKind.CLASS,
+                            language="java",
+                            path=file_path,
+                            line=1,
+                        )
+                    )
+                    nodes.append(
+                        GraphNode(
+                            fqn="com.example.repo.UserRepository.save",
+                            name="save",
+                            kind=NodeKind.FUNCTION,
+                            language="java",
+                            path=file_path,
+                            line=3,
+                        )
+                    )
+                    edges.append(
+                        GraphEdge(
+                            source_fqn="com.example.repo.UserRepository",
+                            target_fqn="com.example.repo.UserRepository.save",
+                            kind=EdgeKind.CONTAINS,
+                        )
+                    )
 
                 return nodes, edges
 
@@ -523,7 +681,9 @@ class TestEndToEndWithResolution:
             ],
         )
 
-        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+        def mock_parse(
+            file_path: str, language: str, root_path: str
+        ) -> tuple[list[GraphNode], list[GraphEdge]]:
             ext = get_extractor(language)
             if ext is None:
                 return [], []
@@ -533,9 +693,7 @@ class TestEndToEndWithResolution:
             "app.stages.treesitter.parser._parse_single_file",
             side_effect=mock_parse,
         ):
-            graph = asyncio.get_event_loop().run_until_complete(
-                parse_with_treesitter(manifest)  # type: ignore[arg-type]
-            )
+            graph = await parse_with_treesitter(manifest)  # type: ignore[arg-type]
 
         # 4 nodes: 2 classes + 2 methods
         assert len(graph.nodes) == 4
