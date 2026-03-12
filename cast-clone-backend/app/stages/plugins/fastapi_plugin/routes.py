@@ -95,7 +95,7 @@ class FastAPIPlugin(FrameworkPlugin):
                 http_method = http_method.upper()
 
                 prefix = router_prefixes.get(router_var, "")
-                full_path = prefix + path if not path.startswith(prefix) else path
+                full_path = prefix + path
 
                 endpoint_fqn = f"{http_method}:{full_path}"
                 endpoint_node = GraphNode(
