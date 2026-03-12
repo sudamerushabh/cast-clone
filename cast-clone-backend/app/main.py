@@ -6,7 +6,13 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.health import router as health_router
+from app.api import (
+    analysis_router,
+    graph_router,
+    health_router,
+    projects_router,
+    websocket_router,
+)
 from app.config import Settings
 from app.services.neo4j import close_neo4j, init_neo4j
 from app.services.postgres import close_postgres, init_postgres
@@ -73,7 +79,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Register routers
     application.include_router(health_router)
+    application.include_router(projects_router)
+    application.include_router(analysis_router)
+    application.include_router(graph_router)
+    application.include_router(websocket_router)
 
     return application
 
