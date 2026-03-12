@@ -105,6 +105,7 @@ class PythonExtractor:
         Returns:
             Tuple of (nodes, edges).
         """
+        logger.debug("python_extract_start", file_path=file_path)
         tree = self._parser.parse(source)
         module_fqn = _derive_module_fqn(file_path, root_path)
         module_name = module_fqn.rsplit(".", 1)[-1] if "." in module_fqn else module_fqn
@@ -133,6 +134,12 @@ class PythonExtractor:
         self._extract_call_edges(tree, source, module_fqn, nodes, edges)
         self._extract_sql_strings(tree, source, module_fqn, nodes, edges)
 
+        logger.debug(
+            "python_extract_done",
+            file_path=file_path,
+            nodes=len(nodes),
+            edges=len(edges),
+        )
         return nodes, edges
 
     # ── Imports ──────────────────────────────────────────────────

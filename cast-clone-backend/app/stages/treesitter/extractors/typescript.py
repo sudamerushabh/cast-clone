@@ -145,6 +145,7 @@ class TypeScriptExtractor:
         Returns:
             Tuple of (nodes, edges) extracted from the file.
         """
+        log.debug("typescript_extract_start", file_path=file_path)
         is_tsx = file_path.endswith((".tsx", ".jsx"))
         lang = _TSX_LANGUAGE if is_tsx else _TS_LANGUAGE
         parser = Parser(lang)
@@ -233,8 +234,24 @@ class TypeScriptExtractor:
             is_tsx,
         )
 
+        # --- CONTAINS edges from module to top-level declarations ---
+        for n in nodes:
+            if n.fqn != module_path and n.fqn.startswith(module_path + "."):
+                # Only direct children (no dots after the module prefix)
+                suffix = n.fqn[len(module_path) + 1 :]
+                if "." not in suffix:
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=module_path,
+                            target_fqn=n.fqn,
+                            kind=EdgeKind.CONTAINS,
+                            confidence=Confidence.HIGH,
+                            evidence="tree-sitter",
+                        )
+                    )
+
         log.debug(
-            "typescript_extractor.done",
+            "typescript_extract_done",
             file_path=file_path,
             nodes=len(nodes),
             edges=len(edges),
@@ -332,7 +349,7 @@ class TypeScriptExtractor:
     ) -> None:
         """Extract CommonJS require() calls assigned to variables."""
         for node in root.children:
-            if node.type != "lexical_declaration":
+            if node.type not in ("lexical_declaration", "variable_declaration"):
                 continue
             for declarator in _find_children_by_type(node, "variable_declarator"):
                 name_node = _find_child_by_type(declarator, "identifier")
@@ -729,10 +746,12 @@ class TypeScriptExtractor:
             lex_node = None
             is_exported = False
 
-            if node.type == "lexical_declaration":
+            if node.type in ("lexical_declaration", "variable_declaration"):
                 lex_node = node
             elif node.type == "export_statement":
                 lex_node = _find_child_by_type(node, "lexical_declaration")
+                if lex_node is None:
+                    lex_node = _find_child_by_type(node, "variable_declaration")
                 if lex_node:
                     is_exported = True
 

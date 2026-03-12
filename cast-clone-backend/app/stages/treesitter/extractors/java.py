@@ -33,7 +33,7 @@ def _node_text(node: Node) -> str:
 
 
 def _get_modifiers(node: Node) -> list[str]:
-    """Extract modifier keywords (public, private, static, etc.) from a declaration node."""
+    """Extract modifier keywords from a declaration node."""
     modifiers: list[str] = []
     for child in node.children:
         if child.type == "modifiers":
@@ -157,7 +157,7 @@ def _walk_all(root: Node, node_type: str) -> list[Node]:
 
 
 class JavaExtractor:
-    """Extracts graph nodes and edges from a single Java source file using tree-sitter."""
+    """Extracts graph nodes and edges from a Java source file."""
 
     def __init__(self) -> None:
         self._parser = Parser(JAVA_LANGUAGE)
@@ -178,6 +178,7 @@ class JavaExtractor:
         Returns:
             Tuple of (list[GraphNode], list[GraphEdge]).
         """
+        logger.debug("java_extract_start", file_path=file_path)
         tree = self._parser.parse(source)
         root = tree.root_node
 
@@ -206,7 +207,7 @@ class JavaExtractor:
         self._extract_fields(root, package, file_path, nodes, edges)
 
         # Step 8: Parse method calls
-        self._extract_method_calls(root, package, file_path, import_map, edges)
+        self._extract_method_calls(root, package, file_path, edges)
 
         # Step 9: Parse object creation
         self._extract_object_creation(
@@ -216,6 +217,12 @@ class JavaExtractor:
         # Step 10: Tag SQL strings
         self._tag_sql_strings(root, package, nodes)
 
+        logger.debug(
+            "java_extract_done",
+            file_path=file_path,
+            nodes=len(nodes),
+            edges=len(edges),
+        )
         return nodes, edges
 
     # ── Private extraction methods ───────────────────────────────────────
@@ -295,7 +302,7 @@ class JavaExtractor:
         nodes: list[GraphNode],
         edges: list[GraphEdge],
     ) -> None:
-        """Extract class declarations into GraphNodes and inheritance/implements edges."""
+        """Extract class declarations into nodes and edges."""
         for class_node in _walk_all(root, "class_declaration"):
             name_node = class_node.child_by_field_name("name")
             if name_node is None:
@@ -607,7 +614,6 @@ class JavaExtractor:
         root: Node,
         package: str,
         file_path: str,
-        import_map: dict[str, str],
         edges: list[GraphEdge],
     ) -> None:
         """Extract method invocation edges."""

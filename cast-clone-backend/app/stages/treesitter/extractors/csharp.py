@@ -275,6 +275,7 @@ class CSharpExtractor:
         Returns:
             Tuple of (nodes, edges).
         """
+        log.debug("csharp_extract_start", file_path=file_path)
         tree = self._parser.parse(source)
         root = tree.root_node
 
@@ -495,7 +496,6 @@ class CSharpExtractor:
                             file_path,
                             nodes,
                             edges,
-                            is_interface_method=True,
                         )
 
     # -- Member extraction ------------------------------------------------------
@@ -552,7 +552,6 @@ class CSharpExtractor:
                     prop_node,
                     name_node,
                     class_fqn,
-                    namespace,
                     source,
                     file_path,
                     nodes,
@@ -566,7 +565,6 @@ class CSharpExtractor:
                 self._extract_field(
                     field_node,
                     class_fqn,
-                    namespace,
                     source,
                     file_path,
                     nodes,
@@ -585,7 +583,6 @@ class CSharpExtractor:
         file_path: str,
         nodes: list[GraphNode],
         edges: list[GraphEdge],
-        is_interface_method: bool = False,
     ) -> None:
         """Extract a method declaration."""
         method_name = _node_text(name_node, source)
@@ -711,7 +708,6 @@ class CSharpExtractor:
         prop_node: Node,
         name_node: Node,
         class_fqn: str,
-        namespace: str,
         source: bytes,
         file_path: str,
         nodes: list[GraphNode],
@@ -764,7 +760,6 @@ class CSharpExtractor:
         self,
         field_node: Node,
         class_fqn: str,
-        namespace: str,
         source: bytes,
         file_path: str,
         nodes: list[GraphNode],

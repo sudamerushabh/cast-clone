@@ -1,6 +1,7 @@
 # tests/unit/test_java_extractor.py
 import pytest
-from app.models.enums import NodeKind, EdgeKind, Confidence
+
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.stages.treesitter.extractors.java import JavaExtractor
 
 
@@ -99,10 +100,14 @@ public class Dog extends Animal implements Runnable, Serializable {
         inherits = _find_edge(edges, "com.example.Dog", "Animal", EdgeKind.INHERITS)
         assert inherits is not None
 
-        impl_runnable = _find_edge(edges, "com.example.Dog", "Runnable", EdgeKind.IMPLEMENTS)
+        impl_runnable = _find_edge(
+            edges, "com.example.Dog", "Runnable", EdgeKind.IMPLEMENTS,
+        )
         assert impl_runnable is not None
 
-        impl_serializable = _find_edge(edges, "com.example.Dog", "Serializable", EdgeKind.IMPLEMENTS)
+        impl_serializable = _find_edge(
+            edges, "com.example.Dog", "Serializable", EdgeKind.IMPLEMENTS,
+        )
         assert impl_serializable is not None
 
     def test_interface_extends(self, extractor):
@@ -119,8 +124,10 @@ public interface UserRepository extends JpaRepository, CustomRepo {
         assert node.kind == NodeKind.INTERFACE
 
         inherits_edges = [
-            e for e in edges
-            if e.source_fqn == "com.example.UserRepository" and e.kind == EdgeKind.INHERITS
+            e
+            for e in edges
+            if e.source_fqn == "com.example.UserRepository"
+            and e.kind == EdgeKind.INHERITS
         ]
         assert len(inherits_edges) == 2
 
@@ -158,7 +165,8 @@ public class UserService {
 
         # CONTAINS edges
         contains_find = _find_edge(
-            edges, "com.example.UserService", "com.example.UserService.findById", EdgeKind.CONTAINS
+            edges, "com.example.UserService",
+            "com.example.UserService.findById", EdgeKind.CONTAINS,
         )
         assert contains_find is not None
 
@@ -214,7 +222,8 @@ public class UserService {
 
         # CONTAINS edges
         contains = _find_edge(
-            edges, "com.example.UserService", "com.example.UserService.repo", EdgeKind.CONTAINS
+            edges, "com.example.UserService",
+            "com.example.UserService.repo", EdgeKind.CONTAINS,
         )
         assert contains is not None
 
@@ -345,7 +354,8 @@ public class UserService {
         assert ctor.properties.get("params") == ["UserRepository repo"]
 
         contains = _find_edge(
-            edges, "com.example.UserService", "com.example.UserService.<init>", EdgeKind.CONTAINS
+            edges, "com.example.UserService",
+            "com.example.UserService.<init>", EdgeKind.CONTAINS,
         )
         assert contains is not None
 

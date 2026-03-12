@@ -470,7 +470,42 @@ function internalHelper() {}
 
 
 # ---------------------------------------------------------------------------
-# Test 9: Full file integration test
+# Test 9: JavaScript file extension
+# ---------------------------------------------------------------------------
+class TestJavaScriptFile:
+    SOURCE = b"""\
+function greet(name) {
+    console.log("Hello " + name);
+}
+
+class App {
+    run() {
+        greet("world");
+    }
+}
+"""
+
+    def test_js_file_language(self, extractor: TypeScriptExtractor):
+        nodes, edges = extractor.extract(self.SOURCE, "src/app.js", "/project")
+        mod = _find_node(nodes, name="app", kind=NodeKind.MODULE)
+        assert mod is not None
+        assert mod.language == "javascript"
+
+    def test_js_class_language(self, extractor: TypeScriptExtractor):
+        nodes, edges = extractor.extract(self.SOURCE, "src/app.js", "/project")
+        app = _find_node(nodes, name="App", kind=NodeKind.CLASS)
+        assert app is not None
+        assert app.language == "javascript"
+
+    def test_js_function_extracted(self, extractor: TypeScriptExtractor):
+        nodes, edges = extractor.extract(self.SOURCE, "src/app.js", "/project")
+        greet = _find_node(nodes, name="greet", kind=NodeKind.FUNCTION)
+        assert greet is not None
+        assert greet.language == "javascript"
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Full file integration test
 # ---------------------------------------------------------------------------
 class TestFullFile:
     SOURCE = b"""\
