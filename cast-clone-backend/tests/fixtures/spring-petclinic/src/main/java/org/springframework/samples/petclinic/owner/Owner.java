@@ -1,14 +1,6 @@
 package org.springframework.samples.petclinic.owner;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
-import jakarta.persistence.Id;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Column;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.CascadeType;
-import jakarta.validation.constraints.NotBlank;
+import jakarta.persistence.*;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,11 +13,9 @@ public class Owner {
     private Integer id;
 
     @Column(name = "first_name")
-    @NotBlank
     private String firstName;
 
     @Column(name = "last_name")
-    @NotBlank
     private String lastName;
 
     @Column(name = "address")
@@ -37,8 +27,8 @@ public class Owner {
     @Column(name = "telephone")
     private String telephone;
 
-    @OneToMany(cascade = CascadeType.ALL, mappedBy = "owner")
-    private List<Pet> pets = new ArrayList<>();
+    @OneToMany(cascade = CascadeType.ALL, mappedBy = "owner", fetch = FetchType.EAGER)
+    private List<org.springframework.samples.petclinic.pet.Pet> pets = new ArrayList<>();
 
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
@@ -52,5 +42,5 @@ public class Owner {
     public void setCity(String city) { this.city = city; }
     public String getTelephone() { return telephone; }
     public void setTelephone(String telephone) { this.telephone = telephone; }
-    public List<Pet> getPets() { return pets; }
+    public List<org.springframework.samples.petclinic.pet.Pet> getPets() { return pets; }
 }

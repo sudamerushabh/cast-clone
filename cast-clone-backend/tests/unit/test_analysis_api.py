@@ -1,5 +1,5 @@
 # tests/unit/test_analysis_api.py
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +21,10 @@ class TestTriggerAnalysis:
 
         mock_session.refresh = mock_refresh
 
-        with patch("app.api.analysis.run_analysis_pipeline", new_callable=AsyncMock):
+        with (
+            patch("app.api.analysis.run_analysis_pipeline", new_callable=AsyncMock),
+            patch("app.api.analysis.get_driver", return_value=MagicMock()),
+        ):
             response = await app_client.post("/api/v1/projects/proj-1/analyze")
         assert response.status_code == 202
         data = response.json()
@@ -61,8 +64,8 @@ class TestAnalysisStatus:
         mock_run.id = "run-1"
         mock_run.status = "completed"
         mock_run.stage = None
-        mock_run.started_at = datetime.now(timezone.utc)
-        mock_run.completed_at = datetime.now(timezone.utc)
+        mock_run.started_at = datetime.now(UTC)
+        mock_run.completed_at = datetime.now(UTC)
 
         mock_run_result = MagicMock()
         mock_run_result.scalar_one_or_none.return_value = mock_run

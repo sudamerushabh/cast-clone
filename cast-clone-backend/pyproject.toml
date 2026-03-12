@@ -28,11 +28,15 @@ dev = [
     "pytest-asyncio",
     "pytest-cov>=7.0.0",
     "httpx",
+    "testcontainers>=4.14.1",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require external services (Docker)",
+]
 
 [tool.ruff]
 line-length = 88

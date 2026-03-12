@@ -1,13 +1,14 @@
 # tests/unit/test_pipeline.py
-import asyncio
-from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.orchestrator.pipeline import (
-    run_analysis_pipeline,
+    _STAGE_FUNCS,
     PIPELINE_STAGES,
+    PipelineServices,
+    run_analysis_pipeline,
 )
 
 
@@ -51,10 +52,24 @@ def _make_mock_session_factory():
     return mock_session_factory, mock_session
 
 
+def _make_noop_stage_funcs():
+    """Create no-op stage functions matching the (context, services) signature."""
+    noop = AsyncMock()
+    return {name: noop for name in _STAGE_FUNCS}
+
+
+def _make_mock_services():
+    """Create mock PipelineServices."""
+    return PipelineServices(
+        graph_store=MagicMock(),
+        source_path=Path("/tmp/test"),
+    )
+
+
 class TestRunAnalysisPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_runs_all_stages(self):
-        """With no-op stage functions, the pipeline should complete successfully."""
+        """Pipeline should call each stage and emit progress."""
         mock_session_factory, mock_session = _make_mock_session_factory()
 
         # Mock the Project query result
@@ -68,13 +83,19 @@ class TestRunAnalysisPipeline:
         mock_result.scalar_one_or_none.return_value = mock_project
         mock_session.execute = AsyncMock(return_value=mock_result)
 
+        services = _make_mock_services()
+
         with patch("app.orchestrator.pipeline.get_session_factory") as mock_get_sf:
             mock_get_sf.return_value = mock_session_factory
-            with patch("app.orchestrator.pipeline.WebSocketProgressReporter") as mock_ws:
+            with patch(
+                "app.orchestrator.pipeline.WebSocketProgressReporter"
+            ) as mock_ws:
                 mock_reporter = AsyncMock()
                 mock_ws.return_value = mock_reporter
-
-                await run_analysis_pipeline("proj-1")
+                with patch.dict(
+                    "app.orchestrator.pipeline._STAGE_FUNCS", _make_noop_stage_funcs()
+                ):
+                    await run_analysis_pipeline("proj-1", services=services)
 
                 # Pipeline should emit progress for each stage
                 assert mock_reporter.emit.call_count >= len(PIPELINE_STAGES)
@@ -83,7 +104,7 @@ class TestRunAnalysisPipeline:
 
     @pytest.mark.asyncio
     async def test_pipeline_updates_status_to_analyzing(self):
-        """Pipeline should set project status to 'analyzing' at start."""
+        """Pipeline should set project status to 'analyzed' at completion."""
         mock_session_factory, mock_session = _make_mock_session_factory()
 
         mock_project = MagicMock()
@@ -96,14 +117,21 @@ class TestRunAnalysisPipeline:
         mock_result.scalar_one_or_none.return_value = mock_project
         mock_session.execute = AsyncMock(return_value=mock_result)
 
+        services = _make_mock_services()
+
         with patch("app.orchestrator.pipeline.get_session_factory") as mock_get_sf:
             mock_get_sf.return_value = mock_session_factory
-            with patch("app.orchestrator.pipeline.WebSocketProgressReporter") as mock_ws:
+            with patch(
+                "app.orchestrator.pipeline.WebSocketProgressReporter"
+            ) as mock_ws:
                 mock_reporter = AsyncMock()
                 mock_ws.return_value = mock_reporter
-                await run_analysis_pipeline("proj-1")
+                with patch.dict(
+                    "app.orchestrator.pipeline._STAGE_FUNCS", _make_noop_stage_funcs()
+                ):
+                    await run_analysis_pipeline("proj-1", services=services)
 
-        # Project status should be set to "analyzing" then "analyzed"
+        # Project status should be set to "analyzed"
         assert mock_project.status == "analyzed"
 
     @pytest.mark.asyncio

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db import AnalysisRun, Project
-from app.orchestrator.pipeline import run_analysis_pipeline
+from app.orchestrator.pipeline import PipelineServices, run_analysis_pipeline
 from app.schemas.analysis import (
     AnalysisStatusResponse,
     AnalysisTriggerResponse,
 )
+from app.services.neo4j import Neo4jGraphStore, get_driver
 from app.services.postgres import get_session
 
 router = APIRouter(prefix="/api/v1/projects", tags=["analysis"])
@@ -29,9 +32,7 @@ async def trigger_analysis(
 ) -> AnalysisTriggerResponse:
     """Trigger analysis for a project. Runs as a background task."""
     # Load project
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
+    result = await session.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(
@@ -55,8 +56,12 @@ async def trigger_analysis(
     await session.commit()
     await session.refresh(run)
 
-    # Launch pipeline as background task
-    background_tasks.add_task(run_analysis_pipeline, project_id, run.id)
+    # Build services and launch pipeline as background task
+    services = PipelineServices(
+        graph_store=Neo4jGraphStore(get_driver()),
+        source_path=Path(project.source_path),
+    )
+    background_tasks.add_task(run_analysis_pipeline, project_id, run.id, services)
 
     return AnalysisTriggerResponse(
         project_id=project_id,
@@ -76,9 +81,7 @@ async def get_analysis_status(
 ) -> AnalysisStatusResponse:
     """Get the current analysis status for a project."""
     # Load project
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
+    result = await session.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(
