@@ -14,6 +14,7 @@ from app.stages.treesitter.extractors import (
     get_extractor,
     register_extractor,
     clear_extractors,
+    registered_languages,
 )
 from app.stages.treesitter.parser import (
     _parse_single_file,
@@ -411,3 +412,136 @@ class TestGlobalSymbolResolution:
         assert len(calls_edges) == 1
         assert calls_edges[0].confidence == Confidence.HIGH
         assert calls_edges[0].target_fqn == "com.example.B.bar"
+
+
+class TestProtocolCompliance:
+    """Verify the LanguageExtractor protocol works correctly."""
+
+    def test_mock_extractor_satisfies_protocol(self) -> None:
+        ext = MockJavaExtractor()
+        assert isinstance(ext, LanguageExtractor)
+
+    def test_non_extractor_fails_protocol(self) -> None:
+        class NotAnExtractor:
+            pass
+        obj = NotAnExtractor()
+        assert not isinstance(obj, LanguageExtractor)
+
+    def test_registered_languages_list(self) -> None:
+        clear_extractors()
+        register_extractor("java", MockJavaExtractor())
+        register_extractor("python", MockJavaExtractor())
+        langs = registered_languages()
+        assert sorted(langs) == ["java", "python"]
+        clear_extractors()
+
+
+class TestEndToEndWithResolution:
+    """Full flow: parse files -> merge -> resolve."""
+
+    def setup_method(self) -> None:
+        clear_extractors()
+
+    def teardown_method(self) -> None:
+        clear_extractors()
+
+    def test_full_pipeline_with_mock(self) -> None:
+        """Simulate a two-file project with imports and unresolved calls."""
+
+        class DetailedMockExtractor:
+            def extract(
+                self, source: bytes, file_path: str, root_path: str
+            ) -> tuple[list[GraphNode], list[GraphEdge]]:
+                nodes: list[GraphNode] = []
+                edges: list[GraphEdge] = []
+
+                if "UserService" in file_path:
+                    nodes.append(GraphNode(
+                        fqn="com.example.service.UserService",
+                        name="UserService",
+                        kind=NodeKind.CLASS,
+                        language="java",
+                        path=file_path,
+                        line=1,
+                    ))
+                    nodes.append(GraphNode(
+                        fqn="com.example.service.UserService.createUser",
+                        name="createUser",
+                        kind=NodeKind.FUNCTION,
+                        language="java",
+                        path=file_path,
+                        line=5,
+                    ))
+                    edges.append(GraphEdge(
+                        source_fqn="com.example.service.UserService",
+                        target_fqn="com.example.service.UserService.createUser",
+                        kind=EdgeKind.CONTAINS,
+                    ))
+                    edges.append(GraphEdge(
+                        source_fqn="com.example.service.UserService",
+                        target_fqn="com.example.repo.UserRepository",
+                        kind=EdgeKind.IMPORTS,
+                    ))
+                    edges.append(GraphEdge(
+                        source_fqn="com.example.service.UserService.createUser",
+                        target_fqn="save",
+                        kind=EdgeKind.CALLS,
+                        confidence=Confidence.LOW,
+                        evidence="tree-sitter",
+                    ))
+                elif "UserRepository" in file_path:
+                    nodes.append(GraphNode(
+                        fqn="com.example.repo.UserRepository",
+                        name="UserRepository",
+                        kind=NodeKind.CLASS,
+                        language="java",
+                        path=file_path,
+                        line=1,
+                    ))
+                    nodes.append(GraphNode(
+                        fqn="com.example.repo.UserRepository.save",
+                        name="save",
+                        kind=NodeKind.FUNCTION,
+                        language="java",
+                        path=file_path,
+                        line=3,
+                    ))
+                    edges.append(GraphEdge(
+                        source_fqn="com.example.repo.UserRepository",
+                        target_fqn="com.example.repo.UserRepository.save",
+                        kind=EdgeKind.CONTAINS,
+                    ))
+
+                return nodes, edges
+
+        register_extractor("java", DetailedMockExtractor())
+        manifest = FakeManifest(
+            root_path=Path("/tmp/project"),
+            source_files=[
+                FakeSourceFile(path="src/UserService.java", language="java"),
+                FakeSourceFile(path="src/UserRepository.java", language="java"),
+            ],
+        )
+
+        def mock_parse(file_path: str, language: str, root_path: str) -> tuple[list[GraphNode], list[GraphEdge]]:
+            ext = get_extractor(language)
+            if ext is None:
+                return [], []
+            return ext.extract(b"// mock", file_path, root_path)
+
+        with patch(
+            "app.stages.treesitter.parser._parse_single_file",
+            side_effect=mock_parse,
+        ):
+            graph = asyncio.get_event_loop().run_until_complete(
+                parse_with_treesitter(manifest)  # type: ignore[arg-type]
+            )
+
+        # 4 nodes: 2 classes + 2 methods
+        assert len(graph.nodes) == 4
+
+        # The CALLS edge should be resolved
+        calls_edges = [e for e in graph.edges if e.kind == EdgeKind.CALLS]
+        assert len(calls_edges) == 1
+        assert calls_edges[0].target_fqn == "com.example.repo.UserRepository.save"
+        assert calls_edges[0].confidence == Confidence.MEDIUM
