@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,12 +12,37 @@ from app.services.neo4j import close_neo4j, init_neo4j
 from app.services.postgres import close_postgres, init_postgres
 from app.services.redis import close_redis, init_redis
 
+
+def _configure_logging(log_level: str) -> None:
+    """Configure structlog with JSON output for production."""
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(
+        format="%(message)s",
+        level=getattr(logging, log_level.upper(), logging.INFO),
+    )
+
+
 logger = structlog.get_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
+    _configure_logging(settings.log_level)
     # Startup
     await init_postgres(settings)
     await init_neo4j(settings)

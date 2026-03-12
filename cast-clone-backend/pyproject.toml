@@ -17,7 +17,6 @@ dependencies = [
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-c-sharp>=0.23.1",
     "sqlglot>=29.0.1",
-    "pytest-cov>=7.0.0",
     "structlog>=24.0.0",
 ]
 
@@ -26,6 +25,7 @@ dev = [
     "ruff",
     "pytest",
     "pytest-asyncio",
+    "pytest-cov>=7.0.0",
     "httpx",
 ]
 

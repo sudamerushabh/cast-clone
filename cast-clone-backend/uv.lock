@@ -132,7 +132,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "neo4j" },
     { name = "pydantic-settings" },
-    { name = "pytest-cov" },
     { name = "redis", extra = ["hiredis"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sqlglot" },
@@ -150,6 +149,7 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
     { name = "ruff" },
 ]
 
@@ -160,7 +160,6 @@ requires-dist = [
     { name = "fastapi" },
     { name = "neo4j" },
     { name = "pydantic-settings" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "redis", extras = ["hiredis"] },
     { name = "sqlalchemy", extras = ["asyncio"] },
     { name = "sqlglot", specifier = ">=29.0.1" },
@@ -178,6 +177,7 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "ruff" },
 ]
 

@@ -5,16 +5,16 @@ The GraphStore ABC allows swapping Neo4j for Memgraph/AGE in the future.
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+import structlog
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from app.config import Settings
 from app.models.graph import GraphEdge, GraphNode
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _driver: AsyncDriver | None = None
 
