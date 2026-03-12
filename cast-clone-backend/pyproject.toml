@@ -11,6 +11,13 @@ dependencies = [
     "neo4j",
     "redis[hiredis]",
     "boto3",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-java>=0.23.5",
+    "tree-sitter-python>=0.25.0",
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-c-sharp>=0.23.1",
+    "sqlglot>=29.0.1",
+    "pytest-cov>=7.0.0",
 ]
 
 [dependency-groups]
