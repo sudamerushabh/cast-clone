@@ -36,6 +36,9 @@ docker-compose.override.yml
 .env.*.local
 !.env.example
 
+# Worktrees
+.worktrees/
+
 # OS
 .DS_Store
 Thumbs.db
