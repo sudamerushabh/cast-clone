@@ -43,6 +43,7 @@ class AnalysisContext:
     # Stage 5 tracking
     plugin_new_nodes: int = 0
     plugin_new_edges: int = 0
+    layer_assignments: dict[str, str] = field(default_factory=dict)  # fqn -> layer
 
     # Stage 6 tracking
     cross_tech_edge_count: int = 0
