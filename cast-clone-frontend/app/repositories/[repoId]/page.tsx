@@ -166,7 +166,7 @@ export default function RepoDetailPage() {
         <p className="text-sm text-muted-foreground py-4">Loading pull requests...</p>
       )}
       {prData && (
-        <PrListTable items={prData.items} basePath={`/repositories/${repoId}`} />
+        <PrListTable items={prData.items} basePath={`/repositories/${repoId}`} repoId={repoId} onDeleted={refreshPrs} />
       )}
     </div>
   );

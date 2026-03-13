@@ -737,6 +737,16 @@ export async function reanalyzeRepoPr(
   );
 }
 
+export async function deleteRepoPrAnalysis(
+  repoId: string,
+  analysisId: string,
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}`,
+    { method: "DELETE" },
+  );
+}
+
 // ── Git Config (repository-level) ──
 
 export async function fetchGitConfig(

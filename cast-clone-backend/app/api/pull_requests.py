@@ -118,6 +118,19 @@ async def get_pr_drift(
     return {"pr_analysis_id": pr.id, **pr.drift_report}
 
 
+@router.delete("/{pr_analysis_id}", status_code=204)
+async def delete_pr_analysis(
+    repo_id: str,
+    pr_analysis_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> None:
+    """Delete a PR analysis record."""
+    pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
+    await session.delete(pr)
+    await session.commit()
+
+
 @router.post("/{pr_analysis_id}/reanalyze", status_code=202)
 async def reanalyze_pr(
     repo_id: str,

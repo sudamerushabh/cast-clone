@@ -1,8 +1,11 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import type { PrAnalysis } from "@/lib/types";
+import { deleteRepoPrAnalysis } from "@/lib/api";
 import { PrRiskBadge } from "./PrRiskBadge";
 import { PrStatusBadge } from "./PrStatusBadge";
 
@@ -20,11 +23,16 @@ interface Props {
   projectId?: string;
   /** Base path for detail links, e.g. "/repositories/abc" */
   basePath?: string;
+  /** Repo ID needed for delete calls */
+  repoId?: string;
+  /** Called after a successful delete */
+  onDeleted?: () => void;
 }
 
-export function PrListTable({ items, projectId, basePath }: Props) {
+export function PrListTable({ items, projectId, basePath, repoId, onDeleted }: Props) {
   const router = useRouter();
   const linkBase = basePath ?? `/projects/${projectId}`;
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   if (items.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -59,6 +67,10 @@ export function PrListTable({ items, projectId, basePath }: Props) {
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
               Time
             </th>
+            {repoId && (
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+              </th>
+            )}
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -102,6 +114,31 @@ export function PrListTable({ items, projectId, basePath }: Props) {
                 <td className="px-4 py-3 text-xs text-gray-500">
                   {timeAgo(pr.created_at)}
                 </td>
+                {repoId && (
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      title="Delete PR analysis"
+                      disabled={deletingId === pr.id}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm("Delete this PR analysis? This cannot be undone.")) return;
+                        setDeletingId(pr.id);
+                        try {
+                          await deleteRepoPrAnalysis(repoId, pr.id);
+                          onDeleted?.();
+                        } catch {
+                          alert("Failed to delete PR analysis");
+                        } finally {
+                          setDeletingId(null);
+                        }
+                      }}
+                      className="inline-flex items-center justify-center rounded p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </td>
+                )}
               </tr>
             );
           })}

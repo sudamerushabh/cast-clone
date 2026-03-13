@@ -59,7 +59,7 @@ export default function RepoPullRequestsPage() {
       )}
       {error && <div className="py-4 text-red-600">{error}</div>}
       {data && (
-        <PrListTable items={data.items} basePath={`/repositories/${repoId}`} />
+        <PrListTable items={data.items} basePath={`/repositories/${repoId}`} repoId={repoId} onDeleted={refresh} />
       )}
       {data && (
         <div className="mt-4 text-sm text-gray-500">
