@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Editor, { type OnMount } from "@monaco-editor/react"
+import type * as monaco from "monaco-editor"
 import { X, Loader2, FileCode } from "lucide-react"
 
 import { getCodeView } from "@/lib/api"
@@ -33,6 +34,12 @@ interface CodeViewerProps {
   file: string
   line: number
   onClose: () => void
+  callees?: Array<{
+    fqn: string
+    name: string
+    line?: number
+  }>
+  onNavigateToNode?: (fqn: string) => void
 }
 
 export function CodeViewer({
@@ -40,10 +47,14 @@ export function CodeViewer({
   file,
   line,
   onClose,
+  callees,
+  onNavigateToNode,
 }: CodeViewerProps) {
   const [data, setData] = React.useState<CodeViewerResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const editorRef = React.useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const decorationsRef = React.useRef<string[]>([])
 
   // Fetch code when props change
   React.useEffect(() => {
@@ -78,7 +89,9 @@ export function CodeViewer({
 
   // When editor mounts, scroll to and highlight the target line
   const handleEditorMount: OnMount = React.useCallback(
-    (editor) => {
+    (editor, monacoInstance) => {
+      editorRef.current = editor
+
       if (!data) return
 
       const targetLine = data.highlight_line
@@ -106,9 +119,47 @@ export function CodeViewer({
           },
         ])
       }
+
+      // Click handler for navigating to callees
+      editor.onMouseDown((e) => {
+        if (e.target.type === monacoInstance.editor.MouseTargetType.CONTENT_TEXT) {
+          const position = e.target.position
+          if (!position || !callees?.length) return
+          const lineContent = editor.getModel()?.getLineContent(position.lineNumber) || ""
+          const clickedCallee = callees.find((callee) => lineContent.includes(callee.name))
+          if (clickedCallee) {
+            onNavigateToNode?.(clickedCallee.fqn)
+          }
+        }
+      })
     },
-    [data]
+    [data, callees, onNavigateToNode]
   )
+
+  // Apply decorations when callees change
+  React.useEffect(() => {
+    const editor = editorRef.current
+    if (!editor || !callees?.length) return
+    const model = editor.getModel()
+    if (!model) return
+
+    const newDecorations: monaco.editor.IModelDeltaDecoration[] = []
+    callees.forEach((callee) => {
+      const matches = model.findMatches(callee.name, true, false, true, null, false)
+      matches.forEach((match) => {
+        newDecorations.push({
+          range: match.range,
+          options: {
+            inlineClassName: "code-reference-link",
+            hoverMessage: {
+              value: `**${callee.name}** — Click to navigate\n\n\`${callee.fqn}\``,
+            },
+          },
+        })
+      })
+    })
+    decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations)
+  }, [callees])
 
   // File name for display (last segment of path)
   const fileName = file.split("/").pop() ?? file
@@ -188,6 +239,16 @@ export function CodeViewer({
           background-color: #ffd54f;
           width: 3px !important;
           margin-left: 3px;
+        }
+        .code-reference-link {
+          text-decoration: underline;
+          text-decoration-color: #3b82f6;
+          text-decoration-style: dotted;
+          cursor: pointer;
+        }
+        .code-reference-link:hover {
+          background-color: rgba(59, 130, 246, 0.1);
+          text-decoration-style: solid;
         }
       `}</style>
     </div>
