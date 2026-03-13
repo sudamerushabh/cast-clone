@@ -1,7 +1,8 @@
 """Authentication utilities — password hashing and JWT token management."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
@@ -27,7 +28,7 @@ def create_access_token(
     secret_key: str,
     expires_hours: int = 24,
 ) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
+    expire = datetime.now(UTC) + timedelta(hours=expires_hours)
     payload = {"sub": subject, "exp": expire}
     return jwt.encode(payload, secret_key, algorithm=ALGORITHM)
 

@@ -1,16 +1,17 @@
 """Authentication API endpoints — login, current user, and first-run setup."""
+
 from __future__ import annotations
 
-import structlog
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
-from app.config import get_settings, Settings
+from app.config import Settings, get_settings
 from app.models.db import User
 from app.schemas.auth import (
     LoginResponse,
@@ -32,9 +33,7 @@ async def login(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> LoginResponse:
-    result = await session.execute(
-        select(User).where(User.username == form.username)
-    )
+    result = await session.execute(select(User).where(User.username == form.username))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(form.password, user.password_hash):
@@ -52,7 +51,7 @@ async def login(
             detail="Account is deactivated",
         )
 
-    user.last_login = datetime.now(timezone.utc)
+    user.last_login = datetime.now(UTC)
     await session.commit()
 
     token = create_access_token(user.id, settings.secret_key)

@@ -1,4 +1,5 @@
 """Reusable FastAPI dependencies for authentication and authorization."""
+
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
