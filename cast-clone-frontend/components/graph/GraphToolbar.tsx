@@ -9,12 +9,21 @@ import {
   ZoomOut,
   Maximize,
   RefreshCw,
+  RefreshCcw,
+  Trash2,
 } from "lucide-react"
 
 import type cytoscape from "cytoscape"
 
 import { Button } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import type { ViewMode } from "@/lib/types"
+import { CommunityToggle } from "@/components/analysis/CommunityToggle"
 import { ExportButtons } from "./ExportButtons"
 
 interface GraphToolbarProps {
@@ -26,6 +35,10 @@ interface GraphToolbarProps {
   onRefreshLayout: () => void
   isLoading: boolean
   cy: cytoscape.Core | null
+  communityColorsEnabled?: boolean
+  onToggleCommunityColors?: () => void
+  onShowCircularDeps?: () => void
+  onShowDeadCode?: () => void
 }
 
 const VIEW_TABS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
@@ -55,6 +68,10 @@ export function GraphToolbar({
   onRefreshLayout,
   isLoading,
   cy,
+  communityColorsEnabled,
+  onToggleCommunityColors,
+  onShowCircularDeps,
+  onShowDeadCode,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center justify-between border-b bg-background px-3 py-1.5">
@@ -116,6 +133,58 @@ export function GraphToolbar({
         </Button>
         <div className="mx-1 h-4 w-px bg-border" />
         <ExportButtons cy={cy} />
+
+        {/* Analysis tools separator + buttons */}
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        {onToggleCommunityColors && (
+          <CommunityToggle
+            enabled={communityColorsEnabled ?? false}
+            onToggle={onToggleCommunityColors}
+          />
+        )}
+
+        {onShowCircularDeps && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="size-7 p-0"
+                  onClick={onShowCircularDeps}
+                  aria-label="Show circular dependencies"
+                >
+                  <RefreshCcw className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Circular dependencies</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {onShowDeadCode && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="size-7 p-0"
+                  onClick={onShowDeadCode}
+                  aria-label="Show dead code"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Dead code candidates</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
     </div>
   )
