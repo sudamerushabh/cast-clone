@@ -15,7 +15,9 @@ from app.stages.plugins.base import (
     PluginResult,
 )
 from app.stages.plugins.entity_framework.dbcontext import EntityFrameworkPlugin
+from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
 from app.stages.plugins.hibernate.jpa import HibernateJPAPlugin
+from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
 from app.stages.plugins.registry import (
     PluginRegistry,
     global_registry,
@@ -35,6 +37,8 @@ global_registry.register(ASPNetDIPlugin)
 global_registry.register(ASPNetWebPlugin)
 global_registry.register(ASPNetMiddlewarePlugin)
 global_registry.register(EntityFrameworkPlugin)
+global_registry.register(FastAPIPlugin)
+global_registry.register(SQLAlchemyPlugin)
 
 __all__ = [
     "FrameworkPlugin",
@@ -43,6 +47,8 @@ __all__ = [
     "PluginDetectionResult",
     "PluginRegistry",
     "PluginResult",
+    "FastAPIPlugin",
+    "SQLAlchemyPlugin",
     "global_registry",
     "run_framework_plugins",
 ]
