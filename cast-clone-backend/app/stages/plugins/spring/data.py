@@ -274,17 +274,6 @@ class SpringDataPlugin(FrameworkPlugin):
         # Resolve root path for reading source files
         root_path = context.manifest.root_path if context.manifest else None
 
-        # Debug: count interfaces and check INHERITS edges
-        interfaces = [n for n in graph.nodes.values() if n.kind == NodeKind.INTERFACE]
-        log.info("spring_data_debug_interfaces", count=len(interfaces),
-                 names=[n.name for n in interfaces])
-        for iface in interfaces:
-            inherits_edges = [e for e in graph.get_edges_from(iface.fqn)
-                              if e.kind == EdgeKind.INHERITS]
-            if inherits_edges:
-                log.info("spring_data_debug_inherits", iface=iface.name,
-                         targets=[e.target_fqn for e in inherits_edges])
-
         # Find repository interfaces
         for node in graph.nodes.values():
             if not _is_spring_data_repo(node, graph):

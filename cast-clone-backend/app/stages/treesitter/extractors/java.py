@@ -550,16 +550,29 @@ class JavaExtractor:
                     for sub in child.children:
                         if sub.type == "type_list":
                             for type_node in sub.children:
+                                # Handle both plain type_identifier and
+                                # generic_type (e.g., JpaRepository<Account, Long>)
                                 if type_node.type == "type_identifier":
-                                    edges.append(
-                                        GraphEdge(
-                                            source_fqn=fqn,
-                                            target_fqn=_node_text(type_node),
-                                            kind=EdgeKind.INHERITS,
-                                            confidence=Confidence.LOW,
-                                            evidence="tree-sitter",
-                                        )
+                                    target_name = _node_text(type_node)
+                                elif type_node.type == "generic_type":
+                                    ti = type_node.child_by_field_name("type") or next(
+                                        (c for c in type_node.children
+                                         if c.type == "type_identifier"), None
                                     )
+                                    if ti is None:
+                                        continue
+                                    target_name = _node_text(ti)
+                                else:
+                                    continue
+                                edges.append(
+                                    GraphEdge(
+                                        source_fqn=fqn,
+                                        target_fqn=target_name,
+                                        kind=EdgeKind.INHERITS,
+                                        confidence=Confidence.LOW,
+                                        evidence="tree-sitter",
+                                    )
+                                )
 
     def _extract_methods(
         self,

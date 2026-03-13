@@ -125,6 +125,15 @@ def trace_transaction_flow(
                 if edge.kind == EdgeKind.CALLS and edge.target_fqn not in visited:
                     queue.append((edge.target_fqn, current_depth + 1))
 
+            # Follow IMPLEMENTS edges in reverse: if another function implements
+            # the current one (interface method -> impl method), also traverse
+            # the implementor to pick up its CALLS edges.  This handles the
+            # common Java pattern where a controller calls a service *interface*
+            # and the real logic lives in the implementation class.
+            for edge in graph.get_edges_to(current_fqn):
+                if edge.kind == EdgeKind.IMPLEMENTS and edge.source_fqn not in visited:
+                    queue.append((edge.source_fqn, current_depth))
+
     return flow
 
 
