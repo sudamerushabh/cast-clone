@@ -17,6 +17,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { AnnotationList } from "@/components/annotations/AnnotationList"
+import { AddAnnotation } from "@/components/annotations/AddAnnotation"
+import { TagBadges } from "@/components/annotations/TagBadges"
+import type { AnnotationResponse, TagResponse, TagName } from "@/lib/types"
 
 const KIND_COLORS: Record<string, string> = {
   CLASS: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
@@ -39,6 +43,14 @@ interface NodePropertiesProps {
   onShowImpact?: (fqn: string) => void
   onStartPathFrom?: (fqn: string) => void
   onTraceRoute?: (fqn: string) => void
+  projectId?: string
+  annotations?: AnnotationResponse[]
+  tags?: TagResponse[]
+  onAddAnnotation?: (projectId: string, nodeFqn: string, content: string) => Promise<void>
+  onEditAnnotation?: (annotationId: string, content: string) => Promise<void>
+  onDeleteAnnotation?: (annotationId: string) => Promise<void>
+  onAddTag?: (projectId: string, nodeFqn: string, tagName: TagName) => Promise<void>
+  onRemoveTag?: (tagId: string) => Promise<void>
 }
 
 function MetricRow({
@@ -62,7 +74,22 @@ function MetricRow({
   )
 }
 
-export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onStartPathFrom, onTraceRoute }: NodePropertiesProps) {
+export function NodeProperties({
+  node,
+  onClose,
+  onViewSource,
+  onShowImpact,
+  onStartPathFrom,
+  onTraceRoute,
+  projectId,
+  annotations = [],
+  tags = [],
+  onAddAnnotation,
+  onEditAnnotation,
+  onDeleteAnnotation,
+  onAddTag,
+  onRemoveTag,
+}: NodePropertiesProps) {
   if (!node) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -228,6 +255,33 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
               <GitBranch className="size-3.5" />
               Trace Route
             </Button>
+          </div>
+        ) : null}
+
+        {/* Annotations & Tags */}
+        {fqn && projectId && onAddTag && onRemoveTag && onAddAnnotation && onEditAnnotation && onDeleteAnnotation ? (
+          <div className="border-t pt-3 mt-4 space-y-3">
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground mb-1">Tags</h4>
+              <TagBadges
+                tags={tags}
+                onAdd={(tagName) => onAddTag(projectId, fqn, tagName)}
+                onRemove={onRemoveTag}
+              />
+            </div>
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground mb-1">Annotations</h4>
+              <AnnotationList
+                annotations={annotations}
+                onEdit={onEditAnnotation}
+                onDelete={onDeleteAnnotation}
+              />
+              <div className="mt-1.5">
+                <AddAnnotation
+                  onAdd={(content) => onAddAnnotation(projectId, fqn, content)}
+                />
+              </div>
+            </div>
           </div>
         ) : null}
 
