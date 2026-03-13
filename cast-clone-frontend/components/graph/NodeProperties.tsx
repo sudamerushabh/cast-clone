@@ -87,13 +87,13 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
   const visibility = typeof node.visibility === "string" ? node.visibility : null
 
   return (
-    <ScrollArea className="h-full">
-      <div className="p-4">
+    <ScrollArea className="h-full w-full">
+      <div className="w-full overflow-hidden p-4">
         {/* Header */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold">{name}</h3>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={fqn}>
+        <div className="flex items-start justify-between gap-2 overflow-hidden">
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <h3 className="break-all text-sm font-semibold">{name}</h3>
+            <p className="mt-0.5 break-all text-xs text-muted-foreground" title={fqn}>
               {fqn}
             </p>
           </div>
@@ -135,8 +135,8 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
               disabled={!onViewSource}
             >
               <FileCode2 className="size-3.5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs" title={path}>{path}</p>
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <p className="break-all text-xs" title={path}>{path}</p>
                 {line ? (
                   <p className="text-xs text-muted-foreground">
                     Line {line}{endLine ? ` - ${endLine}` : ""}
@@ -195,11 +195,11 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
 
         {/* Impact & Path buttons */}
         {fqn ? (
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-col gap-2">
             <Button
               variant="outline"
               size="sm"
-              className="flex-1"
+              className="w-full"
               onClick={() => onShowImpact?.(fqn)}
               disabled={!onShowImpact}
             >
@@ -209,7 +209,7 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
             <Button
               variant="outline"
               size="sm"
-              className="flex-1"
+              className="w-full"
               onClick={() => onStartPathFrom?.(fqn)}
               disabled={!onStartPathFrom}
             >

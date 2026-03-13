@@ -183,10 +183,10 @@ export function DeadCodePanel({
                     >
                       <FileCode2 className="size-3.5 shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">
+                        <p className="break-all text-xs font-medium">
                           {candidate.name}
                         </p>
-                        <p className="truncate text-[10px] text-muted-foreground">
+                        <p className="break-all text-[10px] text-muted-foreground">
                           {candidate.path ?? candidate.fqn}
                         </p>
                       </div>

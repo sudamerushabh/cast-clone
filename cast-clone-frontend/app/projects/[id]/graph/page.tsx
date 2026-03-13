@@ -525,7 +525,7 @@ export default function GraphPage() {
         </div>
 
         {/* Right: Analysis / Node properties panel */}
-        <div className="w-72 shrink-0 overflow-y-auto border-l bg-background">
+        <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
           {activeAnalysis === "impact" ? (
             <ImpactPanel
               data={impact.data}

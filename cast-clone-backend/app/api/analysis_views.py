@@ -59,7 +59,8 @@ async def impact_analysis(
         if direction == "downstream":
             cypher = (
                 f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
-                f"-[:CALLS|INJECTS|PRODUCES|WRITES*1..{max_depth}]->(affected) "
+                f"-[:CALLS|INJECTS|PRODUCES|WRITES|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
+                "WHERE affected.app_name = $appName AND affected.fqn <> $fqn "
                 "WITH affected, min(length(path)) AS depth "
                 "RETURN affected.fqn AS fqn, affected.name AS name, "
                 "labels(affected)[0] AS type, affected.path AS file, depth "
@@ -69,42 +70,53 @@ async def impact_analysis(
                 cypher, {"fqn": node_fqn, "appName": project_id}
             )
         elif direction == "upstream":
+            # Expand start node + all descendants, then find external callers/dependents
             cypher = (
-                f"MATCH path = (dependent)"
-                f"-[:CALLS|INJECTS|CONSUMES|READS*1..{max_depth}]->"
-                "(start {fqn: $fqn, app_name: $appName}) "
-                "WITH dependent, min(length(path)) AS depth "
+                "MATCH (start {fqn: $fqn, app_name: $appName})-[:CONTAINS*0..10]->(seed) "
+                "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
+                f"MATCH (dependent {{app_name: $appName}})"
+                f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS|INCLUDES*1..{max_depth}]->(target) "
+                "WHERE target.fqn IN seed_fqns "
+                "AND dependent.fqn <> $fqn "
+                "AND NOT dependent.fqn STARTS WITH $fqnPrefix "
+                "WITH DISTINCT dependent, 1 AS depth "
                 "RETURN dependent.fqn AS fqn, dependent.name AS name, "
                 "labels(dependent)[0] AS type, dependent.path AS file, depth "
                 "ORDER BY depth, name"
             )
             records = await store.query(
-                cypher, {"fqn": node_fqn, "appName": project_id}
+                cypher, {"fqn": node_fqn, "appName": project_id, "fqnPrefix": node_fqn + "."}
             )
         else:
             # both: run downstream then upstream and merge
             downstream_cypher = (
                 f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
-                f"-[:CALLS|INJECTS|PRODUCES|WRITES*1..{max_depth}]->(affected) "
+                f"-[:CALLS|INJECTS|PRODUCES|WRITES|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
+                "WHERE affected.app_name = $appName AND affected.fqn <> $fqn "
                 "WITH affected, min(length(path)) AS depth "
                 "RETURN affected.fqn AS fqn, affected.name AS name, "
                 "labels(affected)[0] AS type, affected.path AS file, depth "
                 "ORDER BY depth, name"
             )
             upstream_cypher = (
-                f"MATCH path = (dependent)"
-                f"-[:CALLS|INJECTS|CONSUMES|READS*1..{max_depth}]->"
-                "(start {fqn: $fqn, app_name: $appName}) "
-                "WITH dependent, min(length(path)) AS depth "
+                "MATCH (start {fqn: $fqn, app_name: $appName})-[:CONTAINS*0..10]->(seed) "
+                "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
+                f"MATCH (dependent {{app_name: $appName}})"
+                f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS|INCLUDES*1..{max_depth}]->(target) "
+                "WHERE target.fqn IN seed_fqns "
+                "AND dependent.fqn <> $fqn "
+                "AND NOT dependent.fqn STARTS WITH $fqnPrefix "
+                "WITH DISTINCT dependent, 1 AS depth "
                 "RETURN dependent.fqn AS fqn, dependent.name AS name, "
                 "labels(dependent)[0] AS type, dependent.path AS file, depth "
                 "ORDER BY depth, name"
             )
+            fqn_params = {"fqn": node_fqn, "appName": project_id, "fqnPrefix": node_fqn + "."}
             down_records = await store.query(
                 downstream_cypher, {"fqn": node_fqn, "appName": project_id}
             )
             up_records = await store.query(
-                upstream_cypher, {"fqn": node_fqn, "appName": project_id}
+                upstream_cypher, fqn_params
             )
             # Merge: deduplicate by fqn, keep minimum depth
             seen: dict[str, dict[str, Any]] = {}

@@ -14,6 +14,11 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.models.db import AnalysisRun, GitConnector, Project, Repository
+
+# Reusable eager-load option: Repository → projects → analysis_runs
+_REPO_LOAD = (
+    selectinload(Repository.projects).selectinload(Project.analysis_runs)
+)
 from app.schemas.repositories import (
     BranchAddRequest,
     BranchCompareResponse,
@@ -28,7 +33,7 @@ from app.schemas.repositories import (
 from app.services.clone import clone_repo, pull_latest
 from app.services.crypto import decrypt_token
 from app.services.git_providers import create_provider
-from app.services.postgres import _session_factory, get_session
+from app.services.postgres import get_session
 
 logger = structlog.get_logger()
 
@@ -85,6 +90,9 @@ async def _background_clone(
     repo_id: str, clone_url: str, token: str, target_dir: str
 ) -> None:
     """Background task: clone the repository and update status in DB."""
+    # Lazy import so we get the live reference set during lifespan, not the
+    # None value that exists at module-load time.
+    from app.services.postgres import _session_factory
     assert _session_factory is not None, "PostgreSQL not initialized"
     async with _session_factory() as session:
         result = await session.execute(
@@ -174,7 +182,12 @@ async def create_repository(
         session.add(project)
 
     await session.commit()
-    await session.refresh(repo, attribute_names=["projects"])
+
+    # Re-fetch with full eager-load chain so _repo_to_response can access analysis_runs
+    result2 = await session.execute(
+        select(Repository).options(_REPO_LOAD).where(Repository.id == repo_id)
+    )
+    repo = result2.scalar_one()
 
     # Start background clone
     background_tasks.add_task(
@@ -201,7 +214,7 @@ async def list_repositories(
     """List all onboarded repositories."""
     result = await session.execute(
         select(Repository)
-        .options(selectinload(Repository.projects))
+        .options(_REPO_LOAD)
         .order_by(Repository.created_at.desc())
     )
     repos = result.scalars().all()
@@ -219,7 +232,7 @@ async def get_repository(
     """Get a single repository by ID."""
     result = await session.execute(
         select(Repository)
-        .options(selectinload(Repository.projects))
+        .options(_REPO_LOAD)
         .where(Repository.id == repo_id)
     )
     repo = result.scalar_one_or_none()

@@ -9,6 +9,16 @@ import type {
 
 type ElementDefinition = cytoscape.ElementDefinition
 
+/** Return the last dot-separated segment of a name for compact display.
+ *  e.g. "org.training.user.service.implementation" → "implementation"
+ *       "FundTransferController"                   → "FundTransferController"
+ */
+function shortLabel(name: string): string {
+  if (!name) return name
+  const parts = name.split(".")
+  return parts[parts.length - 1]
+}
+
 export function modulesToElements(
   modules: ModuleResponse[],
   edges: AggregatedEdgeResponse[]
@@ -20,7 +30,7 @@ export function modulesToElements(
       group: "nodes",
       data: {
         id: mod.fqn,
-        label: mod.name,
+        label: shortLabel(mod.name),
         kind: mod.kind,
         language: mod.language ?? undefined,
         loc: mod.loc ?? 0,

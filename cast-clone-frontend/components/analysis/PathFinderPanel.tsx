@@ -205,8 +205,8 @@ export function PathFinderPanel({
                         }}
                       />
                       <div className="min-w-0 flex-1 text-left">
-                        <p className="truncate text-xs font-medium">{node.name}</p>
-                        <p className="truncate text-[10px] text-muted-foreground">
+                        <p className="break-all text-xs font-medium">{node.name}</p>
+                        <p className="break-all text-[10px] text-muted-foreground">
                           {node.type}
                         </p>
                       </div>

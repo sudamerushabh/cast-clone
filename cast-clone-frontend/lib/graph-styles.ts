@@ -56,6 +56,8 @@ export function buildStylesheet(
         "border-width": 1,
         "border-color": "#D1D5DB",
         "overlay-padding": "4px",
+        "text-wrap": "ellipsis",
+        "text-max-width": "80px",
       },
     },
     {
@@ -67,9 +69,11 @@ export function buildStylesheet(
         "border-color": "#93C5FD",
         "text-valign": "top",
         "text-halign": "center",
-        "font-size": "13px",
+        "font-size": "12px",
         padding: "16px",
         shape: "roundrectangle",
+        "text-wrap": "ellipsis",
+        "text-max-width": "180px",
       },
     },
     {

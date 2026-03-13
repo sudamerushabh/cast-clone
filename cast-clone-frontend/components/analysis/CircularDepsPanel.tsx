@@ -196,7 +196,7 @@ export function CircularDepsPanel({
                           return (
                             <React.Fragment key={fqn}>
                               <span
-                                className="truncate font-mono text-[11px]"
+                                className="break-all font-mono text-[11px]"
                                 title={fqn}
                               >
                                 {shortName}

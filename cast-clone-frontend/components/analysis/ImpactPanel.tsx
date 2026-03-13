@@ -178,10 +178,10 @@ export function ImpactPanel({
                 <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Source Node
                 </h4>
-                <p className="mt-1 truncate text-sm font-medium" title={data.node}>
+                <p className="mt-1 break-all text-sm font-medium" title={data.node}>
                   {data.node.split(".").pop() ?? data.node}
                 </p>
-                <p className="truncate text-xs text-muted-foreground" title={data.node}>
+                <p className="break-all text-xs text-muted-foreground" title={data.node}>
                   {data.node}
                 </p>
               </div>
@@ -245,8 +245,8 @@ export function ImpactPanel({
                         {node.depth}
                       </Badge>
                       <div className="min-w-0 flex-1 text-left">
-                        <p className="truncate text-xs font-medium">{node.name}</p>
-                        <p className="truncate text-[10px] text-muted-foreground">
+                        <p className="break-all text-xs font-medium">{node.name}</p>
+                        <p className="break-all text-[10px] text-muted-foreground">
                           {node.type}
                           {node.file ? ` - ${node.file}` : ""}
                         </p>

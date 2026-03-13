@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
 
     # Repository storage
-    repo_storage_path: str = "/data/repos"
+    repo_storage_path: str = "/home/ubuntu/repos"
     git_clone_timeout: int = 600
 
     # Analysis defaults

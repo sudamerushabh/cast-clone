@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -232,19 +233,39 @@ async def run_analysis_pipeline(
                 source_path=Path(project.source_path),
             )
 
+        # Checkout the correct branch before analysis
+        if project.branch and project.source_path:
+            from app.services.clone import checkout_branch
+            try:
+                await checkout_branch(project.source_path, project.branch)
+                logger.info(
+                    "pipeline.branch_checkout",
+                    project_id=project_id,
+                    branch=project.branch,
+                )
+            except Exception as checkout_err:
+                logger.warning(
+                    "pipeline.branch_checkout_failed",
+                    project_id=project_id,
+                    branch=project.branch,
+                    error=str(checkout_err),
+                )
+
         # Load or create analysis run record
+        now = datetime.now(UTC)
         if run_id:
             run_result = await session.execute(
                 select(AnalysisRun).where(AnalysisRun.id == run_id)
             )
             run = run_result.scalar_one_or_none()
             if run is None:
-                run = AnalysisRun(project_id=project_id, status="running")
+                run = AnalysisRun(project_id=project_id, status="running", started_at=now)
                 session.add(run)
             else:
                 run.status = "running"
+                run.started_at = now
         else:
-            run = AnalysisRun(project_id=project_id, status="running")
+            run = AnalysisRun(project_id=project_id, status="running", started_at=now)
             session.add(run)
 
         await session.commit()
@@ -303,6 +324,7 @@ async def run_analysis_pipeline(
                     # Critical stage failure — abort pipeline
                     project.status = "failed"
                     run.status = "failed"
+                    run.completed_at = datetime.now(UTC)
                     run.error_message = f"Critical stage '{stage_def.name}' failed: {e}"
                     await session.commit()
                     await ws.emit_error(
@@ -317,8 +339,15 @@ async def run_analysis_pipeline(
         total_elapsed = time.monotonic() - pipeline_start
         project.status = "analyzed"
         run.status = "completed"
+        run.completed_at = datetime.now(UTC)
         run.node_count = context.graph.node_count
         run.edge_count = context.graph.edge_count
+        run.snapshot = {
+            "node_count": context.graph.node_count,
+            "edge_count": context.graph.edge_count,
+            "warnings": len(context.warnings),
+            "duration_seconds": round(total_elapsed, 2),
+        }
         await session.commit()
 
         report = {
