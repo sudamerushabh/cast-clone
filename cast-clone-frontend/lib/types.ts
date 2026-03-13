@@ -319,3 +319,118 @@ export interface NodeDetailResponse {
   callers: PathNode[];
   callees: PathNode[];
 }
+
+// ─── Phase 4A: Git Connector types ──────────────────────────────────────────
+
+export type ConnectorProvider = "github" | "gitlab" | "gitea" | "bitbucket";
+export type ConnectorStatus = "connected" | "expired" | "revoked" | "error";
+
+export interface ConnectorResponse {
+  id: string;
+  name: string;
+  provider: ConnectorProvider;
+  base_url: string;
+  auth_method: string;
+  status: ConnectorStatus;
+  remote_username: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorListResponse {
+  connectors: ConnectorResponse[];
+  total: number;
+}
+
+export interface CreateConnectorRequest {
+  name: string;
+  provider: ConnectorProvider;
+  base_url: string;
+  token: string;
+}
+
+export interface ConnectorTestResponse {
+  status: string;
+  remote_username: string | null;
+  error: string | null;
+}
+
+export interface RemoteRepoResponse {
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+  description: string | null;
+  language: string | null;
+  is_private: boolean;
+}
+
+export interface RemoteRepoListResponse {
+  repos: RemoteRepoResponse[];
+  has_more: boolean;
+  page: number;
+  per_page: number;
+}
+
+export interface BranchListResponse {
+  branches: string[];
+  default_branch: string;
+}
+
+// ─── Phase 4A: Repository types ─────────────────────────────────────────────
+
+export type CloneStatus = "pending" | "cloning" | "cloned" | "clone_failed";
+
+export interface ProjectBranchResponse {
+  id: string;
+  branch: string | null;
+  status: ProjectStatus;
+  last_analyzed_at: string | null;
+  node_count: number | null;
+  edge_count: number | null;
+}
+
+export interface RepositoryResponse {
+  id: string;
+  connector_id: string;
+  repo_full_name: string;
+  default_branch: string;
+  description: string | null;
+  language: string | null;
+  is_private: boolean;
+  clone_status: CloneStatus;
+  clone_error: string | null;
+  local_path: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+  projects: ProjectBranchResponse[];
+}
+
+export interface RepositoryListResponse {
+  repositories: RepositoryResponse[];
+  total: number;
+}
+
+export interface CreateRepositoryRequest {
+  connector_id: string;
+  repo_full_name: string;
+  branches: string[];
+  auto_analyze: boolean;
+}
+
+export interface CloneStatusResponse {
+  clone_status: CloneStatus;
+  clone_error: string | null;
+}
+
+export interface SnapshotPoint {
+  run_id: string;
+  analyzed_at: string;
+  commit_sha: string | null;
+  summary: Record<string, number>;
+}
+
+export interface EvolutionTimelineResponse {
+  repo_id: string;
+  branch: string;
+  snapshots: SnapshotPoint[];
+}

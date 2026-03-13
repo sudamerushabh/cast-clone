@@ -224,3 +224,29 @@ Import traces:
     ./app/projects/[id]/graph/page.tsx [Client Component SSR]
     ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1920
 [ 3661807ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1206
+[ 4537193ms] [ERROR] Failed to load resource: net::ERR_EMPTY_RESPONSE @ http://localhost:3000/projects/30af79f5-4317-4cce-9090-cb1d54c10885/graph?_rsc=16ova:0
+[ 4537194ms] [ERROR] Failed to fetch RSC payload for http://localhost:3000/projects/30af79f5-4317-4cce-9090-cb1d54c10885/graph. Falling back to browser navigation. TypeError: Failed to fetch
+    at createFetch (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:2588:24)
+    at fetchServerResponse (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:2490:27)
+    at fetchMissingDynamicData (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:3654:75)
+    at spawnDynamicRequests (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:3501:35)
+    at navigateToSeededRoute (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:7741:50)
+    at refreshDynamicData (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:8347:58)
+    at hmrRefreshReducer (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:8513:51)
+    at clientReducer (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9081:65)
+    at Object.action (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9310:55)
+    at runAction (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9215:38)
+    at dispatchAction (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9278:9)
+    at Object.dispatch (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9308:40)
+    at http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:1489:29
+    at startTransition (http://localhost:3000/_next/static/chunks/node_modules_next_dist_compiled_react-dom_1e674e59._.js:5500:31)
+    at dispatch (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:1488:13)
+    at dispatchAppRouterAction (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:1470:5)
+    at http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9439:61
+    at startTransition (http://localhost:3000/_next/static/chunks/node_modules_next_dist_compiled_a0e4c7b4._.js:1279:31)
+    at Object.hmrRefresh (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:9438:40)
+    at http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:11620:64
+    at startTransition (http://localhost:3000/_next/static/chunks/node_modules_next_dist_compiled_a0e4c7b4._.js:1279:31)
+    at processMessage (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:11619:44)
+    at WebSocket.handleMessage (http://localhost:3000/_next/static/chunks/node_modules_next_dist_client_17643121._.js:10914:52) @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 4537214ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/__nextjs_original-stack-frames:0

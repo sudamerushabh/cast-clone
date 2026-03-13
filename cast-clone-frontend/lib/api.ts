@@ -2,12 +2,20 @@ import type {
   AnalysisStatusResponse,
   AnalysisTriggerResponse,
   AggregatedEdgeListResponse,
+  BranchListResponse,
   CircularDependenciesResponse,
   ClassListResponse,
+  CloneStatusResponse,
   CodeViewerResponse,
   CommunitiesResponse,
+  ConnectorListResponse,
+  ConnectorResponse,
+  ConnectorTestResponse,
+  CreateConnectorRequest,
   CreateProjectRequest,
+  CreateRepositoryRequest,
   DeadCodeResponse,
+  EvolutionTimelineResponse,
   GraphEdgeListResponse,
   GraphNodeListResponse,
   GraphSearchResponse,
@@ -20,6 +28,10 @@ import type {
   PathFinderResponse,
   ProjectListResponse,
   ProjectResponse,
+  RemoteRepoListResponse,
+  RemoteRepoResponse,
+  RepositoryListResponse,
+  RepositoryResponse,
   TransactionDetailResponse,
   TransactionListResponse,
 } from "./types";
@@ -312,4 +324,88 @@ export async function getNodeDetails(
   return apiFetch<NodeDetailResponse>(
     `/api/v1/analysis/${projectId}/node/${encodeURIComponent(nodeFqn)}/details`,
   );
+}
+
+// ─── Connector endpoints (Phase 4A) ─────────────────────────────────────────
+
+export async function createConnector(
+  data: CreateConnectorRequest,
+): Promise<ConnectorResponse> {
+  return apiFetch<ConnectorResponse>("/api/v1/connectors", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listConnectors(): Promise<ConnectorListResponse> {
+  return apiFetch<ConnectorListResponse>("/api/v1/connectors");
+}
+
+export async function getConnector(id: string): Promise<ConnectorResponse> {
+  return apiFetch<ConnectorResponse>(`/api/v1/connectors/${id}`);
+}
+
+export async function deleteConnector(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/connectors/${id}`, { method: "DELETE" });
+}
+
+export async function testConnector(id: string): Promise<ConnectorTestResponse> {
+  return apiFetch<ConnectorTestResponse>(`/api/v1/connectors/${id}/test`, { method: "POST" });
+}
+
+export async function listRemoteRepos(
+  connectorId: string,
+  page: number = 1,
+  perPage: number = 30,
+  search?: string,
+): Promise<RemoteRepoListResponse> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (search) params.set("search", search);
+  return apiFetch<RemoteRepoListResponse>(`/api/v1/connectors/${connectorId}/repos?${params.toString()}`);
+}
+
+export async function getRemoteRepo(
+  connectorId: string,
+  owner: string,
+  repo: string,
+): Promise<RemoteRepoResponse> {
+  return apiFetch<RemoteRepoResponse>(`/api/v1/connectors/${connectorId}/repos/${owner}/${repo}`);
+}
+
+export async function listRemoteBranches(
+  connectorId: string,
+  owner: string,
+  repo: string,
+): Promise<BranchListResponse> {
+  return apiFetch<BranchListResponse>(`/api/v1/connectors/${connectorId}/repos/${owner}/${repo}/branches`);
+}
+
+// ─── Repository endpoints (Phase 4A) ────────────────────────────────────────
+
+export async function createRepository(data: CreateRepositoryRequest): Promise<RepositoryResponse> {
+  return apiFetch<RepositoryResponse>("/api/v1/repositories", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function listRepositories(): Promise<RepositoryListResponse> {
+  return apiFetch<RepositoryListResponse>("/api/v1/repositories");
+}
+
+export async function getRepository(id: string): Promise<RepositoryResponse> {
+  return apiFetch<RepositoryResponse>(`/api/v1/repositories/${id}`);
+}
+
+export async function deleteRepository(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${id}`, { method: "DELETE" });
+}
+
+export async function getCloneStatus(repoId: string): Promise<CloneStatusResponse> {
+  return apiFetch<CloneStatusResponse>(`/api/v1/repositories/${repoId}/clone-status`);
+}
+
+export async function syncRepository(repoId: string): Promise<CloneStatusResponse> {
+  return apiFetch<CloneStatusResponse>(`/api/v1/repositories/${repoId}/sync`, { method: "POST" });
+}
+
+export async function getEvolutionTimeline(repoId: string, branch: string): Promise<EvolutionTimelineResponse> {
+  return apiFetch<EvolutionTimelineResponse>(`/api/v1/repositories/${repoId}/evolution?branch=${encodeURIComponent(branch)}`);
 }

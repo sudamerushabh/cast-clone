@@ -21,6 +21,8 @@ dependencies = [
     "protobuf>=5.0",
     "aiofiles>=25.1.0",
     "graphdatascience>=1.20",
+    "cryptography>=46.0.5",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
