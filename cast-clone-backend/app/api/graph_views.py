@@ -249,7 +249,7 @@ async def aggregated_edges(
             "MATCH (c1)-[:CONTAINS]->(f1)-[:CALLS]->(f2)<-[:CONTAINS]-(c2) "
             "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
             "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
-            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight "
+            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight, 'CALLS' AS kind "
             "UNION ALL "
             # Branch 2: direct class-to-class DEPENDS_ON
             "MATCH (m {fqn: $parent, app_name: $app_name})-[:CONTAINS]->(c1) "
@@ -257,18 +257,18 @@ async def aggregated_edges(
             "MATCH (c1)-[:DEPENDS_ON]->(c2) "
             "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
             "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
-            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight"
+            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight, 'DEPENDS_ON' AS kind"
         )
         records = await store.query(
             cypher, {"parent": parent, "app_name": project_id}
         )
-        # Merge weights from CALLS and DEPENDS_ON for the same class pair
-        merged: dict[tuple[str, str], int] = {}
+        # Group by (source, target, kind)
+        merged: dict[tuple[str, str, str], int] = {}
         for r in records:
-            key = (r["source"], r["target"])
+            key = (r["source"], r["target"], r["kind"])
             merged[key] = merged.get(key, 0) + r["weight"]
         records = [
-            {"source": k[0], "target": k[1], "weight": v}
+            {"source": k[0], "target": k[1], "weight": v, "kind": k[2]}
             for k, v in sorted(merged.items(), key=lambda x: -x[1])
         ]
     else:
@@ -281,7 +281,7 @@ async def aggregated_edges(
             "(f2)<-[:CONTAINS]-(c2)<-[:CONTAINS]-(m2) "
             "WHERE m1.app_name = $app_name AND m1.kind = 'MODULE' "
             "AND m2.kind = 'MODULE' AND m1 <> m2 "
-            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight "
+            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight, 'CALLS' AS kind "
             "UNION ALL "
             # Branch 2: direct class-to-class DEPENDS_ON
             "MATCH (m1)-[:CONTAINS]->(c1)-[:DEPENDS_ON]->(c2)<-[:CONTAINS]-(m2) "
@@ -289,22 +289,25 @@ async def aggregated_edges(
             "AND m2.kind = 'MODULE' AND m1 <> m2 "
             "AND c1.kind IN ['CLASS', 'INTERFACE'] "
             "AND c2.kind IN ['CLASS', 'INTERFACE'] "
-            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight"
+            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight, 'DEPENDS_ON' AS kind"
         )
         records = await store.query(cypher, {"app_name": project_id})
-        # Merge weights from both branches for the same module pair
+        # Group by (source, target, kind) — keep CALLS and DEPENDS_ON separate
         merged = {}
         for r in records:
-            key = (r["source"], r["target"])
+            key = (r["source"], r["target"], r["kind"])
             merged[key] = merged.get(key, 0) + r["weight"]
         records = [
-            {"source": k[0], "target": k[1], "weight": v}
+            {"source": k[0], "target": k[1], "weight": v, "kind": k[2]}
             for k, v in sorted(merged.items(), key=lambda x: -x[1])
         ]
 
     edges = [
         AggregatedEdgeResponse(
-            source=r["source"], target=r["target"], weight=r["weight"]
+            source=r["source"],
+            target=r["target"],
+            weight=r["weight"],
+            kind=r.get("kind", "CALLS"),
         )
         for r in records
     ]

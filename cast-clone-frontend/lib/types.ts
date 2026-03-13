@@ -143,6 +143,7 @@ export interface AggregatedEdgeResponse {
   source: string;
   target: string;
   weight: number;
+  kind: string;
 }
 
 export interface AggregatedEdgeListResponse {

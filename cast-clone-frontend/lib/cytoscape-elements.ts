@@ -34,15 +34,16 @@ export function modulesToElements(
   }
 
   for (const edge of edges) {
+    const kind = edge.kind ?? "DEPENDS_ON"
     elements.push({
       group: "edges",
       data: {
-        id: `edge-${edge.source}-${edge.target}`,
+        id: `edge-${edge.source}-${edge.target}-${kind}`,
         source: edge.source,
         target: edge.target,
         weight: edge.weight,
-        kind: "DEPENDS_ON",
-        label: edge.weight > 1 ? String(edge.weight) : undefined,
+        kind,
+        label: edge.weight > 1 ? `${kind} (${edge.weight})` : kind,
       },
     })
   }
@@ -101,15 +102,16 @@ export function aggregatedEdgesToClassElements(
   const elements: ElementDefinition[] = []
 
   for (const edge of edges) {
+    const kind = edge.kind ?? "CALLS"
     elements.push({
       group: "edges",
       data: {
-        id: `edge-${edge.source}-${edge.target}`,
+        id: `edge-${edge.source}-${edge.target}-${kind}`,
         source: edge.source,
         target: edge.target,
         weight: edge.weight,
-        kind: "CALLS",
-        label: edge.weight > 1 ? String(edge.weight) : undefined,
+        kind,
+        label: edge.weight > 1 ? `${kind} (${edge.weight})` : kind,
       },
     })
   }

@@ -55,6 +55,7 @@ export default function GraphPage() {
     error,
     drilldownPath,
     performanceTier,
+    layoutMode,
     loadModules,
     drillIntoModule,
     drillIntoClass,
@@ -300,6 +301,7 @@ export default function GraphPage() {
               elements={activeElements}
               viewMode={viewMode}
               performanceTier={performanceTier}
+              layoutMode={isTransactionView ? "full" : layoutMode}
               onNodeSelect={handleNodeSelect}
               onNodeDrillDown={handleNodeDrillDown}
               onCyInit={handleCyInit}

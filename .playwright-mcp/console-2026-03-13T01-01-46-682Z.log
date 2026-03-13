@@ -1,0 +1,139 @@
+[  139069ms] [ERROR] ./components/code/CodeViewer.tsx:4:1
+Module not found: Can't resolve '@monaco-editor/react'
+  2 |
+  3 | import * as React from "react"
+> 4 | import Editor, { type OnMount } from "@monaco-editor/react"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { X, Loader2, FileCode } from "lucide-react"
+  6 |
+  7 | import { getCodeView } from "@/lib/api"
+
+Import traces:
+  Client Component Browser:
+    ./components/code/CodeViewer.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./components/code/CodeViewer.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  139069ms] [ERROR] ./lib/cytoscape-setup.ts:5:1
+Module not found: Can't resolve 'cytoscape-svg'
+  3 | import fcose from "cytoscape-fcose"
+  4 | import expandCollapse from "cytoscape-expand-collapse"
+> 5 | import cytoscapeSvg from "cytoscape-svg"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 |
+  7 | let registered = false
+  8 |
+
+Import traces:
+  Client Component Browser:
+    ./lib/cytoscape-setup.ts [Client Component Browser]
+    ./components/graph/GraphView.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./lib/cytoscape-setup.ts [Client Component SSR]
+    ./components/graph/GraphView.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  163642ms] [ERROR] ./components/code/CodeViewer.tsx:4:1
+Module not found: Can't resolve '@monaco-editor/react'
+  2 |
+  3 | import * as React from "react"
+> 4 | import Editor, { type OnMount } from "@monaco-editor/react"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { X, Loader2, FileCode } from "lucide-react"
+  6 |
+  7 | import { getCodeView } from "@/lib/api"
+
+Import traces:
+  Client Component Browser:
+    ./components/code/CodeViewer.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./components/code/CodeViewer.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  163642ms] [ERROR] ./lib/cytoscape-setup.ts:5:1
+Module not found: Can't resolve 'cytoscape-svg'
+  3 | import fcose from "cytoscape-fcose"
+  4 | import expandCollapse from "cytoscape-expand-collapse"
+> 5 | import cytoscapeSvg from "cytoscape-svg"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 |
+  7 | let registered = false
+  8 |
+
+Import traces:
+  Client Component Browser:
+    ./lib/cytoscape-setup.ts [Client Component Browser]
+    ./components/graph/GraphView.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./lib/cytoscape-setup.ts [Client Component SSR]
+    ./components/graph/GraphView.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  164395ms] [ERROR] ./components/code/CodeViewer.tsx:4:1
+Module not found: Can't resolve '@monaco-editor/react'
+  2 |
+  3 | import * as React from "react"
+> 4 | import Editor, { type OnMount } from "@monaco-editor/react"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { X, Loader2, FileCode } from "lucide-react"
+  6 |
+  7 | import { getCodeView } from "@/lib/api"
+
+Import traces:
+  Client Component Browser:
+    ./components/code/CodeViewer.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./components/code/CodeViewer.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  164395ms] [ERROR] ./lib/cytoscape-setup.ts:5:1
+Module not found: Can't resolve 'cytoscape-svg'
+  3 | import fcose from "cytoscape-fcose"
+  4 | import expandCollapse from "cytoscape-expand-collapse"
+> 5 | import cytoscapeSvg from "cytoscape-svg"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 |
+  7 | let registered = false
+  8 |
+
+Import traces:
+  Client Component Browser:
+    ./lib/cytoscape-setup.ts [Client Component Browser]
+    ./components/graph/GraphView.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./lib/cytoscape-setup.ts [Client Component SSR]
+    ./components/graph/GraphView.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[  166088ms] [WARNING] Can not register `expandCollapse` for `core` since `expandCollapse` already exists in the prototype and can not be overridden @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:2297

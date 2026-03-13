@@ -7,6 +7,7 @@ import type cytoscape from "cytoscape"
 import { ensureCytoscapeExtensions } from "@/lib/cytoscape-setup"
 import { defaultStylesheet, layerStylesheet } from "@/lib/graph-styles"
 import type { ViewMode } from "@/lib/types"
+import type { LayoutMode } from "@/hooks/useGraph"
 
 ensureCytoscapeExtensions()
 
@@ -42,6 +43,7 @@ interface GraphViewProps {
   elements: cytoscape.ElementDefinition[]
   viewMode: ViewMode
   performanceTier: "full" | "no-animation" | "simplified" | "force-drilldown"
+  layoutMode?: LayoutMode
   colorBy?: "kind" | "layer"
   onNodeSelect?: (nodeData: Record<string, unknown>) => void
   onNodeDrillDown?: (fqn: string, name: string, level: string) => void
@@ -52,12 +54,14 @@ export function GraphView({
   elements,
   viewMode,
   performanceTier,
+  layoutMode = "full",
   colorBy = "kind",
   onNodeSelect,
   onNodeDrillDown,
   onCyInit,
 }: GraphViewProps) {
   const cyRef = useRef<cytoscape.Core | null>(null)
+  const prevElementIdsRef = useRef<Set<string>>(new Set())
 
   const stylesheet = colorBy === "layer" ? layerStylesheet : defaultStylesheet
 
@@ -118,10 +122,20 @@ export function GraphView({
     [onNodeSelect, onNodeDrillDown, onCyInit, performanceTier]
   )
 
+  // Track the previous viewMode to detect view switches
+  const prevViewModeRef = useRef<ViewMode>(viewMode)
+
   // Re-run layout when view mode or elements change
   useEffect(() => {
     const cy = cyRef.current
     if (!cy || elements.length === 0) return
+
+    const currentIds = new Set(
+      elements.map((e) => e.data?.id as string).filter(Boolean)
+    )
+
+    const viewModeChanged = prevViewModeRef.current !== viewMode
+    prevViewModeRef.current = viewMode
 
     const layoutConfig = { ...LAYOUT_CONFIGS[viewMode] }
 
@@ -132,14 +146,64 @@ export function GraphView({
 
     const timer = setTimeout(() => {
       try {
-        cy.layout(layoutConfig).run()
+        if (layoutMode === "drill" && prevElementIdsRef.current.size > 0 && !viewModeChanged) {
+          // Drill-down: find new nodes and their parent, then layout
+          // only within the parent's bounding box
+          const newIds = [...currentIds].filter(
+            (id) => !prevElementIdsRef.current.has(id)
+          )
+          if (newIds.length > 0) {
+            const newNodes = cy.nodes().filter((node) => newIds.includes(node.id()))
+
+            if (newNodes.length > 0) {
+              // Find the parent compound node of the new children
+              const parentId = newNodes[0].data("parent")
+              const parentNode = parentId ? cy.getElementById(parentId) : null
+
+              if (parentNode && parentNode.length > 0) {
+                // Get parent's current bounding box to constrain children
+                const parentBB = parentNode.boundingBox()
+
+                // Layout new nodes using a grid inside the parent's area
+                newNodes
+                  .layout({
+                    name: "grid",
+                    boundingBox: {
+                      x1: parentBB.x1,
+                      y1: parentBB.y1,
+                      x2: Math.max(parentBB.x2, parentBB.x1 + 200),
+                      y2: Math.max(parentBB.y2, parentBB.y1 + 200),
+                    },
+                    animate: false,
+                    condense: true,
+                    avoidOverlap: true,
+                  } as cytoscape.LayoutOptions)
+                  .run()
+
+                // Smoothly center on the expanded parent
+                cy.animate({
+                  center: { eles: parentNode },
+                  duration: 300,
+                })
+              } else {
+                // No parent (shouldn't happen) — just fit
+                cy.animate({ fit: { eles: cy.elements(), padding: 30 }, duration: 300 })
+              }
+            }
+          }
+        } else {
+          // Full layout: reposition everything
+          cy.layout(layoutConfig).run()
+        }
       } catch {
         // Layout algorithm may fail with 0 nodes
       }
+
+      prevElementIdsRef.current = currentIds
     }, 50)
 
     return () => clearTimeout(timer)
-  }, [viewMode, elements, performanceTier])
+  }, [viewMode, elements, performanceTier, layoutMode])
 
   return (
     <div className="relative h-full w-full">

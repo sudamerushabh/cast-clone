@@ -168,11 +168,13 @@ class TestAggregatedEdges:
                 "source": "com.example.user",
                 "target": "com.example.db",
                 "weight": 12,
+                "kind": "CALLS",
             },
             {
                 "source": "com.example.web",
                 "target": "com.example.user",
                 "weight": 8,
+                "kind": "DEPENDS_ON",
             },
         ]
 
@@ -189,6 +191,7 @@ class TestAggregatedEdges:
         assert data["level"] == "module"
         assert data["edges"][0]["source"] == "com.example.user"
         assert data["edges"][0]["weight"] == 12
+        assert data["edges"][0]["kind"] == "CALLS"
 
     @pytest.mark.asyncio
     async def test_class_level_edges(self, app_client):
@@ -198,6 +201,7 @@ class TestAggregatedEdges:
                 "source": "com.example.user.UserService",
                 "target": "com.example.user.UserRepo",
                 "weight": 5,
+                "kind": "CALLS",
             },
         ]
 
@@ -212,6 +216,7 @@ class TestAggregatedEdges:
         data = response.json()
         assert data["total"] == 1
         assert data["level"] == "class"
+        assert data["edges"][0]["kind"] == "CALLS"
 
     @pytest.mark.asyncio
     async def test_invalid_level_422(self, app_client):

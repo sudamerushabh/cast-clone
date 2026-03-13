@@ -51,6 +51,7 @@ class AggregatedEdgeResponse(BaseModel):
     source: str
     target: str
     weight: int
+    kind: str = "CALLS"
 
 
 class AggregatedEdgeListResponse(BaseModel):

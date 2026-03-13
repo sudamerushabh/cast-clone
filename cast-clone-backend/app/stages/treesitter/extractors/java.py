@@ -275,6 +275,9 @@ class JavaExtractor:
         # Step 10: Tag SQL strings
         self._tag_sql_strings(root, package, nodes)
 
+        # Step 10b: Extract type references (DEPENDS_ON edges)
+        self._extract_type_references(root, package, import_map, edges)
+
         # Step 11: Create MODULE node for the package and CONTAINS edges
         if package:
             module_name = package.rsplit(".", 1)[-1]
@@ -871,6 +874,134 @@ class JavaExtractor:
             if graph_node is not None:
                 tagged = graph_node.properties.setdefault("tagged_strings", [])
                 tagged.append(text)
+
+
+    # Primitives and java.lang types that should not generate DEPENDS_ON edges
+    _SKIP_TYPES: set[str] = {
+        "void", "int", "long", "short", "byte", "float", "double",
+        "boolean", "char", "String", "Integer", "Long", "Short",
+        "Byte", "Float", "Double", "Boolean", "Character", "Object",
+        "Class", "Void", "Number",
+    }
+
+    def _resolve_type_fqn(
+        self, type_text: str, import_map: dict[str, str], package: str,
+    ) -> str | None:
+        """Resolve a type name to a FQN, skipping primitives and java.lang types.
+
+        Returns None if the type should be skipped (primitive, java.lang, etc.).
+        """
+        name = _strip_generics(type_text).strip()
+        # Handle fully-qualified names used inline
+        if "." in name:
+            return name
+        if name in self._SKIP_TYPES or not name or not name[0].isupper():
+            return None
+        # Resolve through imports, fall back to same-package
+        if name in import_map:
+            return import_map[name]
+        if package:
+            return f"{package}.{name}"
+        return name
+
+    def _extract_type_references(
+        self,
+        root: Node,
+        package: str,
+        import_map: dict[str, str],
+        edges: list[GraphEdge],
+    ) -> None:
+        """Extract DEPENDS_ON edges from type references.
+
+        Scans field types, method return types, method parameter types,
+        and generic type arguments in superclass/interface declarations
+        to create class-level DEPENDS_ON edges.
+        """
+        seen: set[tuple[str, str]] = set()
+
+        def _add_dep(source_fqn: str, type_text: str) -> None:
+            resolved = self._resolve_type_fqn(type_text, import_map, package)
+            if resolved is None or resolved == source_fqn:
+                return
+            key = (source_fqn, resolved)
+            if key in seen:
+                return
+            seen.add(key)
+            edges.append(
+                GraphEdge(
+                    source_fqn=source_fqn,
+                    target_fqn=resolved,
+                    kind=EdgeKind.DEPENDS_ON,
+                    confidence=Confidence.MEDIUM,
+                    evidence="tree-sitter",
+                )
+            )
+
+        def _extract_type_names(type_node: Node) -> list[str]:
+            """Extract all type names from a type node, including generics."""
+            results: list[str] = []
+            if type_node.type == "type_identifier":
+                results.append(_node_text(type_node))
+            elif type_node.type == "generic_type":
+                # e.g., List<Pet> — extract both List and Pet
+                for child in type_node.children:
+                    results.extend(_extract_type_names(child))
+            elif type_node.type == "type_arguments":
+                for child in type_node.children:
+                    results.extend(_extract_type_names(child))
+            elif type_node.type == "scoped_type_identifier":
+                results.append(_node_text(type_node))
+            return results
+
+        # Walk all class and interface declarations
+        for class_type in ("class_declaration", "interface_declaration"):
+            for class_node in _walk_all(root, class_type):
+                class_fqn_str = _class_fqn(package, class_node)
+
+                # 1. Field types
+                for field_node in _walk_all(class_node, "field_declaration"):
+                    type_node = field_node.child_by_field_name("type")
+                    if type_node is not None:
+                        for type_name in _extract_type_names(type_node):
+                            _add_dep(class_fqn_str, type_name)
+
+                # 2. Method return types and parameter types
+                for method_node in _walk_all(class_node, "method_declaration"):
+                    # Return type
+                    ret_node = method_node.child_by_field_name("type")
+                    if ret_node is not None:
+                        for type_name in _extract_type_names(ret_node):
+                            _add_dep(class_fqn_str, type_name)
+                    # Parameter types
+                    params_node = method_node.child_by_field_name("parameters")
+                    if params_node is not None:
+                        for param in params_node.children:
+                            if param.type == "formal_parameter":
+                                ptype = param.child_by_field_name("type")
+                                if ptype is not None:
+                                    for type_name in _extract_type_names(ptype):
+                                        _add_dep(class_fqn_str, type_name)
+
+                # 3. Constructor parameter types
+                for ctor_node in _walk_all(class_node, "constructor_declaration"):
+                    params_node = ctor_node.child_by_field_name("parameters")
+                    if params_node is not None:
+                        for param in params_node.children:
+                            if param.type == "formal_parameter":
+                                ptype = param.child_by_field_name("type")
+                                if ptype is not None:
+                                    for type_name in _extract_type_names(ptype):
+                                        _add_dep(class_fqn_str, type_name)
+
+                # 4. Superclass and interface generic type arguments
+                superclass = class_node.child_by_field_name("superclass")
+                if superclass is not None:
+                    for type_name in _extract_type_names(superclass):
+                        _add_dep(class_fqn_str, type_name)
+                interfaces = class_node.child_by_field_name("interfaces")
+                if interfaces is not None:
+                    for type_name in _extract_type_names(interfaces):
+                        _add_dep(class_fqn_str, type_name)
 
 
 # Register this extractor at module level

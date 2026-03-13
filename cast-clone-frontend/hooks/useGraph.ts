@@ -25,12 +25,16 @@ interface DrilldownEntry {
   name: string
 }
 
+/** Signals how the graph layout should respond to an elements change. */
+export type LayoutMode = "full" | "drill"
+
 interface UseGraphReturn {
   elements: ElementDefinition[]
   isLoading: boolean
   error: string | null
   drilldownPath: DrilldownEntry[]
   performanceTier: "full" | "no-animation" | "simplified" | "force-drilldown"
+  layoutMode: LayoutMode
   loadModules: (projectId: string) => Promise<void>
   drillIntoModule: (
     projectId: string,
@@ -53,6 +57,7 @@ export function useGraph(): UseGraphReturn {
   const [performanceTier, setPerformanceTier] = useState<
     "full" | "no-animation" | "simplified" | "force-drilldown"
   >("full")
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("full")
 
   const cache = useRef(new Map<string, ElementDefinition[]>())
 
@@ -62,6 +67,7 @@ export function useGraph(): UseGraphReturn {
     setIsLoading(true)
     setError(null)
     setDrilldownPath([])
+    setLayoutMode("full")
 
     try {
       if (cache.current.has(cacheKey)) {
@@ -95,6 +101,7 @@ export function useGraph(): UseGraphReturn {
 
       setIsLoading(true)
       setError(null)
+      setLayoutMode("drill")
 
       try {
         let classElements: ElementDefinition[]
@@ -142,6 +149,7 @@ export function useGraph(): UseGraphReturn {
 
       setIsLoading(true)
       setError(null)
+      setLayoutMode("drill")
 
       try {
         let methodElements: ElementDefinition[]
@@ -172,6 +180,7 @@ export function useGraph(): UseGraphReturn {
     async (projectId: string) => {
       if (drilldownPath.length === 0) return
 
+      setLayoutMode("full")
       const newPath = drilldownPath.slice(0, -1)
       setDrilldownPath(newPath)
 
@@ -213,6 +222,7 @@ export function useGraph(): UseGraphReturn {
     error,
     drilldownPath,
     performanceTier,
+    layoutMode,
     loadModules,
     drillIntoModule,
     drillIntoClass,

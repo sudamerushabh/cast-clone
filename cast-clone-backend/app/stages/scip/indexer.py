@@ -24,6 +24,7 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.orchestrator.subprocess_utils import run_subprocess
+from app.stages.scip.jdk_detect import resolve_java_home
 from app.stages.scip.merger import MergeStats, merge_scip_into_context
 from app.stages.scip.protobuf_parser import parse_scip_index
 
@@ -161,17 +162,21 @@ def detect_available_indexers(
 # -- Single Indexer Run ------------------------------------------------------
 
 
-async def run_single_scip_indexer(
+async def _run_scip_in_directory(
     context: AnalysisContext,
     indexer_config: SCIPIndexerConfig,
     project_name: str,
+    cwd: Path,
+    build_tool: str | None = None,
 ) -> MergeStats:
-    """Run one SCIP indexer and merge results into context.
+    """Run a SCIP indexer in a specific directory and merge results.
 
     Args:
         context: Pipeline analysis context.
         indexer_config: Configuration for the specific indexer.
         project_name: Project name for command interpolation.
+        cwd: Working directory to run the indexer in.
+        build_tool: Optional build tool override for scip-java.
 
     Returns:
         MergeStats from the merger.
@@ -179,32 +184,27 @@ async def run_single_scip_indexer(
     Raises:
         RuntimeError: If the indexer subprocess exits with non-zero code.
     """
-    root_path = context.manifest.root_path
+    command = build_scip_command(indexer_config, project_name, cwd, build_tool)
 
-    # Detect build tool for scip-java when multiple build tools are present
-    build_tool: str | None = None
-    if indexer_config.name == "scip-java" and context.manifest:
-        java_build_tools = [
-            bt.name for bt in context.manifest.build_tools
-            if bt.language == "java" and bt.name in ("maven", "gradle")
-        ]
-        if len(java_build_tools) > 1:
-            # Prefer Maven over Gradle for SCIP indexing
-            build_tool = "maven" if "maven" in java_build_tools else java_build_tools[0]
-
-    command = build_scip_command(indexer_config, project_name, root_path, build_tool)
+    # Auto-detect JDK version for Java projects
+    env_overrides: dict[str, str] | None = None
+    if indexer_config.language == "java":
+        env_overrides = resolve_java_home(cwd)
 
     logger.info(
         "scip.indexer.start",
         language=indexer_config.language,
         command=" ".join(command),
+        cwd=str(cwd),
+        java_home=env_overrides.get("JAVA_HOME") if env_overrides else None,
         project_id=context.project_id,
     )
 
     result = await run_subprocess(
         command=command,
-        cwd=root_path,
+        cwd=cwd,
         timeout=indexer_config.timeout_seconds,
+        env=env_overrides,
     )
 
     if result.returncode != 0:
@@ -214,13 +214,14 @@ async def run_single_scip_indexer(
         )
 
     # Parse the SCIP protobuf output
-    index_path = root_path / indexer_config.output_file
+    index_path = cwd / indexer_config.output_file
     scip_index = parse_scip_index(index_path)
 
     logger.info(
         "scip.indexer.parsed",
         language=indexer_config.language,
         documents=len(scip_index.documents),
+        cwd=str(cwd),
         project_id=context.project_id,
     )
 
@@ -233,10 +234,178 @@ async def run_single_scip_indexer(
         resolved=stats.resolved_count,
         new_nodes=stats.new_nodes,
         upgraded_edges=stats.upgraded_edges,
+        cwd=str(cwd),
         project_id=context.project_id,
     )
 
     return stats
+
+
+def _find_subproject_dirs(
+    context: AnalysisContext,
+    indexer_config: SCIPIndexerConfig,
+) -> list[Path]:
+    """Find subproject directories that have build tools for this language.
+
+    Uses the build_tools already detected in the manifest during discovery.
+    Only returns subproject directories (not the root).
+
+    Args:
+        context: Pipeline analysis context with manifest.
+        indexer_config: SCIP indexer config (used to match language).
+
+    Returns:
+        List of absolute subproject directory paths.
+    """
+    root_path = context.manifest.root_path
+    # Map SCIP language to build tool languages
+    lang = indexer_config.language
+    # scip-typescript handles both typescript and javascript
+    match_languages = {lang}
+    if lang == "typescript":
+        match_languages.add("javascript")
+
+    # Map build tool names to SCIP indexers
+    scip_build_tool_names = {
+        "java": {"maven", "gradle"},
+        "typescript": {"npm"},
+        "python": {"uv/pip", "pip"},
+        "csharp": {"dotnet"},
+    }
+    valid_tool_names = scip_build_tool_names.get(lang, set())
+
+    dirs: list[Path] = []
+    for bt in context.manifest.build_tools:
+        if bt.subproject_root == ".":
+            continue  # skip root — we already tried it
+        if bt.language in match_languages and bt.name in valid_tool_names:
+            subdir = root_path / bt.subproject_root
+            if subdir.is_dir():
+                dirs.append(subdir)
+
+    return dirs
+
+
+async def run_single_scip_indexer(
+    context: AnalysisContext,
+    indexer_config: SCIPIndexerConfig,
+    project_name: str,
+) -> MergeStats:
+    """Run one SCIP indexer and merge results into context.
+
+    First tries to run at the project root. If that fails, falls back to
+    running in each subproject directory that has a matching build tool
+    (e.g., per-service pom.xml in a multi-module repo).
+
+    Args:
+        context: Pipeline analysis context.
+        indexer_config: Configuration for the specific indexer.
+        project_name: Project name for command interpolation.
+
+    Returns:
+        MergeStats from the merger (aggregated across all subprojects).
+
+    Raises:
+        RuntimeError: If all indexer attempts fail.
+    """
+    root_path = context.manifest.root_path
+
+    # Detect build tool for scip-java when multiple build tools are present
+    build_tool: str | None = None
+    if indexer_config.name == "scip-java" and context.manifest:
+        java_build_tools = [
+            bt.name for bt in context.manifest.build_tools
+            if bt.language == "java" and bt.name in ("maven", "gradle")
+            and bt.subproject_root == "."
+        ]
+        if len(java_build_tools) > 1:
+            build_tool = "maven" if "maven" in java_build_tools else java_build_tools[0]
+
+    # Check if root has a build file for this language
+    root_has_build = any(
+        bt.subproject_root == "." and bt.language == indexer_config.language
+        for bt in context.manifest.build_tools
+    )
+    # For typescript, also check javascript
+    if indexer_config.language == "typescript" and not root_has_build:
+        root_has_build = any(
+            bt.subproject_root == "." and bt.language == "javascript"
+            for bt in context.manifest.build_tools
+        )
+
+    # Try root first if it has a build file
+    if root_has_build:
+        try:
+            return await _run_scip_in_directory(
+                context, indexer_config, project_name, root_path, build_tool,
+            )
+        except RuntimeError as root_err:
+            logger.warning(
+                "scip.indexer.root_failed",
+                language=indexer_config.language,
+                error=str(root_err)[:200],
+                project_id=context.project_id,
+            )
+            # Fall through to try subprojects
+
+    # Find subproject directories with matching build tools
+    sub_dirs = _find_subproject_dirs(context, indexer_config)
+    if not sub_dirs:
+        if root_has_build:
+            raise RuntimeError(
+                f"{indexer_config.name} failed at root and no subprojects found"
+            )
+        raise RuntimeError(
+            f"No build tool found for {indexer_config.language}"
+        )
+
+    logger.info(
+        "scip.indexer.subprojects",
+        language=indexer_config.language,
+        count=len(sub_dirs),
+        dirs=[d.name for d in sub_dirs],
+        project_id=context.project_id,
+    )
+
+    # Run SCIP in each subproject in parallel
+    tasks = [
+        _run_scip_in_directory(
+            context, indexer_config, d.name, d, build_tool,
+        )
+        for d in sub_dirs
+    ]
+    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Aggregate results
+    aggregated = MergeStats()
+    failures: list[str] = []
+    for sub_dir, outcome in zip(sub_dirs, outcomes):
+        if isinstance(outcome, Exception):
+            logger.warning(
+                "scip.indexer.subproject_failed",
+                language=indexer_config.language,
+                subproject=sub_dir.name,
+                error=str(outcome)[:200],
+                project_id=context.project_id,
+            )
+            failures.append(sub_dir.name)
+        else:
+            aggregated.resolved_count += outcome.resolved_count
+            aggregated.new_nodes += outcome.new_nodes
+            aggregated.upgraded_edges += outcome.upgraded_edges
+
+    if aggregated.resolved_count == 0 and failures:
+        raise RuntimeError(
+            f"{indexer_config.name} failed in all subprojects: {failures}"
+        )
+
+    if failures:
+        context.warnings.append(
+            f"SCIP {indexer_config.name} failed in {len(failures)}/{len(sub_dirs)} "
+            f"subprojects: {failures}"
+        )
+
+    return aggregated
 
 
 # -- Parallel Indexer Orchestrator -------------------------------------------

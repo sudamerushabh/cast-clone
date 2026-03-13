@@ -265,11 +265,14 @@ def count_loc(file_path: Path) -> int:
 # -- Build Tool Detection ─────────────────────────────────────────
 
 
-def detect_build_tools(root: Path) -> list[BuildTool]:
-    """Detect build tools by looking for known build configuration files.
+def _detect_build_tools_in_dir(
+    directory: Path, subproject_root: str = "."
+) -> list[BuildTool]:
+    """Detect build tools in a single directory.
 
     Args:
-        root: The root directory of the project.
+        directory: Directory to scan.
+        subproject_root: Relative path from project root to this directory.
 
     Returns:
         List of detected BuildTool instances.
@@ -277,52 +280,91 @@ def detect_build_tools(root: Path) -> list[BuildTool]:
     tools: list[BuildTool] = []
 
     # Maven
-    if (root / "pom.xml").is_file():
-        tools.append(BuildTool(name="maven", config_file="pom.xml", language="java"))
+    if (directory / "pom.xml").is_file():
+        tools.append(BuildTool(
+            name="maven", config_file="pom.xml",
+            language="java", subproject_root=subproject_root,
+        ))
 
     # Gradle
-    if (root / "build.gradle").is_file():
-        tools.append(
-            BuildTool(name="gradle", config_file="build.gradle", language="java")
-        )
-    elif (root / "build.gradle.kts").is_file():
-        tools.append(
-            BuildTool(name="gradle", config_file="build.gradle.kts", language="java")
-        )
+    if (directory / "build.gradle").is_file():
+        tools.append(BuildTool(
+            name="gradle", config_file="build.gradle",
+            language="java", subproject_root=subproject_root,
+        ))
+    elif (directory / "build.gradle.kts").is_file():
+        tools.append(BuildTool(
+            name="gradle", config_file="build.gradle.kts",
+            language="java", subproject_root=subproject_root,
+        ))
 
     # npm
-    if (root / "package.json").is_file():
-        tools.append(
-            BuildTool(name="npm", config_file="package.json", language="javascript")
-        )
+    if (directory / "package.json").is_file():
+        tools.append(BuildTool(
+            name="npm", config_file="package.json",
+            language="javascript", subproject_root=subproject_root,
+        ))
 
     # Python -- pyproject.toml (uv/pip)
-    if (root / "pyproject.toml").is_file():
-        tools.append(
-            BuildTool(name="uv/pip", config_file="pyproject.toml", language="python")
-        )
-    elif (root / "setup.py").is_file():
-        tools.append(BuildTool(name="pip", config_file="setup.py", language="python"))
-    elif (root / "requirements.txt").is_file():
-        tools.append(
-            BuildTool(name="pip", config_file="requirements.txt", language="python")
-        )
+    if (directory / "pyproject.toml").is_file():
+        tools.append(BuildTool(
+            name="uv/pip", config_file="pyproject.toml",
+            language="python", subproject_root=subproject_root,
+        ))
+    elif (directory / "setup.py").is_file():
+        tools.append(BuildTool(
+            name="pip", config_file="setup.py",
+            language="python", subproject_root=subproject_root,
+        ))
+    elif (directory / "requirements.txt").is_file():
+        tools.append(BuildTool(
+            name="pip", config_file="requirements.txt",
+            language="python", subproject_root=subproject_root,
+        ))
 
     # .NET -- .csproj or .sln
-    csproj_files = list(root.glob("*.csproj"))
-    sln_files = list(root.glob("*.sln"))
+    csproj_files = list(directory.glob("*.csproj"))
+    sln_files = list(directory.glob("*.sln"))
     if csproj_files:
-        tools.append(
-            BuildTool(
-                name="dotnet",
-                config_file=csproj_files[0].name,
-                language="csharp",
-            )
-        )
+        tools.append(BuildTool(
+            name="dotnet", config_file=csproj_files[0].name,
+            language="csharp", subproject_root=subproject_root,
+        ))
     elif sln_files:
-        tools.append(
-            BuildTool(name="dotnet", config_file=sln_files[0].name, language="csharp")
-        )
+        tools.append(BuildTool(
+            name="dotnet", config_file=sln_files[0].name,
+            language="csharp", subproject_root=subproject_root,
+        ))
+
+    return tools
+
+
+def detect_build_tools(root: Path) -> list[BuildTool]:
+    """Detect build tools at the project root and in immediate subdirectories.
+
+    For monorepos and multi-service projects, each subdirectory may contain
+    its own build configuration (pom.xml, package.json, etc.). We scan one
+    level deep to discover these subprojects.
+
+    Args:
+        root: The root directory of the project.
+
+    Returns:
+        List of detected BuildTool instances with subproject_root set.
+    """
+    # Scan root directory
+    tools = _detect_build_tools_in_dir(root, subproject_root=".")
+
+    # Scan immediate subdirectories for additional build tools
+    root_languages = {t.language for t in tools}
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.name in SKIP_DIRS or child.name.startswith("."):
+            continue
+        sub_tools = _detect_build_tools_in_dir(child, subproject_root=child.name)
+        for st in sub_tools:
+            # Always add subproject tools — they represent independent build units
+            # even if the same language exists at root (e.g., root pom + child poms)
+            tools.append(st)
 
     return tools
 

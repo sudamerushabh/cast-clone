@@ -145,10 +145,16 @@ class TestRunSingleSCIPIndexer:
                         new_implements_edges=1,
                     )
 
+                    from app.models.manifest import BuildTool
+
                     cfg = SCIP_INDEXER_CONFIGS["java"]
+                    mock_manifest = MagicMock(root_path=tmp_path)
+                    mock_manifest.build_tools = [
+                        BuildTool(name="maven", config_file="pom.xml", language="java", subproject_root="."),
+                    ]
                     stats = await run_single_scip_indexer(
                         context=MagicMock(
-                            manifest=MagicMock(root_path=tmp_path),
+                            manifest=mock_manifest,
                             project_id="test-proj",
                         ),
                         indexer_config=cfg,
@@ -174,11 +180,17 @@ class TestRunSingleSCIPIndexer:
         ) as mock_run:
             mock_run.return_value = mock_result
 
+            from app.models.manifest import BuildTool
+
             cfg = SCIP_INDEXER_CONFIGS["java"]
-            with pytest.raises(RuntimeError, match="exited with code 1"):
+            mock_manifest = MagicMock(root_path=tmp_path)
+            mock_manifest.build_tools = [
+                BuildTool(name="maven", config_file="pom.xml", language="java", subproject_root="."),
+            ]
+            with pytest.raises(RuntimeError, match="failed at root and no subprojects"):
                 await run_single_scip_indexer(
                     context=MagicMock(
-                        manifest=MagicMock(root_path=tmp_path),
+                        manifest=mock_manifest,
                         project_id="test-proj",
                     ),
                     indexer_config=cfg,

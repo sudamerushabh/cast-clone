@@ -35,6 +35,7 @@ class BuildTool:
     name: str  # "maven", "gradle", "npm", "pip", etc.
     config_file: str  # Relative path to build config
     language: str
+    subproject_root: str = "."  # Relative path to subproject dir (default: project root)
 
 
 @dataclass
