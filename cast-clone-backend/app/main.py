@@ -16,6 +16,7 @@ from app.api import (
     health_router,
     projects_router,
     repositories_router,
+    users_router,
     websocket_router,
 )
 from app.config import Settings
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     application.include_router(repositories_router)
     application.include_router(graph_views_router)
     application.include_router(analysis_views_router)
+    application.include_router(users_router)
     application.include_router(websocket_router)
 
     return application
