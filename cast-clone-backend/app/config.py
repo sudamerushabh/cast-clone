@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     log_level: str = "info"
     # Phase 5a: AI agent pipeline (Bedrock)
     aws_region: str = "us-east-1"
-    pr_analysis_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
-    pr_analysis_supervisor_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    pr_analysis_model: str = "us.anthropic.claude-sonnet-4-6"
+    pr_analysis_supervisor_model: str = "us.anthropic.claude-sonnet-4-6"
     pr_analysis_max_subagents: int = 15
     pr_analysis_max_total_tokens: int = 500_000
 

@@ -33,6 +33,7 @@ import type {
   PrAnalysisList,
   PrDriftDetail,
   PrImpactDetail,
+  ProjectBranchResponse,
   ProjectListResponse,
   ProjectResponse,
   RemoteRepoListResponse,
@@ -431,6 +432,16 @@ export async function getRepository(id: string): Promise<RepositoryResponse> {
   return apiFetch<RepositoryResponse>(`/api/v1/repositories/${id}`);
 }
 
+export async function addBranch(
+  repoId: string,
+  branch: string,
+): Promise<ProjectBranchResponse> {
+  return apiFetch<ProjectBranchResponse>(`/api/v1/repositories/${repoId}/branches`, {
+    method: "POST",
+    body: JSON.stringify({ branch }),
+  });
+}
+
 export async function deleteRepository(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/repositories/${id}`, { method: "DELETE" });
 }
@@ -777,4 +788,48 @@ export async function testGitConnectivity(
     `/api/v1/repositories/${repoId}/git-config/test`,
     { method: "POST" },
   );
+}
+
+export interface EnableWebhooksResponse {
+  webhook_url: string;
+  webhook_secret: string;
+  platform: string;
+  monitored_branches: string[] | null;
+  is_active: boolean;
+  auto_registered: boolean;
+  auto_register_error: string | null;
+}
+
+export async function enableWebhooks(
+  repoId: string,
+  opts: {
+    monitorAll?: boolean;
+    monitoredBranches?: string[];
+    autoRegister?: boolean;
+  } = {},
+): Promise<EnableWebhooksResponse> {
+  return apiFetch<EnableWebhooksResponse>(
+    `/api/v1/repositories/${repoId}/git-config/enable-webhooks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        monitor_all_branches: opts.monitorAll ?? true,
+        monitored_branches: opts.monitoredBranches ?? null,
+        auto_register: opts.autoRegister ?? false,
+      }),
+    },
+  );
+}
+
+export async function autoRegisterWebhook(
+  repoId: string,
+): Promise<{ success: boolean; error: string | null }> {
+  return apiFetch<{ success: boolean; error: string | null }>(
+    `/api/v1/repositories/${repoId}/git-config/auto-register-webhook`,
+    { method: "POST" },
+  );
+}
+
+export async function disableWebhooks(repoId: string): Promise<void> {
+  return deleteGitConfig(repoId);
 }

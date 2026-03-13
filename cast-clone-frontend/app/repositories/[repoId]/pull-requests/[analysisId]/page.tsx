@@ -11,6 +11,7 @@ import { PrStatsRow } from "@/components/pull-requests/PrStatsRow";
 import { PrChangedNodesTable } from "@/components/pull-requests/PrChangedNodesTable";
 import { PrCrossTechPanel } from "@/components/pull-requests/PrCrossTechPanel";
 import { PrDriftAlerts } from "@/components/pull-requests/PrDriftAlerts";
+import { Download } from "lucide-react";
 
 export default function RepoPrDetailPage() {
   const params = useParams();
@@ -34,6 +35,85 @@ export default function RepoPrDetailPage() {
   const handleReanalyze = async () => {
     await reanalyzeRepoPr(repoId, analysisId);
     router.refresh();
+  };
+
+  const handleDownload = (format: "md" | "json") => {
+    let content: string;
+    let filename: string;
+    let mime: string;
+
+    if (format === "json") {
+      content = JSON.stringify({ analysis, impact, drift }, null, 2);
+      filename = `pr-${analysis.pr_number}-analysis.json`;
+      mime = "application/json";
+    } else {
+      const lines: string[] = [
+        `# PR #${analysis.pr_number}: ${analysis.pr_title}`,
+        "",
+        `**Author:** ${analysis.pr_author}`,
+        `**Branch:** ${analysis.source_branch} → ${analysis.target_branch}`,
+        `**Commit:** ${analysis.commit_sha}`,
+        `**Risk Level:** ${analysis.risk_level ?? "N/A"}`,
+        `**Status:** ${analysis.status}`,
+        "",
+        "---",
+        "",
+        "## Stats",
+        "",
+        `| Metric | Value |`,
+        `|--------|-------|`,
+        `| Files Changed | ${analysis.files_changed ?? "—"} |`,
+        `| Additions | ${analysis.additions ?? "—"} |`,
+        `| Deletions | ${analysis.deletions ?? "—"} |`,
+        `| Changed Nodes | ${analysis.changed_node_count ?? "—"} |`,
+        `| Blast Radius | ${impact?.total_blast_radius ?? "—"} nodes |`,
+        `| Layers Affected | ${impact ? Object.keys(impact.by_layer).length : "—"} |`,
+        `| Transactions Affected | ${impact?.transactions_affected.length ?? "—"} |`,
+        "",
+      ];
+
+      if (drift?.has_drift) {
+        lines.push("## Architecture Drift", "");
+        if (drift.potential_new_module_deps.length > 0) {
+          lines.push("### New Module Dependencies", "");
+          drift.potential_new_module_deps.forEach((d) =>
+            lines.push(`- ${d.from_module} → ${d.to_module}`)
+          );
+          lines.push("");
+        }
+        if (drift.new_files_outside_modules.length > 0) {
+          lines.push("### Files Outside Modules", "");
+          drift.new_files_outside_modules.forEach((f) => lines.push(`- ${f}`));
+          lines.push("");
+        }
+      }
+
+      if (impact?.changed_nodes.length) {
+        lines.push("## Changed Nodes", "");
+        lines.push("| Name | Type | Change |");
+        lines.push("|------|------|--------|");
+        impact.changed_nodes.forEach((n) =>
+          lines.push(`| ${n.name} | ${n.type} | ${n.change_type} |`)
+        );
+        lines.push("");
+      }
+
+      if (analysis.ai_summary) {
+        lines.push("---", "", "## AI Impact Summary", "", analysis.ai_summary);
+      }
+
+      content = lines.join("\n");
+      filename = `pr-${analysis.pr_number}-analysis.md`;
+      mime = "text/markdown";
+    }
+
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -70,6 +150,26 @@ export default function RepoPrDetailPage() {
                 Re-analyze
               </button>
             )}
+            <div className="relative group">
+              <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 text-gray-700">
+                <Download className="size-3.5" />
+                Export
+              </button>
+              <div className="hidden group-hover:block absolute right-0 mt-1 bg-white border rounded-md shadow-lg z-10 min-w-[140px]">
+                <button
+                  onClick={() => handleDownload("md")}
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50"
+                >
+                  Markdown (.md)
+                </button>
+                <button
+                  onClick={() => handleDownload("json")}
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50"
+                >
+                  JSON (.json)
+                </button>
+              </div>
+            </div>
             {analysis.pr_url && (
               <a
                 href={analysis.pr_url}

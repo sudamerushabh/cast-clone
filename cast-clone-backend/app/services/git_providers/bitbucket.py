@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.services.git_providers.base import GitProvider, GitRepo, GitUser
+from app.services.git_providers.base import GitProvider, GitRepo, GitUser, WebhookCreateResult
 
 
 class BitbucketProvider(GitProvider):
@@ -112,3 +112,32 @@ class BitbucketProvider(GitProvider):
             resp.raise_for_status()
             data = resp.json()
             return [b["name"] for b in data.get("values", [])]
+
+    async def create_webhook(
+        self, full_name: str, webhook_url: str, secret: str,
+    ) -> WebhookCreateResult:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._api_base}/repositories/{full_name}/hooks",
+                headers=self._headers,
+                json={
+                    "description": "CodeLens PR Analysis",
+                    "url": webhook_url,
+                    "active": True,
+                    "secret": secret,
+                    "events": [
+                        "pullrequest:created",
+                        "pullrequest:updated",
+                    ],
+                },
+                timeout=15,
+            )
+            if resp.status_code in (201, 200):
+                data = resp.json()
+                return WebhookCreateResult(
+                    success=True, webhook_id=str(data.get("uuid", ""))
+                )
+            return WebhookCreateResult(
+                success=False,
+                error=f"Bitbucket API {resp.status_code}: {resp.text[:200]}",
+            )

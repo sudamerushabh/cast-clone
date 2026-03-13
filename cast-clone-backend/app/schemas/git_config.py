@@ -35,7 +35,7 @@ class GitConfigResponse(BaseModel):
     repository_id: str
     platform: str
     repo_url: str
-    monitored_branches: list[str]
+    monitored_branches: list[str] | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -48,3 +48,35 @@ class WebhookUrlResponse(BaseModel):
 
     webhook_url: str
     webhook_secret: str
+
+
+class EnableWebhooksRequest(BaseModel):
+    """Simplified request to enable PR webhooks — derives platform/token from connector."""
+
+    monitor_all_branches: bool = True
+    monitored_branches: list[str] | None = None
+    auto_register: bool = False
+
+
+class EnableWebhooksResponse(BaseModel):
+    """Response after enabling webhooks."""
+
+    webhook_url: str
+    webhook_secret: str
+    platform: str
+    monitored_branches: list[str] | None  # None = all branches
+    is_active: bool
+    auto_registered: bool = False
+    auto_register_error: str | None = None
+
+
+class AutoRegisterRequest(BaseModel):
+    """Request to auto-register webhook on the git platform."""
+    pass
+
+
+class AutoRegisterResponse(BaseModel):
+    """Response from auto-register attempt."""
+
+    success: bool
+    error: str | None = None

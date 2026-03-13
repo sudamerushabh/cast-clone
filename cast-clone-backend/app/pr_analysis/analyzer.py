@@ -55,6 +55,7 @@ async def run_pr_analysis(
     api_token: str,
     repo_path: str,
     app_name: str,
+    source_repo_path: str | None = None,
 ) -> None:
     """Run the full PR analysis pipeline.
 
@@ -132,6 +133,7 @@ async def run_pr_analysis(
             repo_path=repo_path,
             graph_store=store,
             app_name=app_name,
+            source_repo_path=source_repo_path,
         )
         pr_record.ai_summary = summary_result.summary
         pr_record.ai_summary_tokens = summary_result.tokens_used
@@ -224,13 +226,27 @@ async def run_pr_analysis(
 
 
 def _get_repo_url(pr_record) -> str:
-    """Extract repo URL from the PR record's pr_url or fall back."""
+    """Extract repo URL from the PR record's pr_url or fall back to repository info."""
     if pr_record.pr_url:
         # PR URL like https://github.com/org/repo/pull/42 -> https://github.com/org/repo
         parts = pr_record.pr_url.split("/")
         for i, p in enumerate(parts):
             if p in ("pull", "pulls", "merge_requests", "pull-requests"):
                 return "/".join(parts[:i])
+    # Fallback: construct from repository if available
+    if hasattr(pr_record, "repository") and pr_record.repository:
+        repo = pr_record.repository
+        full_name = repo.repo_full_name
+        platform = pr_record.platform
+        base_urls = {
+            "github": "https://github.com",
+            "gitlab": "https://gitlab.com",
+            "bitbucket": "https://bitbucket.org",
+            "gitea": "",
+        }
+        base = base_urls.get(platform, "")
+        if base and full_name:
+            return f"{base}/{full_name}"
     return ""
 
 

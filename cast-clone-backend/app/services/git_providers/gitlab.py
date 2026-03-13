@@ -6,7 +6,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from app.services.git_providers.base import GitProvider, GitRepo, GitUser
+from app.services.git_providers.base import GitProvider, GitRepo, GitUser, WebhookCreateResult
 
 
 class GitLabProvider(GitProvider):
@@ -96,3 +96,30 @@ class GitLabProvider(GitProvider):
             )
             resp.raise_for_status()
             return [b["name"] for b in resp.json()]
+
+    async def create_webhook(
+        self, full_name: str, webhook_url: str, secret: str,
+    ) -> WebhookCreateResult:
+        encoded = quote_plus(full_name)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._api_base}/projects/{encoded}/hooks",
+                headers=self._headers,
+                json={
+                    "url": webhook_url,
+                    "token": secret,
+                    "merge_requests_events": True,
+                    "push_events": False,
+                    "enable_ssl_verification": True,
+                },
+                timeout=15,
+            )
+            if resp.status_code in (201, 200):
+                data = resp.json()
+                return WebhookCreateResult(
+                    success=True, webhook_id=str(data.get("id", ""))
+                )
+            return WebhookCreateResult(
+                success=False,
+                error=f"GitLab API {resp.status_code}: {resp.text[:200]}",
+            )

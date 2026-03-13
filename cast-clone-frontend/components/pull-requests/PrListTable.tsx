@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { PrAnalysis } from "@/lib/types";
 import { PrRiskBadge } from "./PrRiskBadge";
 import { PrStatusBadge } from "./PrStatusBadge";
@@ -22,11 +23,12 @@ interface Props {
 }
 
 export function PrListTable({ items, projectId, basePath }: Props) {
+  const router = useRouter();
   const linkBase = basePath ?? `/projects/${projectId}`;
   if (items.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
-        No pull request analyses yet. Configure Git integration to get started.
+        No pull request analyses yet.
       </div>
     );
   }
@@ -60,41 +62,49 @@ export function PrListTable({ items, projectId, basePath }: Props) {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {items.map((pr) => (
-            <tr key={pr.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3">
-                <Link
-                  href={`${linkBase}/pull-requests/${pr.id}`}
-                  className="text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  #{pr.pr_number}
-                </Link>
-                <span className="ml-2 text-sm text-gray-700">
-                  {pr.pr_title}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-sm text-gray-600">
-                {pr.pr_author}
-              </td>
-              <td className="px-4 py-3 text-xs font-mono text-gray-500">
-                {pr.source_branch} → {pr.target_branch}
-              </td>
-              <td className="px-4 py-3">
-                <PrRiskBadge level={pr.risk_level} />
-              </td>
-              <td className="px-4 py-3 text-sm">
-                {pr.blast_radius_total != null
-                  ? `${pr.blast_radius_total} nodes`
-                  : "—"}
-              </td>
-              <td className="px-4 py-3">
-                <PrStatusBadge status={pr.status} />
-              </td>
-              <td className="px-4 py-3 text-xs text-gray-500">
-                {timeAgo(pr.created_at)}
-              </td>
-            </tr>
-          ))}
+          {items.map((pr) => {
+            const detailHref = `${linkBase}/pull-requests/${pr.id}`;
+            return (
+              <tr
+                key={pr.id}
+                className="hover:bg-gray-50 cursor-pointer transition-colors"
+                onClick={() => router.push(detailHref)}
+              >
+                <td className="px-4 py-3">
+                  <Link
+                    href={detailHref}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    #{pr.pr_number}
+                  </Link>
+                  <span className="ml-2 text-sm text-gray-700">
+                    {pr.pr_title}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-sm text-gray-600">
+                  {pr.pr_author}
+                </td>
+                <td className="px-4 py-3 text-xs font-mono text-gray-500">
+                  {pr.source_branch} → {pr.target_branch}
+                </td>
+                <td className="px-4 py-3">
+                  <PrRiskBadge level={pr.risk_level} />
+                </td>
+                <td className="px-4 py-3 text-sm">
+                  {pr.blast_radius_total != null
+                    ? `${pr.blast_radius_total} nodes`
+                    : "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <PrStatusBadge status={pr.status} />
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-500">
+                  {timeAgo(pr.created_at)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

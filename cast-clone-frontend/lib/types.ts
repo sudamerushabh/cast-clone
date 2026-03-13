@@ -653,7 +653,7 @@ export interface GitConfig {
   repository_id: string;
   platform: string;
   repo_url: string;
-  monitored_branches: string[];
+  monitored_branches: string[] | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

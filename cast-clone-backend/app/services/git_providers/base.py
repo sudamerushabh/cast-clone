@@ -23,6 +23,15 @@ class GitRepo:
     is_private: bool = False
 
 
+@dataclass
+class WebhookCreateResult:
+    """Result of registering a webhook on a remote git platform."""
+
+    success: bool
+    webhook_id: str | None = None
+    error: str | None = None
+
+
 class GitProvider(ABC):
     def __init__(self, base_url: str, token: str) -> None:
         self.base_url = base_url.rstrip("/")
@@ -41,3 +50,15 @@ class GitProvider(ABC):
 
     @abstractmethod
     async def list_branches(self, full_name: str) -> list[str]: ...
+
+    async def create_webhook(
+        self, full_name: str, webhook_url: str, secret: str,
+    ) -> WebhookCreateResult:
+        """Register a webhook on the remote repository.
+
+        Default implementation returns failure — subclasses override with
+        platform-specific API calls.
+        """
+        return WebhookCreateResult(
+            success=False, error="Webhook auto-registration not supported for this platform"
+        )

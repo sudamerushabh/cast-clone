@@ -76,8 +76,8 @@ async def receive_webhook(
             ).model_dump(),
         )
 
-    # 5. Check if target branch is monitored
-    if event.target_branch not in config.monitored_branches:
+    # 5. Check if target branch is monitored (null/empty = all branches)
+    if config.monitored_branches and event.target_branch not in config.monitored_branches:
         await log.ainfo(
             "webhook_branch_ignored",
             target_branch=event.target_branch,
@@ -91,23 +91,45 @@ async def receive_webhook(
             ).model_dump(),
         )
 
-    # 6. Create PrAnalysis record
-    pr_analysis = PrAnalysis(
-        repository_id=repo_id,
-        platform=platform,
-        pr_number=event.pr_number,
-        pr_title=event.pr_title,
-        pr_description=event.pr_description,
-        pr_author=event.author,
-        source_branch=event.source_branch,
-        target_branch=event.target_branch,
-        commit_sha=event.commit_sha,
-        pr_url=event.raw_payload.get("html_url") or event.raw_payload.get("url"),
-        status="pending",
+    # 6. Create or reuse PrAnalysis record (handles webhook redelivery)
+    pr_url = (
+        event.raw_payload.get("pull_request", {}).get("html_url")
+        or event.raw_payload.get("html_url")
+        or event.raw_payload.get("url")
     )
-    session.add(pr_analysis)
-    await session.commit()
-    await session.refresh(pr_analysis)
+    existing = await session.execute(
+        select(PrAnalysis).where(
+            PrAnalysis.repository_id == repo_id,
+            PrAnalysis.pr_number == event.pr_number,
+            PrAnalysis.commit_sha == event.commit_sha,
+        )
+    )
+    pr_analysis = existing.scalar_one_or_none()
+    if pr_analysis is not None:
+        # Redelivery or retry — reset for re-analysis
+        pr_analysis.status = "pending"
+        pr_analysis.pr_url = pr_url or pr_analysis.pr_url
+        pr_analysis.pr_title = event.pr_title
+        pr_analysis.pr_description = event.pr_description
+        await session.commit()
+        await log.ainfo("webhook_redelivery", pr_number=event.pr_number, pr_analysis_id=pr_analysis.id)
+    else:
+        pr_analysis = PrAnalysis(
+            repository_id=repo_id,
+            platform=platform,
+            pr_number=event.pr_number,
+            pr_title=event.pr_title,
+            pr_description=event.pr_description,
+            pr_author=event.author,
+            source_branch=event.source_branch,
+            target_branch=event.target_branch,
+            commit_sha=event.commit_sha,
+            pr_url=pr_url,
+            status="pending",
+        )
+        session.add(pr_analysis)
+        await session.commit()
+        await session.refresh(pr_analysis)
 
     await log.ainfo(
         "webhook_accepted",
@@ -176,6 +198,9 @@ async def _run_analysis_background(
             await session.commit()
             return
 
+        # Attach repo to pr_record so _get_repo_url fallback works
+        pr_record.repository = repo
+
         # Fetch all remote refs so local branch clones can find any branch
         try:
             from app.services.clone import fetch_all_refs
@@ -230,7 +255,8 @@ async def _run_analysis_background(
 
         # Now run the PR-specific analysis (diff, impact, drift, AI)
         # Uses target branch graph for impact analysis
-        app_name = f"{repo_id}:{target_branch}"
+        # app_name in Neo4j is the project UUID (set by the writer stage)
+        app_name = str(target_project.id)
 
         store = Neo4jGraphStore(get_driver())
         api_token = decrypt_token(api_token_encrypted, secret_key)
@@ -242,4 +268,5 @@ async def _run_analysis_background(
             api_token=api_token,
             repo_path=target_project.source_path,
             app_name=app_name,
+            source_repo_path=source_project.source_path,
         )

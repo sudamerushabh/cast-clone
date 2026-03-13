@@ -9,6 +9,7 @@ from app.pr_analysis.ai.tool_context import ToolContext
 from app.pr_analysis.models import (
     AggregatedImpact,
     DriftReport,
+    PRDiff,
     PullRequestEvent,
     GitPlatform,
 )
@@ -69,6 +70,12 @@ def _make_drift() -> DriftReport:
     )
 
 
+def _make_diff() -> PRDiff:
+    return PRDiff(
+        files=[], total_additions=0, total_deletions=0, total_files_changed=0,
+    )
+
+
 class TestRunSupervisor:
     @pytest.mark.asyncio
     async def test_generates_summary(self, ctx):
@@ -87,6 +94,7 @@ class TestRunSupervisor:
         sup_input = SupervisorInput(
             subagent_reports=reports,
             pr_event=_make_event(),
+            diff=_make_diff(),
             impact=_make_impact(),
             drift=_make_drift(),
             risk_level="Medium",
@@ -112,6 +120,7 @@ class TestRunSupervisor:
         sup_input = SupervisorInput(
             subagent_reports=reports,
             pr_event=_make_event(),
+            diff=_make_diff(),
             impact=_make_impact(),
             drift=_make_drift(),
             risk_level="Low",
@@ -154,6 +163,7 @@ class TestRunSupervisor:
         sup_input = SupervisorInput(
             subagent_reports=reports,
             pr_event=_make_event(),
+            diff=_make_diff(),
             impact=_make_impact(),
             drift=_make_drift(),
             risk_level="Low",
@@ -166,7 +176,7 @@ class TestRunSupervisor:
 
     @pytest.mark.asyncio
     async def test_dispatch_subagent_budget(self, ctx):
-        """Test that dispatch_subagent respects the 3-agent budget."""
+        """Test that dispatch_subagent respects the 5-agent budget."""
         from app.pr_analysis.ai.supervisor import _handle_dispatch
 
         settings = MagicMock(pr_analysis_max_subagents=15)
@@ -174,7 +184,7 @@ class TestRunSupervisor:
         # Should be rejected when budget is exhausted
         result = await _handle_dispatch(
             AsyncMock(), {"role": "test", "prompt": "investigate", "tools": ["read_file"]},
-            ctx, "model", settings, dispatched_count=3,
+            ctx, "model", settings, dispatched_count=5,
         )
         parsed = json.loads(result)
         assert "budget exceeded" in parsed["error"]
@@ -206,6 +216,7 @@ class TestRunSupervisor:
         sup_input = SupervisorInput(
             subagent_reports=reports,
             pr_event=_make_event(),
+            diff=_make_diff(),
             impact=_make_impact(),
             drift=_make_drift(),
             risk_level="Low",

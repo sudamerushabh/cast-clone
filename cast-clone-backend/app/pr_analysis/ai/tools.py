@@ -116,7 +116,7 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
     if include_dispatch:
         tools.append({
             "name": "dispatch_subagent",
-            "description": "Dispatch an ad-hoc subagent for a focused investigation. The subagent gets 25 tool calls and full context. Use for follow-up questions that none of the specialist agents covered.",
+            "description": "Dispatch an ad-hoc subagent for a focused investigation. The subagent gets 25 tool calls and all tools by default. Use for independent investigation tracks.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -125,10 +125,10 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
                     "tools": {
                         "type": "array",
                         "items": {"type": "string", "enum": sorted(VALID_TOOL_NAMES)},
-                        "description": "Subset of tool names to give the subagent",
+                        "description": "Optional subset of tool names. If omitted, all tools are provided.",
                     },
                 },
-                "required": ["role", "prompt", "tools"],
+                "required": ["role", "prompt"],
             },
         })
 
