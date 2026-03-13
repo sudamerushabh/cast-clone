@@ -311,6 +311,24 @@ async def discover_transactions(
                     )
                 )
 
+            # Collect TABLE nodes reachable via WRITES/READS from visited functions
+            seen_tables: set[str] = set()
+            for fn_fqn in flow.visited_fqns:
+                for edge in graph.get_edges_from(fn_fqn):
+                    if edge.kind in (EdgeKind.WRITES, EdgeKind.READS):
+                        table_node = graph.get_node(edge.target_fqn)
+                        if table_node is not None and edge.target_fqn not in seen_tables:
+                            seen_tables.add(edge.target_fqn)
+                            graph.add_edge(
+                                GraphEdge(
+                                    source_fqn=txn_fqn,
+                                    target_fqn=edge.target_fqn,
+                                    kind=EdgeKind.INCLUDES,
+                                    confidence=Confidence.HIGH,
+                                    evidence="transaction-discovery",
+                                )
+                            )
+
             transaction_count += 1
             logger.debug(
                 "transaction_discovery.created",

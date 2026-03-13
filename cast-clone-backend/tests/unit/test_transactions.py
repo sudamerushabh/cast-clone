@@ -4,7 +4,7 @@
 import pytest
 
 from app.models.context import AnalysisContext, EntryPoint
-from app.models.enums import EdgeKind, NodeKind
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import ProjectManifest
 from app.stages.transactions import (
@@ -314,11 +314,14 @@ class TestDiscoverTransactions:
         assert len(ends_at) == 1
         assert ends_at[0].target_fqn == "com.UserRepo.findAll"
 
-        # Verify INCLUDES edges with positions
+        # Verify INCLUDES edges with positions (2 functions + 1 table)
         includes = [e for e in ctx.graph.edges if e.kind == EdgeKind.INCLUDES]
-        assert len(includes) == 2
-        positions = sorted([e.properties["position"] for e in includes])
+        assert len(includes) == 3
+        fn_includes = [e for e in includes if e.properties.get("position") is not None]
+        positions = sorted([e.properties["position"] for e in fn_includes])
         assert positions == [0, 1]
+        table_includes = [e for e in includes if e.target_fqn == "users"]
+        assert len(table_includes) == 1
 
     @pytest.mark.asyncio
     async def test_message_consumer_entry_point(self):
@@ -471,3 +474,113 @@ class TestDiscoverTransactions:
     async def test_default_max_depth_is_15(self):
         """DEFAULT_MAX_DEPTH constant is 15."""
         assert DEFAULT_MAX_DEPTH == 15
+
+
+# ── TABLE node inclusion in transactions ──────────────────
+
+
+def _build_controller_service_repo_graph() -> tuple[SymbolGraph, list[EntryPoint]]:
+    """
+    Controller.addAccount -[:CALLS]-> Service.createAccount
+      -[:CALLS]-> AccountRepository.save   (stub JPA node)
+        -[:WRITES]-> table:accounts
+    """
+    graph = SymbolGraph()
+
+    for fqn, name in [
+        ("com.example.AccountController.addAccount", "addAccount"),
+        ("com.example.AccountService.createAccount", "createAccount"),
+        ("com.example.AccountRepository.save", "save"),
+    ]:
+        graph.add_node(GraphNode(fqn=fqn, name=name, kind=NodeKind.FUNCTION, language="java"))
+
+    table = GraphNode(fqn="table:accounts", name="accounts", kind=NodeKind.TABLE, properties={})
+    graph.add_node(table)
+
+    graph.add_edge(GraphEdge(
+        source_fqn="com.example.AccountController.addAccount",
+        target_fqn="com.example.AccountService.createAccount",
+        kind=EdgeKind.CALLS, confidence=Confidence.HIGH, evidence="tree-sitter",
+    ))
+    graph.add_edge(GraphEdge(
+        source_fqn="com.example.AccountService.createAccount",
+        target_fqn="com.example.AccountRepository.save",
+        kind=EdgeKind.CALLS, confidence=Confidence.MEDIUM, evidence="tree-sitter",
+    ))
+    graph.add_edge(GraphEdge(
+        source_fqn="com.example.AccountRepository.save",
+        target_fqn="table:accounts",
+        kind=EdgeKind.WRITES, confidence=Confidence.HIGH, evidence="spring-data",
+    ))
+
+    entry_points = [
+        EntryPoint(
+            fqn="com.example.AccountController.addAccount",
+            kind="http_endpoint",
+            metadata={"method": "POST", "path": "/accounts"},
+        )
+    ]
+    return graph, entry_points
+
+
+@pytest.mark.asyncio
+async def test_transaction_includes_table_nodes():
+    """Transaction INCLUDES edges should also point to TABLE nodes."""
+    graph, entry_points = _build_controller_service_repo_graph()
+    ctx = AnalysisContext(project_id="test")
+    ctx.graph = graph
+    ctx.entry_points = entry_points
+
+    await discover_transactions(ctx)
+
+    txn_nodes = [n for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION]
+    assert len(txn_nodes) == 1
+    txn_fqn = txn_nodes[0].fqn
+
+    includes_targets = {
+        e.target_fqn
+        for e in ctx.graph.edges
+        if e.kind == EdgeKind.INCLUDES and e.source_fqn == txn_fqn
+    }
+
+    assert "com.example.AccountController.addAccount" in includes_targets
+    assert "com.example.AccountService.createAccount" in includes_targets
+    assert "com.example.AccountRepository.save" in includes_targets
+    assert "table:accounts" in includes_targets
+
+
+@pytest.mark.asyncio
+async def test_transaction_no_duplicate_table_includes():
+    """If two functions WRITE to the same table, only one INCLUDES edge to that table."""
+    graph, entry_points = _build_controller_service_repo_graph()
+
+    graph.add_node(GraphNode(
+        fqn="com.example.AccountRepository.deleteById",
+        name="deleteById",
+        kind=NodeKind.FUNCTION, language="java",
+    ))
+    graph.add_edge(GraphEdge(
+        source_fqn="com.example.AccountService.createAccount",
+        target_fqn="com.example.AccountRepository.deleteById",
+        kind=EdgeKind.CALLS, confidence=Confidence.MEDIUM, evidence="tree-sitter",
+    ))
+    graph.add_edge(GraphEdge(
+        source_fqn="com.example.AccountRepository.deleteById",
+        target_fqn="table:accounts",
+        kind=EdgeKind.WRITES, confidence=Confidence.HIGH, evidence="spring-data",
+    ))
+
+    ctx = AnalysisContext(project_id="test")
+    ctx.graph = graph
+    ctx.entry_points = entry_points
+
+    await discover_transactions(ctx)
+
+    txn_fqn = next(n.fqn for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION)
+    table_includes = [
+        e for e in ctx.graph.edges
+        if e.kind == EdgeKind.INCLUDES
+        and e.source_fqn == txn_fqn
+        and e.target_fqn == "table:accounts"
+    ]
+    assert len(table_includes) == 1
