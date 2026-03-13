@@ -400,7 +400,7 @@ export default function GraphPage() {
       setTraceRouteOpen(true)
       setContextMenu(null)
     },
-    [cyInstanceRef],
+    [],
   )
 
   const handleNodeRightClick = useCallback(
@@ -666,21 +666,7 @@ export default function GraphPage() {
             <div className="py-1">
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
-                onClick={() => {
-                  // Read node data directly from Cytoscape to avoid stale selectedNode closure
-                  const cy = cyInstanceRef.current
-                  const cyNode = cy?.getElementById(contextMenu.fqn)
-                  const data = cyNode?.data() ?? {} as Record<string, unknown>
-                  const node: TraceRouteNode = {
-                    fqn: contextMenu.fqn,
-                    name: typeof data.label === "string" ? data.label : contextMenu.fqn,
-                    kind: typeof data.kind === "string" ? data.kind : "",
-                    language: typeof data.language === "string" ? data.language : null,
-                  }
-                  setTraceRouteNode(node)
-                  setTraceRouteOpen(true)
-                  setContextMenu(null)
-                }}
+                onClick={() => handleTraceRoute(contextMenu.fqn)}
               >
                 <GitBranch className="size-3.5 text-blue-500" />
                 Trace Route
