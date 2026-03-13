@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   ExternalLink,
+  Hash,
 } from "lucide-react"
 
 import { getProject, triggerAnalysis, getAnalysisStatus } from "@/lib/api"
@@ -197,6 +198,17 @@ export default function ProjectDashboardPage() {
           >
             <ExternalLink className="mr-2 size-4" />
             View Graph
+          </Button>
+        )}
+
+        {isAnalyzed && (
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => router.push(`/projects/${projectId}/metrics`)}
+          >
+            <Hash className="mr-2 size-4" />
+            View Metrics
           </Button>
         )}
       </div>
