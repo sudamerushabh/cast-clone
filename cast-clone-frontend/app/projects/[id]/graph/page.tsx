@@ -405,7 +405,11 @@ export default function GraphPage() {
 
   const handleNodeRightClick = useCallback(
     (fqn: string, position: { x: number; y: number }) => {
-      setContextMenu({ fqn, x: position.x, y: position.y })
+      const MENU_WIDTH = 160
+      const MENU_HEIGHT = 120
+      const x = Math.min(position.x, window.innerWidth - MENU_WIDTH)
+      const y = Math.min(position.y, window.innerHeight - MENU_HEIGHT)
+      setContextMenu({ fqn, x, y })
     },
     [],
   )
