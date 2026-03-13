@@ -7,6 +7,7 @@ import {
   FileCode2,
   ArrowDownToLine,
   ArrowUpFromLine,
+  GitBranch,
   Route,
   Ruler,
   Gauge,
@@ -37,6 +38,7 @@ interface NodePropertiesProps {
   onViewSource?: (file: string, line: number) => void
   onShowImpact?: (fqn: string) => void
   onStartPathFrom?: (fqn: string) => void
+  onTraceRoute?: (fqn: string) => void
 }
 
 function MetricRow({
@@ -60,7 +62,7 @@ function MetricRow({
   )
 }
 
-export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onStartPathFrom }: NodePropertiesProps) {
+export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onStartPathFrom, onTraceRoute }: NodePropertiesProps) {
   if (!node) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -215,6 +217,16 @@ export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onSt
             >
               <Route className="size-3.5" />
               Find Path
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => onTraceRoute?.(fqn)}
+              disabled={!onTraceRoute}
+            >
+              <GitBranch className="size-3.5" />
+              Trace Route
             </Button>
           </div>
         ) : null}
