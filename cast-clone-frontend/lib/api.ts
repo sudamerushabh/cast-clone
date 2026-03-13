@@ -34,6 +34,12 @@ import type {
   RepositoryResponse,
   TransactionDetailResponse,
   TransactionListResponse,
+  LoginResponse,
+  SetupRequest,
+  SetupStatusResponse,
+  UserCreateRequest,
+  UserResponse,
+  UserUpdateRequest,
 } from "./types";
 
 const BASE_URL =
@@ -51,6 +57,13 @@ export class ApiError extends Error {
   }
 }
 
+// ─── Auth token helper ───────────────────────────────────────────────────────
+
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token");
+}
+
 // ─── Base fetch helper ──────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -63,6 +76,7 @@ async function apiFetch<T>(
   const res = await fetch(url, {
     headers: {
       ...(needsContentType ? { "Content-Type": "application/json" } : {}),
+      ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
       ...(callerHeaders as Record<string, string>),
     },
     ...restOptions,
@@ -408,4 +422,68 @@ export async function syncRepository(repoId: string): Promise<CloneStatusRespons
 
 export async function getEvolutionTimeline(repoId: string, branch: string): Promise<EvolutionTimelineResponse> {
   return apiFetch<EvolutionTimelineResponse>(`/api/v1/repositories/${repoId}/evolution?branch=${encodeURIComponent(branch)}`);
+}
+
+// ── Auth ──
+
+export async function login(
+  username: string,
+  password: string
+): Promise<LoginResponse> {
+  const resp = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username, password }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new ApiError(resp.status, body.detail || "Login failed");
+  }
+  return resp.json();
+}
+
+export async function getMe(): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/auth/me");
+}
+
+export async function getSetupStatus(): Promise<SetupStatusResponse> {
+  return apiFetch<SetupStatusResponse>("/api/v1/auth/setup-status");
+}
+
+export async function initialSetup(req: SetupRequest): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/auth/setup", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+// ── User Management (Admin) ──
+
+export async function listUsers(): Promise<UserResponse[]> {
+  return apiFetch<UserResponse[]>("/api/v1/users");
+}
+
+export async function createUser(req: UserCreateRequest): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function getUser(userId: string): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}`);
+}
+
+export async function updateUser(
+  userId: string,
+  req: UserUpdateRequest
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deactivateUser(userId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/users/${userId}`, { method: "DELETE" });
 }

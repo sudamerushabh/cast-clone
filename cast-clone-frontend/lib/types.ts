@@ -434,3 +434,50 @@ export interface EvolutionTimelineResponse {
   branch: string;
   snapshots: SnapshotPoint[];
 }
+
+// ── Phase 4: Auth & User Management ──
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface UserResponse {
+  id: string;
+  username: string;
+  email: string;
+  role: "admin" | "member";
+  is_active: boolean;
+  created_at: string;
+  last_login: string | null;
+}
+
+export interface SetupStatusResponse {
+  needs_setup: boolean;
+}
+
+export interface SetupRequest {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface UserCreateRequest {
+  username: string;
+  email: string;
+  password: string;
+  role?: "admin" | "member";
+}
+
+export interface UserUpdateRequest {
+  username?: string;
+  email?: string;
+  password?: string;
+  role?: "admin" | "member";
+  is_active?: boolean;
+}
