@@ -481,3 +481,39 @@ export interface UserUpdateRequest {
   role?: "admin" | "member";
   is_active?: boolean;
 }
+
+// ── Phase 4: Annotations & Tags ──
+
+export const PREDEFINED_TAGS = [
+  "deprecated",
+  "tech-debt",
+  "critical-path",
+  "security-sensitive",
+  "needs-review",
+] as const;
+
+export type TagName = (typeof PREDEFINED_TAGS)[number];
+
+export interface AnnotationAuthor {
+  id: string;
+  username: string;
+}
+
+export interface AnnotationResponse {
+  id: string;
+  project_id: string;
+  node_fqn: string;
+  content: string;
+  author: AnnotationAuthor;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TagResponse {
+  id: string;
+  project_id: string;
+  node_fqn: string;
+  tag_name: TagName;
+  author: AnnotationAuthor;
+  created_at: string;
+}

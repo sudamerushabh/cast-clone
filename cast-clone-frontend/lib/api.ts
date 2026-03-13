@@ -40,6 +40,8 @@ import type {
   UserCreateRequest,
   UserResponse,
   UserUpdateRequest,
+  AnnotationResponse,
+  TagResponse,
 } from "./types";
 
 const BASE_URL =
@@ -486,4 +488,74 @@ export async function updateUser(
 
 export async function deactivateUser(userId: string): Promise<void> {
   await apiFetch<void>(`/api/v1/users/${userId}`, { method: "DELETE" });
+}
+
+// ── Annotations ──
+
+export async function createAnnotation(
+  projectId: string,
+  nodeFqn: string,
+  content: string
+): Promise<AnnotationResponse> {
+  return apiFetch<AnnotationResponse>(
+    `/api/v1/projects/${projectId}/annotations`,
+    {
+      method: "POST",
+      body: JSON.stringify({ node_fqn: nodeFqn, content }),
+    }
+  );
+}
+
+export async function listAnnotations(
+  projectId: string,
+  nodeFqn: string
+): Promise<AnnotationResponse[]> {
+  return apiFetch<AnnotationResponse[]>(
+    `/api/v1/projects/${projectId}/annotations?node_fqn=${encodeURIComponent(nodeFqn)}`
+  );
+}
+
+export async function updateAnnotation(
+  annotationId: string,
+  content: string
+): Promise<AnnotationResponse> {
+  return apiFetch<AnnotationResponse>(`/api/v1/annotations/${annotationId}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteAnnotation(annotationId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/annotations/${annotationId}`, {
+    method: "DELETE",
+  });
+}
+
+// ── Tags ──
+
+export async function addTag(
+  projectId: string,
+  nodeFqn: string,
+  tagName: string
+): Promise<TagResponse> {
+  return apiFetch<TagResponse>(`/api/v1/projects/${projectId}/tags`, {
+    method: "POST",
+    body: JSON.stringify({ node_fqn: nodeFqn, tag_name: tagName }),
+  });
+}
+
+export async function listTags(
+  projectId: string,
+  params: { node_fqn?: string; tag_name?: string }
+): Promise<TagResponse[]> {
+  const searchParams = new URLSearchParams();
+  if (params.node_fqn) searchParams.set("node_fqn", params.node_fqn);
+  if (params.tag_name) searchParams.set("tag_name", params.tag_name);
+  return apiFetch<TagResponse[]>(
+    `/api/v1/projects/${projectId}/tags?${searchParams}`
+  );
+}
+
+export async function deleteTag(tagId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/tags/${tagId}`, { method: "DELETE" });
 }
