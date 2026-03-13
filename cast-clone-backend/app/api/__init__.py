@@ -7,6 +7,7 @@ from app.api.annotations import annotation_router as annotations_router
 from app.api.annotations import project_router as annotations_project_router
 from app.api.auth import router as auth_router
 from app.api.connectors import router as connectors_router
+from app.api.export import router as export_router
 from app.api.graph import router as graph_router
 from app.api.graph_views import router as graph_views_router
 from app.api.health import router as health_router
@@ -27,6 +28,7 @@ __all__ = [
     "analysis_router",
     "analysis_views_router",
     "connectors_router",
+    "export_router",
     "graph_router",
     "graph_views_router",
     "health_router",
