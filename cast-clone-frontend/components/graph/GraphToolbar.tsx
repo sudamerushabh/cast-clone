@@ -26,6 +26,7 @@ import {
 import type { ViewMode } from "@/lib/types"
 import { CommunityToggle } from "@/components/analysis/CommunityToggle"
 import { ExportButtons } from "./ExportButtons"
+import { ExportMenu } from "@/components/export/ExportMenu"
 
 interface GraphToolbarProps {
   viewMode: ViewMode
@@ -41,6 +42,8 @@ interface GraphToolbarProps {
   onShowCircularDeps?: () => void
   onShowDeadCode?: () => void
   onSaveView?: () => void
+  projectId?: string
+  selectedNodeFqn?: string
 }
 
 const VIEW_TABS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
@@ -75,6 +78,8 @@ export function GraphToolbar({
   onShowCircularDeps,
   onShowDeadCode,
   onSaveView,
+  projectId,
+  selectedNodeFqn,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center justify-between border-b bg-background px-3 py-1.5">
@@ -136,6 +141,9 @@ export function GraphToolbar({
         </Button>
         <div className="mx-1 h-4 w-px bg-border" />
         <ExportButtons cy={cy} />
+        {projectId && (
+          <ExportMenu projectId={projectId} selectedNodeFqn={selectedNodeFqn} />
+        )}
 
         {onSaveView && (
           <>
