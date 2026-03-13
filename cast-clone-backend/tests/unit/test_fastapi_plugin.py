@@ -1,20 +1,20 @@
 # tests/unit/test_fastapi_plugin.py
-"""Tests for the FastAPI plugin — route endpoints, Depends() DI, Pydantic model linking."""
+"""Tests for the FastAPI plugin — route endpoints, Depends() DI."""
 
-import pytest
 from pathlib import Path
 
-from app.models.enums import NodeKind, EdgeKind, Confidence
-from app.models.graph import GraphNode, GraphEdge, SymbolGraph
-from app.models.context import AnalysisContext
-from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.base import PluginDetectionResult, PluginResult
-from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
+import pytest
 
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_context_with_fastapi() -> AnalysisContext:
     """Create an AnalysisContext with fastapi detected."""
@@ -58,11 +58,16 @@ def _add_class(
     )
     graph.add_node(node)
     # Add INHERITS edges for base classes
-    for base in (bases or []):
-        graph.add_edge(GraphEdge(
-            source_fqn=fqn, target_fqn=base, kind=EdgeKind.INHERITS,
-            confidence=Confidence.LOW, evidence="tree-sitter",
-        ))
+    for base in bases or []:
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=fqn,
+                target_fqn=base,
+                kind=EdgeKind.INHERITS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
     return node
 
 
@@ -89,15 +94,20 @@ def _add_function(
         },
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=parent_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=parent_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
 # ---------------------------------------------------------------------------
 # Detection tests
 # ---------------------------------------------------------------------------
+
 
 class TestFastAPIDetection:
     def test_detect_high_when_fastapi_in_frameworks(self):
@@ -126,7 +136,9 @@ class TestFastAPIDetection:
         )
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "get_users",
+            ctx.graph,
+            "myapp.main",
+            "get_users",
             annotations=['app.get("/users")'],
         )
         result = plugin.detect(ctx)
@@ -137,6 +149,7 @@ class TestFastAPIDetection:
 # Route endpoint extraction tests
 # ---------------------------------------------------------------------------
 
+
 class TestFastAPIRouteExtraction:
     @pytest.mark.asyncio
     async def test_get_endpoint_simple(self):
@@ -145,7 +158,9 @@ class TestFastAPIRouteExtraction:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "get_users",
+            ctx.graph,
+            "myapp.main",
+            "get_users",
             annotations=['app.get("/users")'],
             return_type="list[User]",
         )
@@ -167,7 +182,9 @@ class TestFastAPIRouteExtraction:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "create_user",
+            ctx.graph,
+            "myapp.main",
+            "create_user",
             annotations=['app.post("/users")'],
         )
 
@@ -186,7 +203,9 @@ class TestFastAPIRouteExtraction:
         methods = ["get", "post", "put", "delete", "patch"]
         for m in methods:
             _add_function(
-                ctx.graph, "myapp.main", f"handle_{m}",
+                ctx.graph,
+                "myapp.main",
+                f"handle_{m}",
                 annotations=[f'app.{m}("/resource")'],
             )
 
@@ -203,7 +222,9 @@ class TestFastAPIRouteExtraction:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "get_user",
+            ctx.graph,
+            "myapp.main",
+            "get_user",
             annotations=['app.get("/users/{user_id}")'],
             params=[{"name": "user_id", "type": "int"}],
         )
@@ -233,13 +254,18 @@ class TestFastAPIRouteExtraction:
             },
         )
         ctx.graph.add_node(router_node)
-        ctx.graph.add_edge(GraphEdge(
-            source_fqn="myapp.routes", target_fqn="myapp.routes.router",
-            kind=EdgeKind.CONTAINS,
-        ))
+        ctx.graph.add_edge(
+            GraphEdge(
+                source_fqn="myapp.routes",
+                target_fqn="myapp.routes.router",
+                kind=EdgeKind.CONTAINS,
+            )
+        )
 
         _add_function(
-            ctx.graph, "myapp.routes", "list_users",
+            ctx.graph,
+            "myapp.routes",
+            "list_users",
             annotations=['router.get("/users")'],
         )
 
@@ -255,7 +281,9 @@ class TestFastAPIRouteExtraction:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "get_users",
+            ctx.graph,
+            "myapp.main",
+            "get_users",
             annotations=['app.get("/users")'],
         )
 
@@ -270,6 +298,7 @@ class TestFastAPIRouteExtraction:
 # Depends() DI tests
 # ---------------------------------------------------------------------------
 
+
 class TestFastAPIDependsInjection:
     @pytest.mark.asyncio
     async def test_depends_creates_injects_edge(self):
@@ -283,7 +312,9 @@ class TestFastAPIDependsInjection:
 
         # The consumer with Depends()
         _add_function(
-            ctx.graph, "myapp.main", "list_users",
+            ctx.graph,
+            "myapp.main",
+            "list_users",
             annotations=['app.get("/users")'],
             params=[
                 {"name": "db", "type": "AsyncSession", "default": "Depends(get_db)"},
@@ -307,10 +338,16 @@ class TestFastAPIDependsInjection:
         _add_function(ctx.graph, "myapp.deps", "get_db", return_type="AsyncSession")
 
         _add_function(
-            ctx.graph, "myapp.main", "list_users",
+            ctx.graph,
+            "myapp.main",
+            "list_users",
             annotations=['app.get("/users")'],
             params=[
-                {"name": "db", "type": "AsyncSession", "default": "Depends(deps.get_db)"},
+                {
+                    "name": "db",
+                    "type": "AsyncSession",
+                    "default": "Depends(deps.get_db)",
+                },
             ],
         )
 
@@ -328,11 +365,17 @@ class TestFastAPIDependsInjection:
         _add_function(ctx.graph, "myapp.main", "get_current_user")
 
         _add_function(
-            ctx.graph, "myapp.main", "create_item",
+            ctx.graph,
+            "myapp.main",
+            "create_item",
             annotations=['app.post("/items")'],
             params=[
                 {"name": "db", "type": "Session", "default": "Depends(get_db)"},
-                {"name": "user", "type": "User", "default": "Depends(get_current_user)"},
+                {
+                    "name": "user",
+                    "type": "User",
+                    "default": "Depends(get_current_user)",
+                },
             ],
         )
 
@@ -350,7 +393,9 @@ class TestFastAPIDependsInjection:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "health",
+            ctx.graph,
+            "myapp.main",
+            "health",
             annotations=['app.get("/health")'],
             params=[],
         )
@@ -364,6 +409,7 @@ class TestFastAPIDependsInjection:
 # Layer classification tests
 # ---------------------------------------------------------------------------
 
+
 class TestFastAPILayerClassification:
     @pytest.mark.asyncio
     async def test_route_handler_is_presentation(self):
@@ -372,7 +418,9 @@ class TestFastAPILayerClassification:
         ctx = _make_context_with_fastapi()
         _add_module(ctx.graph, "myapp.main", "main")
         _add_function(
-            ctx.graph, "myapp.main", "get_users",
+            ctx.graph,
+            "myapp.main",
+            "get_users",
             annotations=['app.get("/users")'],
         )
 
@@ -383,6 +431,7 @@ class TestFastAPILayerClassification:
 # ---------------------------------------------------------------------------
 # Plugin metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestFastAPIPluginMetadata:
     def test_plugin_name(self):

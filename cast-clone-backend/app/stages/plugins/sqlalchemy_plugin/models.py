@@ -16,11 +16,12 @@ Produces:
 from __future__ import annotations
 
 import re
+
 import structlog
 
+from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.models.context import AnalysisContext
 from app.stages.plugins.base import (
     FrameworkPlugin,
     PluginDetectionResult,
@@ -33,7 +34,7 @@ logger = structlog.get_logger()
 _COLUMN_RE = re.compile(r"^(Column|mapped_column)\(")
 _FK_RE = re.compile(r'ForeignKey\(\s*["\']([^"\']+)["\']\s*\)')
 _PK_RE = re.compile(r"primary_key\s*=\s*True")
-_RELATIONSHIP_RE = re.compile(r'^relationship\(')
+_RELATIONSHIP_RE = re.compile(r"^relationship\(")
 _TABLENAME_RE = re.compile(r'^["\']([^"\']+)["\']$')
 
 
@@ -88,14 +89,16 @@ class SQLAlchemyPlugin(FrameworkPlugin):
             )
             nodes.append(table_node)
 
-            edges.append(GraphEdge(
-                source_fqn=model_fqn,
-                target_fqn=table_fqn,
-                kind=EdgeKind.MAPS_TO,
-                confidence=Confidence.HIGH,
-                evidence="sqlalchemy-tablename",
-                properties={"orm": "sqlalchemy"},
-            ))
+            edges.append(
+                GraphEdge(
+                    source_fqn=model_fqn,
+                    target_fqn=table_fqn,
+                    kind=EdgeKind.MAPS_TO,
+                    confidence=Confidence.HIGH,
+                    evidence="sqlalchemy-tablename",
+                    properties={"orm": "sqlalchemy"},
+                )
+            )
 
             layer_assignments[model_fqn] = "Data Access"
 
@@ -184,13 +187,15 @@ class SQLAlchemyPlugin(FrameworkPlugin):
             )
             col_nodes.append(col_node)
 
-            has_col_edges.append(GraphEdge(
-                source_fqn=table_fqn,
-                target_fqn=col_fqn,
-                kind=EdgeKind.HAS_COLUMN,
-                confidence=Confidence.HIGH,
-                evidence="sqlalchemy-column",
-            ))
+            has_col_edges.append(
+                GraphEdge(
+                    source_fqn=table_fqn,
+                    target_fqn=col_fqn,
+                    kind=EdgeKind.HAS_COLUMN,
+                    confidence=Confidence.HIGH,
+                    evidence="sqlalchemy-column",
+                )
+            )
 
             fk_match = _FK_RE.search(value)
             if fk_match:
@@ -199,12 +204,14 @@ class SQLAlchemyPlugin(FrameworkPlugin):
                 if len(parts) == 2:
                     target_table, target_col = parts
                     target_col_fqn = f"table:{target_table}.{target_col}"
-                    fk_edges.append(GraphEdge(
-                        source_fqn=col_fqn,
-                        target_fqn=target_col_fqn,
-                        kind=EdgeKind.REFERENCES,
-                        confidence=Confidence.HIGH,
-                        evidence="sqlalchemy-foreignkey",
-                    ))
+                    fk_edges.append(
+                        GraphEdge(
+                            source_fqn=col_fqn,
+                            target_fqn=target_col_fqn,
+                            kind=EdgeKind.REFERENCES,
+                            confidence=Confidence.HIGH,
+                            evidence="sqlalchemy-foreignkey",
+                        )
+                    )
 
         return col_nodes, has_col_edges, fk_edges

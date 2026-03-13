@@ -1,20 +1,20 @@
 # tests/unit/test_sqlalchemy_plugin.py
-"""Tests for the SQLAlchemy plugin — declarative model mapping, FK resolution, relationship edges."""
+"""Tests for the SQLAlchemy plugin — model mapping, FK resolution."""
 
-import pytest
 from pathlib import Path
 
-from app.models.enums import NodeKind, EdgeKind, Confidence
-from app.models.graph import GraphNode, GraphEdge, SymbolGraph
-from app.models.context import AnalysisContext
-from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.base import PluginDetectionResult, PluginResult
-from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
+import pytest
 
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_context_with_sqlalchemy() -> AnalysisContext:
     """Create an AnalysisContext with sqlalchemy detected."""
@@ -50,11 +50,16 @@ def _add_class(
         },
     )
     graph.add_node(node)
-    for base in (bases or []):
-        graph.add_edge(GraphEdge(
-            source_fqn=fqn, target_fqn=base, kind=EdgeKind.INHERITS,
-            confidence=Confidence.LOW, evidence="tree-sitter",
-        ))
+    for base in bases or []:
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=fqn,
+                target_fqn=base,
+                kind=EdgeKind.INHERITS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
     return node
 
 
@@ -79,15 +84,20 @@ def _add_field(
         },
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=class_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=class_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
 # ---------------------------------------------------------------------------
 # Detection tests
 # ---------------------------------------------------------------------------
+
 
 class TestSQLAlchemyDetection:
     def test_detect_high_when_sqlalchemy_in_frameworks(self):
@@ -124,6 +134,7 @@ class TestSQLAlchemyDetection:
 # Entity-to-table mapping tests
 # ---------------------------------------------------------------------------
 
+
 class TestSQLAlchemyEntityMapping:
     @pytest.mark.asyncio
     async def test_model_creates_table_node(self):
@@ -132,9 +143,16 @@ class TestSQLAlchemyEntityMapping:
         ctx = _make_context_with_sqlalchemy()
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.User", "name", value='Column(String(50))')
-        _add_field(ctx.graph, "myapp.models.User", "email", value='Column(String, unique=True)')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(ctx.graph, "myapp.models.User", "name", value="Column(String(50))")
+        _add_field(
+            ctx.graph, "myapp.models.User", "email", value="Column(String, unique=True)"
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -155,8 +173,13 @@ class TestSQLAlchemyEntityMapping:
         ctx = _make_context_with_sqlalchemy()
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.User", "name", value='Column(String(50))')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(ctx.graph, "myapp.models.User", "name", value="Column(String(50))")
 
         result = await plugin.extract(ctx)
         column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
@@ -175,7 +198,12 @@ class TestSQLAlchemyEntityMapping:
         ctx = _make_context_with_sqlalchemy()
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
 
         result = await plugin.extract(ctx)
         column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
@@ -189,8 +217,15 @@ class TestSQLAlchemyEntityMapping:
         ctx = _make_context_with_sqlalchemy()
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='mapped_column(primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.User", "name", value='mapped_column(String(50))')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="mapped_column(primary_key=True)",
+        )
+        _add_field(
+            ctx.graph, "myapp.models.User", "name", value="mapped_column(String(50))"
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -203,7 +238,9 @@ class TestSQLAlchemyEntityMapping:
         """Class inheriting Base but without __tablename__ (abstract) -> no Table."""
         plugin = SQLAlchemyPlugin()
         ctx = _make_context_with_sqlalchemy()
-        _add_class(ctx.graph, "myapp.models.BaseModel", "BaseModel", bases=["myapp.db.Base"])
+        _add_class(
+            ctx.graph, "myapp.models.BaseModel", "BaseModel", bases=["myapp.db.Base"]
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -214,6 +251,7 @@ class TestSQLAlchemyEntityMapping:
 # Foreign key relationship tests
 # ---------------------------------------------------------------------------
 
+
 class TestSQLAlchemyRelationships:
     @pytest.mark.asyncio
     async def test_foreign_key_creates_references_edge(self):
@@ -223,13 +261,25 @@ class TestSQLAlchemyRelationships:
 
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
 
         _add_class(ctx.graph, "myapp.models.Post", "Post", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.Post", "__tablename__", value='"posts"')
-        _add_field(ctx.graph, "myapp.models.Post", "id", value='Column(Integer, primary_key=True)')
         _add_field(
-            ctx.graph, "myapp.models.Post", "author_id",
+            ctx.graph,
+            "myapp.models.Post",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "author_id",
             value='Column(Integer, ForeignKey("users.id"))',
         )
 
@@ -247,13 +297,33 @@ class TestSQLAlchemyRelationships:
 
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
 
         _add_class(ctx.graph, "myapp.models.Post", "Post", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.Post", "__tablename__", value='"posts"')
-        _add_field(ctx.graph, "myapp.models.Post", "id", value='Column(Integer, primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.Post", "author_id", value='Column(Integer, ForeignKey("users.id"))')
-        _add_field(ctx.graph, "myapp.models.Post", "author", value='relationship("User", back_populates="posts")')
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "author_id",
+            value='Column(Integer, ForeignKey("users.id"))',
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "author",
+            value='relationship("User", back_populates="posts")',
+        )
 
         result = await plugin.extract(ctx)
         column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
@@ -268,18 +338,52 @@ class TestSQLAlchemyRelationships:
 
         _add_class(ctx.graph, "myapp.models.User", "User", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.User", "__tablename__", value='"users"')
-        _add_field(ctx.graph, "myapp.models.User", "id", value='Column(Integer, primary_key=True)')
+        _add_field(
+            ctx.graph,
+            "myapp.models.User",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
 
         _add_class(ctx.graph, "myapp.models.Post", "Post", bases=["myapp.db.Base"])
         _add_field(ctx.graph, "myapp.models.Post", "__tablename__", value='"posts"')
-        _add_field(ctx.graph, "myapp.models.Post", "id", value='Column(Integer, primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.Post", "author_id", value='Column(Integer, ForeignKey("users.id"))')
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Post",
+            "author_id",
+            value='Column(Integer, ForeignKey("users.id"))',
+        )
 
-        _add_class(ctx.graph, "myapp.models.Comment", "Comment", bases=["myapp.db.Base"])
-        _add_field(ctx.graph, "myapp.models.Comment", "__tablename__", value='"comments"')
-        _add_field(ctx.graph, "myapp.models.Comment", "id", value='Column(Integer, primary_key=True)')
-        _add_field(ctx.graph, "myapp.models.Comment", "post_id", value='Column(Integer, ForeignKey("posts.id"))')
-        _add_field(ctx.graph, "myapp.models.Comment", "user_id", value='Column(Integer, ForeignKey("users.id"))')
+        _add_class(
+            ctx.graph, "myapp.models.Comment", "Comment", bases=["myapp.db.Base"]
+        )
+        _add_field(
+            ctx.graph, "myapp.models.Comment", "__tablename__", value='"comments"'
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Comment",
+            "id",
+            value="Column(Integer, primary_key=True)",
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Comment",
+            "post_id",
+            value='Column(Integer, ForeignKey("posts.id"))',
+        )
+        _add_field(
+            ctx.graph,
+            "myapp.models.Comment",
+            "user_id",
+            value='Column(Integer, ForeignKey("users.id"))',
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -291,6 +395,7 @@ class TestSQLAlchemyRelationships:
 # ---------------------------------------------------------------------------
 # Layer classification tests
 # ---------------------------------------------------------------------------
+
 
 class TestSQLAlchemyLayerClassification:
     @pytest.mark.asyncio
@@ -308,6 +413,7 @@ class TestSQLAlchemyLayerClassification:
 # ---------------------------------------------------------------------------
 # Plugin metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestSQLAlchemyPluginMetadata:
     def test_plugin_name(self):

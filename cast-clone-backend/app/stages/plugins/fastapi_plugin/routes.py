@@ -14,11 +14,12 @@ Produces:
 from __future__ import annotations
 
 import re
+
 import structlog
 
+from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.models.context import AnalysisContext, EntryPoint
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -111,19 +112,23 @@ class FastAPIPlugin(FrameworkPlugin):
                 )
                 nodes.append(endpoint_node)
 
-                edges.append(GraphEdge(
-                    source_fqn=func_node.fqn,
-                    target_fqn=endpoint_fqn,
-                    kind=EdgeKind.HANDLES,
-                    confidence=Confidence.HIGH,
-                    evidence="fastapi-decorator",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=func_node.fqn,
+                        target_fqn=endpoint_fqn,
+                        kind=EdgeKind.HANDLES,
+                        confidence=Confidence.HIGH,
+                        evidence="fastapi-decorator",
+                    )
+                )
 
-                entry_points.append(EntryPoint(
-                    fqn=endpoint_fqn,
-                    kind="http_endpoint",
-                    metadata={"method": http_method, "path": full_path},
-                ))
+                entry_points.append(
+                    EntryPoint(
+                        fqn=endpoint_fqn,
+                        kind="http_endpoint",
+                        metadata={"method": http_method, "path": full_path},
+                    )
+                )
 
                 layer_assignments[func_node.fqn] = "Presentation"
 
@@ -145,11 +150,13 @@ class FastAPIPlugin(FrameworkPlugin):
         )
 
     def get_layer_classification(self) -> LayerRules:
-        return LayerRules(rules=[
-            LayerRule(pattern="@app.get", layer="Presentation"),
-            LayerRule(pattern="@app.post", layer="Presentation"),
-            LayerRule(pattern="@router.get", layer="Presentation"),
-        ])
+        return LayerRules(
+            rules=[
+                LayerRule(pattern="@app.get", layer="Presentation"),
+                LayerRule(pattern="@app.post", layer="Presentation"),
+                LayerRule(pattern="@router.get", layer="Presentation"),
+            ]
+        )
 
     def _build_router_prefix_map(self, graph: SymbolGraph) -> dict[str, str]:
         prefix_map: dict[str, str] = {}
@@ -176,14 +183,16 @@ class FastAPIPlugin(FrameworkPlugin):
                 dep_ref = match.group(1)
                 dep_fqn = self._resolve_dependency_fqn(graph, node.fqn, dep_ref)
                 if dep_fqn:
-                    edges.append(GraphEdge(
-                        source_fqn=dep_fqn,
-                        target_fqn=node.fqn,
-                        kind=EdgeKind.INJECTS,
-                        confidence=Confidence.HIGH,
-                        evidence="fastapi-depends",
-                        properties={"framework": "fastapi"},
-                    ))
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=dep_fqn,
+                            target_fqn=node.fqn,
+                            kind=EdgeKind.INJECTS,
+                            confidence=Confidence.HIGH,
+                            evidence="fastapi-depends",
+                            properties={"framework": "fastapi"},
+                        )
+                    )
         return edges
 
     def _resolve_dependency_fqn(
