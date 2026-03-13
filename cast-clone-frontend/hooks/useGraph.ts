@@ -8,13 +8,12 @@ import {
   getModuleClasses,
   getClassMethods,
   getAggregatedEdges,
-  getGraphEdges,
 } from "@/lib/api"
 import {
   modulesToElements,
   classesToElements,
   methodsToElements,
-  edgesToElements,
+  aggregatedEdgesToClassElements,
   getPerformanceTier,
 } from "@/lib/cytoscape-elements"
 
@@ -106,10 +105,18 @@ export function useGraph(): UseGraphReturn {
           const classResp = await getModuleClasses(projectId, moduleFqn)
           classElements = classesToElements(classResp.classes, moduleFqn)
 
-          // Also fetch edges between these classes
-          const edgeResp = await getGraphEdges(projectId)
+          // Fetch aggregated CALLS edges between classes in this module
           const classFqns = new Set(classResp.classes.map((c) => c.fqn))
-          const classEdgeElements = edgesToElements(edgeResp.edges, classFqns)
+          const edgeResp = await getAggregatedEdges(
+            projectId,
+            "class",
+            moduleFqn
+          )
+          // Only include edges where both endpoints are visible class nodes
+          const safeEdges = edgeResp.edges.filter(
+            (e) => classFqns.has(e.source) && classFqns.has(e.target)
+          )
+          const classEdgeElements = aggregatedEdgesToClassElements(safeEdges)
 
           classElements = [...classElements, ...classEdgeElements]
           cache.current.set(cacheKey, classElements)

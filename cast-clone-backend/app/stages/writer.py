@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from app.models.enums import NodeKind
-from app.models.graph import GraphNode
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode
 
 if TYPE_CHECKING:
     from app.models.context import AnalysisContext
@@ -68,6 +68,116 @@ def _build_application_node(context: AnalysisContext) -> GraphNode:
             "total_edges": context.graph.edge_count,
         },
     )
+
+
+def _create_stub_hierarchy(
+    context: AnalysisContext,
+) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Create stub Function and Class nodes for CALLS targets missing from the graph.
+
+    For a missing target like 'com.example.OwnerRepository.findAll':
+      1. Create a Function stub node
+      2. If parent class 'com.example.OwnerRepository' is also missing, create a Class stub
+      3. Create CONTAINS edges: class -> function, and module -> class if a module matches
+    """
+    existing_fqns = set(context.graph.nodes.keys())
+    stub_nodes: list[GraphNode] = []
+    stub_edges: list[GraphEdge] = []
+    created_stubs: set[str] = set()
+
+    # Build class_fqn -> module_fqn map from existing CONTAINS edges
+    class_to_module: dict[str, str] = {}
+    for edge in context.graph.edges:
+        if edge.kind == EdgeKind.CONTAINS:
+            src = context.graph.get_node(edge.source_fqn)
+            tgt = context.graph.get_node(edge.target_fqn)
+            if (
+                src
+                and tgt
+                and src.kind == NodeKind.MODULE
+                and tgt.kind in (NodeKind.CLASS, NodeKind.INTERFACE)
+            ):
+                class_to_module[edge.target_fqn] = edge.source_fqn
+
+    # Build package -> module_fqn map for stub class placement
+    package_to_module: dict[str, str] = {}
+    for class_fqn, module_fqn in class_to_module.items():
+        pkg = class_fqn.rsplit(".", 1)[0] if "." in class_fqn else ""
+        if pkg:
+            package_to_module[pkg] = module_fqn
+
+    for edge in context.graph.edges:
+        if edge.kind != EdgeKind.CALLS:
+            continue
+
+        target_fqn = edge.target_fqn
+        if target_fqn in existing_fqns or target_fqn in created_stubs:
+            continue
+
+        # Parse: "com.example.Repo.findAll" -> class="com.example.Repo", method="findAll"
+        dot_idx = target_fqn.rfind(".")
+        if dot_idx <= 0:
+            continue
+
+        class_fqn = target_fqn[:dot_idx]
+        method_name = target_fqn[dot_idx + 1 :]
+
+        # Infer language from source node
+        source_node = context.graph.get_node(edge.source_fqn)
+        language = source_node.language if source_node else None
+
+        # Create stub function node
+        stub_nodes.append(
+            GraphNode(
+                fqn=target_fqn,
+                name=method_name,
+                kind=NodeKind.FUNCTION,
+                language=language,
+                properties={"stub": True},
+            )
+        )
+        created_stubs.add(target_fqn)
+
+        # Create stub class if needed
+        if class_fqn not in existing_fqns and class_fqn not in created_stubs:
+            class_name = class_fqn.rsplit(".", 1)[-1]
+            stub_nodes.append(
+                GraphNode(
+                    fqn=class_fqn,
+                    name=class_name,
+                    kind=NodeKind.CLASS,
+                    language=language,
+                    properties={"stub": True},
+                )
+            )
+            created_stubs.add(class_fqn)
+
+            # Link stub class to its module via package prefix
+            pkg = class_fqn.rsplit(".", 1)[0] if "." in class_fqn else ""
+            module_fqn = package_to_module.get(pkg)
+            if module_fqn:
+                stub_edges.append(
+                    GraphEdge(
+                        source_fqn=module_fqn,
+                        target_fqn=class_fqn,
+                        kind=EdgeKind.CONTAINS,
+                        confidence=Confidence.HIGH,
+                        evidence="stub-hierarchy",
+                    )
+                )
+
+        # CONTAINS edge: class -> function
+        stub_edges.append(
+            GraphEdge(
+                source_fqn=class_fqn,
+                target_fqn=target_fqn,
+                kind=EdgeKind.CONTAINS,
+                confidence=Confidence.HIGH,
+                evidence="stub-hierarchy",
+            )
+        )
+
+    return stub_nodes, stub_edges
 
 
 async def write_to_neo4j(
@@ -117,8 +227,16 @@ async def write_to_neo4j(
     else:
         logger.info("writer.write_nodes", count=0)
 
+    # Step 4b: Create stub nodes for CALLS edge targets that don't exist
+    stub_nodes, stub_edges = _create_stub_hierarchy(context)
+    if stub_nodes:
+        logger.info("writer.write_stub_nodes", count=len(stub_nodes))
+        nodes_written += await store.write_nodes_batch(stub_nodes, project_id)
+    if stub_edges:
+        logger.info("writer.write_stub_edges", count=len(stub_edges))
+
     # Step 5: Write all graph edges (nodes must exist first — edges reference by FQN)
-    all_edges = context.graph.edges
+    all_edges = context.graph.edges + stub_edges
     logger.info("writer.write_edges", count=len(all_edges))
     edges_written = await store.write_edges_batch(all_edges)
 

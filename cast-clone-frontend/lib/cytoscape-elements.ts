@@ -95,6 +95,28 @@ export function methodsToElements(
   }))
 }
 
+export function aggregatedEdgesToClassElements(
+  edges: AggregatedEdgeResponse[]
+): ElementDefinition[] {
+  const elements: ElementDefinition[] = []
+
+  for (const edge of edges) {
+    elements.push({
+      group: "edges",
+      data: {
+        id: `edge-${edge.source}-${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        weight: edge.weight,
+        kind: "CALLS",
+        label: edge.weight > 1 ? String(edge.weight) : undefined,
+      },
+    })
+  }
+
+  return elements
+}
+
 export function edgesToElements(
   edges: GraphEdgeResponse[],
   visibleFqns: Set<string>

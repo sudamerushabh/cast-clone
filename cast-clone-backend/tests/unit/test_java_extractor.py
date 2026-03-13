@@ -252,15 +252,18 @@ public class UserService {
 
         call_edges = _find_edges(edges, EdgeKind.CALLS)
 
-        # repo.save(user) -> receiver "repo", target includes "save"
+        # repo.save(user) -> resolved via field type + same-package qualification
         repo_save = [e for e in call_edges if "save" in e.target_fqn]
         assert len(repo_save) >= 1
         assert repo_save[0].source_fqn == "com.example.UserService.createUser"
-        assert repo_save[0].confidence == Confidence.LOW
+        assert repo_save[0].target_fqn == "com.example.UserRepository.save"
+        assert repo_save[0].confidence == Confidence.MEDIUM
 
-        # validate(user) -> no receiver, target includes "validate"
+        # validate(user) -> no receiver, resolves to same class
         validate_call = [e for e in call_edges if "validate" in e.target_fqn]
         assert len(validate_call) >= 1
+        assert validate_call[0].target_fqn == "com.example.UserService.validate"
+        assert validate_call[0].confidence == Confidence.MEDIUM
 
     def test_object_creation(self, extractor):
         source = b"""\
@@ -497,3 +500,126 @@ public class UserService {
         assert class_count == 1
         assert method_count == 4  # constructor + 3 methods
         assert field_count == 2   # userRepo + TABLE
+
+
+# ──────────────────────────────────────────────
+# Test 10: Method call resolution
+# ──────────────────────────────────────────────
+class TestMethodCallResolution:
+    def test_field_receiver_resolves_via_import(self, extractor):
+        source = b"""\
+package com.example;
+
+import com.example.repo.UserRepository;
+
+public class UserService {
+    private UserRepository userRepo;
+
+    public void doWork() {
+        userRepo.save();
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        save_calls = [e for e in call_edges if "save" in e.target_fqn]
+        assert len(save_calls) == 1
+        assert save_calls[0].target_fqn == "com.example.repo.UserRepository.save"
+        assert save_calls[0].confidence == Confidence.MEDIUM
+
+    def test_this_field_receiver_resolves(self, extractor):
+        source = b"""\
+package com.example;
+
+import com.example.repo.UserRepository;
+
+public class UserService {
+    private UserRepository repo;
+
+    public void doWork() {
+        this.repo.findAll();
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        find_calls = [e for e in call_edges if "findAll" in e.target_fqn]
+        assert len(find_calls) == 1
+        assert find_calls[0].target_fqn == "com.example.repo.UserRepository.findAll"
+        assert find_calls[0].confidence == Confidence.MEDIUM
+
+    def test_local_var_receiver_resolves(self, extractor):
+        source = b"""\
+package com.example;
+
+import com.example.model.User;
+
+public class UserService {
+    public void doWork() {
+        User user = new User();
+        user.setName();
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        set_calls = [e for e in call_edges if "setName" in e.target_fqn]
+        assert len(set_calls) == 1
+        assert set_calls[0].target_fqn == "com.example.model.User.setName"
+        assert set_calls[0].confidence == Confidence.MEDIUM
+
+    def test_no_receiver_resolves_to_same_class(self, extractor):
+        source = b"""\
+package com.example;
+
+public class UserService {
+    public void doWork() {
+        validate();
+    }
+
+    private void validate() {
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        validate_calls = [e for e in call_edges if "validate" in e.target_fqn]
+        assert len(validate_calls) == 1
+        assert validate_calls[0].target_fqn == "com.example.UserService.validate"
+        assert validate_calls[0].confidence == Confidence.MEDIUM
+
+    def test_unresolvable_receiver_stays_low(self, extractor):
+        source = b"""\
+package com.example;
+
+public class UserService {
+    public void doWork() {
+        unknownThing.doSomething();
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        unknown_calls = [e for e in call_edges if "doSomething" in e.target_fqn]
+        assert len(unknown_calls) == 1
+        assert unknown_calls[0].target_fqn == "unknownThing.doSomething"
+        assert unknown_calls[0].confidence == Confidence.LOW
+
+    def test_static_call_on_class_name(self, extractor):
+        source = b"""\
+package com.example;
+
+import java.util.Collections;
+
+public class UserService {
+    public void doWork() {
+        Collections.emptyList();
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "UserService.java", "/project")
+        call_edges = _find_edges(edges, EdgeKind.CALLS)
+        static_calls = [e for e in call_edges if "emptyList" in e.target_fqn]
+        assert len(static_calls) == 1
+        assert static_calls[0].target_fqn == "java.util.Collections.emptyList"
+        assert static_calls[0].confidence == Confidence.MEDIUM

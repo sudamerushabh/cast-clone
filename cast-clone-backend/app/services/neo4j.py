@@ -136,7 +136,12 @@ class Neo4jGraphStore(GraphStore):
         return total
 
     async def write_edges_batch(self, edges: list[GraphEdge]) -> int:
-        """Write edges in batches of 5000 using UNWIND."""
+        """Write edges in batches of 5000 using UNWIND.
+
+        Source and target nodes must already exist (stub nodes are pre-created
+        by _create_stub_hierarchy in writer.py). Edges whose source or target
+        node is missing are silently skipped by the MATCH clauses.
+        """
         batch_size = 5000
         total = 0
         for i in range(0, len(edges), batch_size):
@@ -158,7 +163,7 @@ class Neo4jGraphStore(GraphStore):
             UNWIND $batch AS e
             MATCH (from {fqn: e.from_fqn})
             MATCH (to {fqn: e.to_fqn})
-            CALL apoc.create.relationship(from, e.type, e.properties, to) YIELD rel
+            CALL apoc.merge.relationship(from, e.type, {}, e.properties, to) YIELD rel
             RETURN count(rel) AS cnt
             """
             async with self._driver.session(database=self._database) as session:

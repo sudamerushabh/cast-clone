@@ -156,6 +156,54 @@ def _walk_all(root: Node, node_type: str) -> list[Node]:
     return result
 
 
+def _strip_generics(type_str: str) -> str:
+    """Strip generic type parameters: 'List<User>' -> 'List'."""
+    idx = type_str.find("<")
+    return type_str[:idx] if idx != -1 else type_str
+
+
+def _resolve_receiver_type(
+    receiver_text: str,
+    field_type_map: dict[str, str],
+    local_var_map: dict[str, str],
+    import_map: dict[str, str],
+    package: str = "",
+) -> str | None:
+    """Resolve a receiver expression to a fully-qualified type.
+
+    Looks up the receiver in local variables, then fields, then checks
+    if it's a static call on a class name. Resolves through import_map,
+    falling back to same-package qualification for unimported types.
+    Returns None if unresolvable.
+    """
+    name = receiver_text
+    # Strip 'this.' prefix
+    if name.startswith("this."):
+        name = name[5:]
+
+    # Look up in local vars first (narrower scope), then fields
+    raw_type = local_var_map.get(name) or field_type_map.get(name)
+
+    if raw_type is None:
+        # Check if receiver starts with uppercase (static call on class name)
+        if name and name[0].isupper():
+            raw_type = name
+        else:
+            return None
+
+    raw_type = _strip_generics(raw_type)
+
+    # Resolve through import_map to get full FQN
+    if raw_type in import_map:
+        return import_map[raw_type]
+
+    # If not in imports but looks like a simple class name, qualify with package
+    if "." not in raw_type and package and raw_type[0:1].isupper():
+        return f"{package}.{raw_type}"
+
+    return raw_type
+
+
 class JavaExtractor:
     """Extracts graph nodes and edges from a Java source file."""
 
@@ -206,8 +254,18 @@ class JavaExtractor:
         # Step 7: Parse fields
         self._extract_fields(root, package, file_path, nodes, edges)
 
+        # Build field_type_map for method call resolution
+        field_type_map: dict[str, str] = {}
+        for node in nodes:
+            if node.kind == NodeKind.FIELD:
+                field_type = node.properties.get("type", "unknown")
+                if field_type != "unknown":
+                    field_type_map[node.name] = _strip_generics(field_type)
+
         # Step 8: Parse method calls
-        self._extract_method_calls(root, package, file_path, edges)
+        self._extract_method_calls(
+            root, package, file_path, import_map, field_type_map, edges
+        )
 
         # Step 9: Parse object creation
         self._extract_object_creation(
@@ -637,14 +695,37 @@ class JavaExtractor:
                 )
             )
 
+    def _build_local_var_map(self, method_node: Node) -> dict[str, str]:
+        """Walk local_variable_declaration nodes in a method body to build {name: type}."""
+        result: dict[str, str] = {}
+        for decl in _walk_all(method_node, "local_variable_declaration"):
+            type_node = decl.child_by_field_name("type")
+            if type_node is None:
+                continue
+            raw_type = _strip_generics(_node_text(type_node))
+
+            declarator = decl.child_by_field_name("declarator")
+            if declarator is None:
+                continue
+            name_node = declarator.child_by_field_name("name")
+            if name_node is None:
+                continue
+            result[_node_text(name_node)] = raw_type
+        return result
+
     def _extract_method_calls(
         self,
         root: Node,
         package: str,
         file_path: str,
+        import_map: dict[str, str],
+        field_type_map: dict[str, str],
         edges: list[GraphEdge],
     ) -> None:
         """Extract method invocation edges."""
+        # Cache local var maps per enclosing method (keyed by start_byte)
+        local_var_cache: dict[int, dict[str, str]] = {}
+
         for call_node in _walk_all(root, "method_invocation"):
             method_name_node = call_node.child_by_field_name("name")
             if method_name_node is None:
@@ -668,20 +749,37 @@ class JavaExtractor:
                     continue
                 source_fqn = f"{class_fqn_str}.{_node_text(enc_name_node)}"
 
-            # Build target FQN
+            # Build target FQN with receiver type resolution
             receiver_node = call_node.child_by_field_name("object")
             if receiver_node is not None:
                 receiver_text = _node_text(receiver_node)
-                target_fqn = f"{receiver_text}.{method_name}"
+
+                # Build local var map (cached per method)
+                key = enclosing_method.start_byte
+                if key not in local_var_cache:
+                    local_var_cache[key] = self._build_local_var_map(enclosing_method)
+                local_var_map = local_var_cache[key]
+
+                resolved_type = _resolve_receiver_type(
+                    receiver_text, field_type_map, local_var_map, import_map, package
+                )
+                if resolved_type is not None:
+                    target_fqn = f"{resolved_type}.{method_name}"
+                    confidence = Confidence.MEDIUM
+                else:
+                    target_fqn = f"{receiver_text}.{method_name}"
+                    confidence = Confidence.LOW
             else:
-                target_fqn = method_name
+                # No receiver — same-class call
+                target_fqn = f"{class_fqn_str}.{method_name}"
+                confidence = Confidence.MEDIUM
 
             edges.append(
                 GraphEdge(
                     source_fqn=source_fqn,
                     target_fqn=target_fqn,
                     kind=EdgeKind.CALLS,
-                    confidence=Confidence.LOW,
+                    confidence=confidence,
                     evidence="tree-sitter",
                     properties={"line": call_node.start_point[0] + 1},
                 )

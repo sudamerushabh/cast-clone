@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import structlog
 from tree_sitter import Language, Parser
 
-from app.models.enums import Confidence, EdgeKind
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.treesitter.extractors import get_extractor
 
@@ -134,11 +134,25 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
         if edge.target_fqn in fqn_index:
             continue
 
-        target_short = edge.target_fqn  # e.g. "findById"
+        target_short = edge.target_fqn  # e.g. "findById" or "UserRepository.save"
         resolved_fqn: str | None = None
 
         # Find the caller's parent class
         caller_class = containment.get(edge.source_fqn)
+
+        # Strategy 0: Dotted target resolution (e.g. "UserRepository.save")
+        if "." in target_short:
+            receiver_part, method_part = target_short.rsplit(".", 1)
+            receiver_candidates = short_name_index.get(receiver_part, [])
+            for rc in receiver_candidates:
+                rc_node = fqn_index.get(rc)
+                if rc_node and rc_node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+                    candidate = f"{rc}.{method_part}"
+                    if candidate in fqn_index:
+                        resolved_fqn = candidate
+                        break
+            if resolved_fqn is None:
+                continue  # existing strategies can't handle dotted targets
 
         # Strategy 1: Import-based resolution
         if caller_class and caller_class in import_index:

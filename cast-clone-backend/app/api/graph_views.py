@@ -166,7 +166,7 @@ async def list_classes(project_id: str, fqn: str) -> ClassListResponse:
 
     cypher = (
         "MATCH (m {fqn: $fqn, app_name: $app_name})-[:CONTAINS]->(c) "
-        "WHERE c.kind = 'CLASS' OR c.kind = 'INTERFACE' "
+        "WHERE c.app_name = $app_name AND (c.kind = 'CLASS' OR c.kind = 'INTERFACE') "
         "RETURN c AS n ORDER BY c.name"
     )
     records = await store.query(
@@ -193,7 +193,7 @@ async def list_methods(project_id: str, fqn: str) -> MethodListResponse:
 
     cypher = (
         "MATCH (c {fqn: $fqn, app_name: $app_name})-[:CONTAINS]->(f) "
-        "WHERE f.kind = 'FUNCTION' "
+        "WHERE f.app_name = $app_name AND f.kind = 'FUNCTION' "
         "RETURN f AS n ORDER BY f.name"
     )
     records = await store.query(
@@ -238,31 +238,69 @@ async def aggregated_edges(
                 detail="'parent' query parameter is required "
                 "for class-level aggregation",
             )
+        # Class-level: aggregate method-to-method CALLS up to class pairs,
+        # plus any direct class-to-class DEPENDS_ON edges.
+        # Both source and target classes must be children of this module
+        # (or any module) to avoid edges to bogus stub classes.
         cypher = (
+            # Branch 1: method-level CALLS aggregated to owning classes
             "MATCH (m {fqn: $parent, app_name: $app_name})-[:CONTAINS]->(c1) "
-            "WHERE c1.kind = 'CLASS' OR c1.kind = 'INTERFACE' "
-            "MATCH (c1)-[r:CALLS|DEPENDS_ON]->(c2) "
-            "WHERE c2.app_name = $app_name "
-            "AND (c2.kind = 'CLASS' OR c2.kind = 'INTERFACE') "
-            "AND c1 <> c2 "
-            "WITH c1.fqn AS source, c2.fqn AS target, count(r) AS weight "
-            "RETURN source, target, weight ORDER BY weight DESC"
+            "WHERE c1.kind IN ['CLASS', 'INTERFACE'] "
+            "MATCH (c1)-[:CONTAINS]->(f1)-[:CALLS]->(f2)<-[:CONTAINS]-(c2) "
+            "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
+            "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
+            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight "
+            "UNION ALL "
+            # Branch 2: direct class-to-class DEPENDS_ON
+            "MATCH (m {fqn: $parent, app_name: $app_name})-[:CONTAINS]->(c1) "
+            "WHERE c1.kind IN ['CLASS', 'INTERFACE'] "
+            "MATCH (c1)-[:DEPENDS_ON]->(c2) "
+            "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
+            "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
+            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight"
         )
         records = await store.query(
             cypher, {"parent": parent, "app_name": project_id}
         )
+        # Merge weights from CALLS and DEPENDS_ON for the same class pair
+        merged: dict[tuple[str, str], int] = {}
+        for r in records:
+            key = (r["source"], r["target"])
+            merged[key] = merged.get(key, 0) + r["weight"]
+        records = [
+            {"source": k[0], "target": k[1], "weight": v}
+            for k, v in sorted(merged.items(), key=lambda x: -x[1])
+        ]
     else:
-        # Module-level aggregation
+        # Module-level: aggregate method-to-method CALLS across module
+        # boundaries, plus direct class-to-class DEPENDS_ON.
         cypher = (
-            "MATCH (m1)-[:CONTAINS]->(c1)-[r:CALLS|DEPENDS_ON]->(c2)<-[:CONTAINS]-(m2) "
+            # Branch 1: method-level CALLS traced through containment
+            "MATCH (m1)-[:CONTAINS]->(c1)-[:CONTAINS]->(f1)"
+            "-[:CALLS]->"
+            "(f2)<-[:CONTAINS]-(c2)<-[:CONTAINS]-(m2) "
             "WHERE m1.app_name = $app_name AND m1.kind = 'MODULE' "
             "AND m2.kind = 'MODULE' AND m1 <> m2 "
-            "AND (c1.kind = 'CLASS' OR c1.kind = 'INTERFACE') "
-            "AND (c2.kind = 'CLASS' OR c2.kind = 'INTERFACE') "
-            "WITH m1.fqn AS source, m2.fqn AS target, count(r) AS weight "
-            "RETURN source, target, weight ORDER BY weight DESC"
+            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight "
+            "UNION ALL "
+            # Branch 2: direct class-to-class DEPENDS_ON
+            "MATCH (m1)-[:CONTAINS]->(c1)-[:DEPENDS_ON]->(c2)<-[:CONTAINS]-(m2) "
+            "WHERE m1.app_name = $app_name AND m1.kind = 'MODULE' "
+            "AND m2.kind = 'MODULE' AND m1 <> m2 "
+            "AND c1.kind IN ['CLASS', 'INTERFACE'] "
+            "AND c2.kind IN ['CLASS', 'INTERFACE'] "
+            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight"
         )
         records = await store.query(cypher, {"app_name": project_id})
+        # Merge weights from both branches for the same module pair
+        merged = {}
+        for r in records:
+            key = (r["source"], r["target"])
+            merged[key] = merged.get(key, 0) + r["weight"]
+        records = [
+            {"source": k[0], "target": k[1], "weight": v}
+            for k, v in sorted(merged.items(), key=lambda x: -x[1])
+        ]
 
     edges = [
         AggregatedEdgeResponse(
