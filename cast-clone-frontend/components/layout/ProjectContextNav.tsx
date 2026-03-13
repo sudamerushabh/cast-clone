@@ -38,24 +38,24 @@ export function ProjectContextNav({
 
   const navItems: NavItem[] = [
     { label: "Overview", href: basePath, icon: LayoutDashboard },
-    { label: "Architecture", href: `${basePath}/graph`, icon: GitGraph },
+    { label: "Architecture", href: `/repositories/${repoId}/graph/${branch}`, icon: GitGraph },
     {
       label: "Dependencies",
-      href: `${basePath}/dependencies`,
+      href: `/repositories/${repoId}/dependencies/${branch}`,
       icon: FolderOpen,
     },
-    { label: "Transactions", href: `${basePath}/transactions`, icon: Route },
-    { label: "Search", href: `${basePath}/search`, icon: Search },
-    { label: "Impact", href: `${basePath}/impact`, icon: Zap },
-    { label: "Saved Views", href: `${basePath}/views`, icon: BookmarkPlus },
+    { label: "Transactions", href: `/repositories/${repoId}/transactions/${branch}`, icon: Route },
+    { label: "Search", href: `/repositories/${repoId}/search/${branch}`, icon: Search },
+    { label: "Impact", href: `/repositories/${repoId}/impact/${branch}`, icon: Zap },
+    { label: "Saved Views", href: `/repositories/${repoId}/views/${branch}`, icon: BookmarkPlus },
     {
       label: "AI Assistant",
-      href: `${basePath}/chat`,
+      href: `/repositories/${repoId}/chat/${branch}`,
       icon: MessageSquare,
     },
     {
       label: "Project Settings",
-      href: `${basePath}/settings`,
+      href: `/repositories/${repoId}/settings/${branch}`,
       icon: Settings,
     },
   ];

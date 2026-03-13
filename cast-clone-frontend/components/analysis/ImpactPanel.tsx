@@ -37,6 +37,29 @@ function depthBadgeClass(depth: number): string {
 
 // ─── Overlay functions ──────────────────────────────────────────────────────
 
+/**
+ * Find a node in the graph by exact FQN, or walk up the dot-separated
+ * hierarchy to find the nearest visible ancestor (e.g. module or class
+ * compound node).  Returns null if nothing matches.
+ */
+function findNodeOrAncestor(
+  cy: cytoscape.Core,
+  fqn: string,
+): cytoscape.NodeSingular | null {
+  // Exact match first
+  const exact = cy.getElementById(fqn)
+  if (exact.length > 0) return exact as cytoscape.NodeSingular
+
+  // Walk up the FQN hierarchy (drop last segment each time)
+  const parts = fqn.split(".")
+  for (let i = parts.length - 1; i > 0; i--) {
+    const ancestor = parts.slice(0, i).join(".")
+    const node = cy.getElementById(ancestor)
+    if (node.length > 0) return node as cytoscape.NodeSingular
+  }
+  return null
+}
+
 export function applyImpactOverlay(
   cy: cytoscape.Core,
   affected: AffectedNode[],
@@ -46,14 +69,28 @@ export function applyImpactOverlay(
   cy.nodes().style("opacity", 0.2)
   cy.edges().style("opacity", 0.2)
 
-  // Build set of affected FQNs for quick lookup
-  const affectedFqns = new Set(affected.map((a) => a.fqn))
-  affectedFqns.add(startFqn)
+  // Resolve affected FQNs to visible graph nodes (may be ancestors).
+  // Track the shallowest depth per visible node ID.
+  const highlightedIds = new Map<string, number>()
 
-  // Highlight start node in red
-  const startNode = cy.getElementById(startFqn)
-  if (startNode.length > 0) {
-    startNode.style({
+  for (const node of affected) {
+    const cyNode = findNodeOrAncestor(cy, node.fqn)
+    if (cyNode) {
+      const id = cyNode.id()
+      const prev = highlightedIds.get(id)
+      if (prev === undefined || node.depth < prev) {
+        highlightedIds.set(id, node.depth)
+      }
+    }
+  }
+
+  // Highlight start node in red (resolve via ancestor if needed)
+  const startNode = findNodeOrAncestor(cy, startFqn)
+  if (startNode) {
+    highlightedIds.set(startNode.id(), 0) // mark as part of affected set
+    // Highlight start node + all descendants (children inside compound nodes)
+    const startGroup = startNode.union(startNode.descendants())
+    startGroup.style({
       "opacity": 1,
       "background-color": "#ef4444",
       "border-color": "#991b1b",
@@ -61,22 +98,26 @@ export function applyImpactOverlay(
     })
   }
 
-  // Color affected nodes by depth
-  for (const node of affected) {
-    const cyNode = cy.getElementById(node.fqn)
+  // Color affected/ancestor nodes by their shallowest depth.
+  // Also highlight all descendants so children inside compound nodes are visible.
+  for (const [id, depth] of highlightedIds) {
+    if (startNode && id === startNode.id()) continue // already styled
+    const cyNode = cy.getElementById(id)
     if (cyNode.length > 0) {
-      cyNode.style({
+      const group = cyNode.union(cyNode.descendants())
+      group.style({
         "opacity": 1,
-        "background-color": depthColor(node.depth),
+        "background-color": depthColor(depth),
       })
     }
   }
 
-  // Show edges between affected nodes
+  // Show edges between highlighted nodes
+  const highlightedSet = new Set(highlightedIds.keys())
   cy.edges().forEach((edge) => {
     const src = edge.source().id()
     const tgt = edge.target().id()
-    if (affectedFqns.has(src) && affectedFqns.has(tgt)) {
+    if (highlightedSet.has(src) && highlightedSet.has(tgt)) {
       edge.style({
         "opacity": 1,
         "line-color": "#94a3b8",

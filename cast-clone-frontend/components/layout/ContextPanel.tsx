@@ -17,14 +17,15 @@ import { cn } from "@/lib/utils";
 
 /**
  * Parse the pathname to extract repoId and branch for project context.
- * Pattern: /repositories/[repoId]/[...branch]/...
+ * Supports both overview (/repositories/[repoId]/[branch]) and
+ * view-prefix patterns (/repositories/[repoId]/graph/[branch], etc.).
  */
 function parseProjectRoute(pathname: string): {
   repoId: string;
   branch: string;
 } | null {
   const match = pathname.match(
-    /^\/repositories\/([^/]+)\/([^/]+(?:\/[^/]+)*?)(?:\/graph|\/dependencies|\/transactions|\/search|\/impact|\/views|\/chat|\/settings)?$/,
+    /^\/repositories\/([^/]+)\/(?:(?:graph|dependencies|transactions|search|impact|views|chat|settings)\/)?(.+)$/,
   );
   if (!match) return null;
   return { repoId: match[1], branch: match[2] };

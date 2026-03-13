@@ -195,3 +195,54 @@ M7a is a frontend-only prerequisite. M7b and M7c are sequential (M7c depends on 
 - Backend: ~12 new files, ~4 modified
 - Frontend: ~18 new files, ~5 modified
 - Backend tasks follow TDD; frontend verified via typecheck + manual testing
+
+---
+
+# Phase 4 — Collaboration & Team Features
+
+Spec: `cast-clone-backend/docs/04-PHASE-4-COLLABORATION.md`
+
+## Execution Order
+
+```
+M1 (Auth Foundation) ─────────────────────────────┐
+    │                                               │
+    └──> M2 (Auth Frontend + User Management) ─────┤
+              │                                     │
+              ├──> M3 (Annotations & Tags)  ── parallel ──┐
+              ├──> M4 (Saved Views)         ── parallel ──┤
+              └──> M5 (Export & Activity)   ── parallel ──┘
+```
+
+M1 is the backend foundation. M2 adds frontend auth + user management.
+M3, M4, M5 are independent and can run in parallel after M2 (frontend auth needed for all UI work).
+
+## Plan Files
+
+| Milestone | File | Description | Depends On |
+|-----------|------|-------------|------------|
+| **M1** | `2026-03-13-phase4-m1-auth-foundation.md` | User model, bcrypt password hashing, JWT creation/validation (python-jose), login/me/setup endpoints, get_current_user + require_admin FastAPI dependencies | — |
+| **M2** | `2026-03-13-phase4-m2-auth-frontend-usermgmt.md` | User CRUD API (admin only), AuthContext provider, login page, first-run setup page, UserMenu in TopBar, admin user management page (/settings/team) | M1 |
+| **M3** | `2026-03-13-phase4-m3-annotations-tags.md` | Annotation + Tag models (PostgreSQL), CRUD APIs with auth, useAnnotations hook, AnnotationList/AddAnnotation/TagBadges components, NodeProperties integration, graph visual indicators | M2 |
+| **M4** | `2026-03-13-phase4-m4-saved-views.md` | SavedView model (JSONB state), CRUD API, useSavedViews hook, SaveViewModal, ViewsList, toolbar Save button, Cytoscape state capture/restore, shareable URLs | M2 |
+| **M5** | `2026-03-13-phase4-m5-export-activity.md` | CSV/JSON streaming export (nodes, edges, graph, impact), ActivityLog model, fire-and-forget logging service, activity feed API (admin only), ExportMenu component, admin activity page | M2 |
+
+## Parallelism Notes
+
+M3, M4, M5 are logically independent but all modify `app/models/db.py` (adding models) and `app/api/__init__.py` (registering routers). If run in parallel by multiple agents, coordinate `db.py` and `__init__.py` changes to avoid merge conflicts.
+
+## Deferred from Phase 4 Plans
+
+Two spec §7 items are deferred — they are enhancements to the existing project pages, not new collaboration features:
+- **Project settings page** (editable name/description, re-analyze button, analysis config, delete with confirmation)
+- **Project dashboard cards** (last analyzed date, languages, node/edge counts, sort options)
+
+These can be added as a standalone M6 plan or folded into a Phase 4 polish pass.
+
+## Totals
+
+- **5 plans**, ~40 tasks
+- Backend: ~12 new files, ~5 modified (main.py, db.py, api/__init__.py, etc.)
+- Frontend: ~18 new files, ~6 modified
+- Backend tasks follow TDD; frontend verified via typecheck + manual testing
+- New dependencies: python-jose[cryptography], passlib[bcrypt], python-multipart
