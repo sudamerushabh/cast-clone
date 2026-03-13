@@ -18,6 +18,30 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    def __init__(self, **kwargs: object) -> None:
+        if "role" not in kwargs:
+            kwargs["role"] = "member"
+        if "is_active" not in kwargs:
+            kwargs["is_active"] = True
+        super().__init__(**kwargs)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class GitConnector(Base):
     __tablename__ = "git_connectors"
 
