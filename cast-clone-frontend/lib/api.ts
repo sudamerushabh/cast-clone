@@ -4,12 +4,15 @@ import type {
   AggregatedEdgeListResponse,
   BranchListResponse,
   ClassListResponse,
+  CloneStatusResponse,
   CodeViewerResponse,
   ConnectorListResponse,
   ConnectorResponse,
   ConnectorTestResponse,
   CreateConnectorRequest,
   CreateProjectRequest,
+  CreateRepositoryRequest,
+  EvolutionTimelineResponse,
   GraphEdgeListResponse,
   GraphNodeListResponse,
   GraphSearchResponse,
@@ -20,6 +23,8 @@ import type {
   ProjectResponse,
   RemoteRepoListResponse,
   RemoteRepoResponse,
+  RepositoryListResponse,
+  RepositoryResponse,
   TransactionDetailResponse,
   TransactionListResponse,
 } from "./types";
@@ -285,4 +290,34 @@ export async function listRemoteBranches(
   repo: string,
 ): Promise<BranchListResponse> {
   return apiFetch<BranchListResponse>(`/api/v1/connectors/${connectorId}/repos/${owner}/${repo}/branches`);
+}
+
+// ─── Repository endpoints (Phase 4A) ────────────────────────────────────────
+
+export async function createRepository(data: CreateRepositoryRequest): Promise<RepositoryResponse> {
+  return apiFetch<RepositoryResponse>("/api/v1/repositories", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function listRepositories(): Promise<RepositoryListResponse> {
+  return apiFetch<RepositoryListResponse>("/api/v1/repositories");
+}
+
+export async function getRepository(id: string): Promise<RepositoryResponse> {
+  return apiFetch<RepositoryResponse>(`/api/v1/repositories/${id}`);
+}
+
+export async function deleteRepository(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${id}`, { method: "DELETE" });
+}
+
+export async function getCloneStatus(repoId: string): Promise<CloneStatusResponse> {
+  return apiFetch<CloneStatusResponse>(`/api/v1/repositories/${repoId}/clone-status`);
+}
+
+export async function syncRepository(repoId: string): Promise<CloneStatusResponse> {
+  return apiFetch<CloneStatusResponse>(`/api/v1/repositories/${repoId}/sync`, { method: "POST" });
+}
+
+export async function getEvolutionTimeline(repoId: string, branch: string): Promise<EvolutionTimelineResponse> {
+  return apiFetch<EvolutionTimelineResponse>(`/api/v1/repositories/${repoId}/evolution?branch=${encodeURIComponent(branch)}`);
 }

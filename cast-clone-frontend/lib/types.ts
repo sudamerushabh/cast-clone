@@ -243,3 +243,62 @@ export interface BranchListResponse {
   branches: string[];
   default_branch: string;
 }
+
+// ─── Phase 4A: Repository types ─────────────────────────────────────────────
+
+export type CloneStatus = "pending" | "cloning" | "cloned" | "clone_failed";
+
+export interface ProjectBranchResponse {
+  id: string;
+  branch: string | null;
+  status: string;
+  last_analyzed_at: string | null;
+  node_count: number | null;
+  edge_count: number | null;
+}
+
+export interface RepositoryResponse {
+  id: string;
+  connector_id: string;
+  repo_full_name: string;
+  default_branch: string;
+  description: string | null;
+  language: string | null;
+  is_private: boolean;
+  clone_status: CloneStatus;
+  clone_error: string | null;
+  local_path: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+  projects: ProjectBranchResponse[];
+}
+
+export interface RepositoryListResponse {
+  repositories: RepositoryResponse[];
+  total: number;
+}
+
+export interface CreateRepositoryRequest {
+  connector_id: string;
+  repo_full_name: string;
+  branches: string[];
+  auto_analyze: boolean;
+}
+
+export interface CloneStatusResponse {
+  clone_status: CloneStatus;
+  clone_error: string | null;
+}
+
+export interface SnapshotPoint {
+  run_id: string;
+  analyzed_at: string;
+  commit_sha: string | null;
+  summary: Record<string, number>;
+}
+
+export interface EvolutionTimelineResponse {
+  repo_id: string;
+  branch: string;
+  snapshots: SnapshotPoint[];
+}

@@ -13,6 +13,7 @@ from app.api import (
     graph_views_router,
     health_router,
     projects_router,
+    repositories_router,
     websocket_router,
 )
 from app.config import Settings
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     application.include_router(analysis_router)
     application.include_router(graph_router)
     application.include_router(connectors_router)
+    application.include_router(repositories_router)
     application.include_router(graph_views_router)
     application.include_router(websocket_router)
 
