@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     treesitter_workers: int | None = None  # None = os.cpu_count()
     log_level: str = "info"
 
+    # Phase 5a: AI-powered PR analysis
+    anthropic_api_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
