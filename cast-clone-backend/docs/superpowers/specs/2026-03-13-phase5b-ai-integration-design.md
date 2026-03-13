@@ -107,7 +107,7 @@ A Claude Sonnet agent with extended thinking that iterates tool calls until it h
 - Max tokens: 4096 for response (excluding thinking budget)
 - Concurrency guard: max 1 active chat stream per user (asyncio semaphore keyed by user_id) — prevents abuse without full rate limiting
 
-**Anthropic client setup:** Use `anthropic.AsyncAnthropic()` consistently (async-by-default convention). The model ID and any AWS Bedrock configuration are read from `app/config.py`, matching the pattern established in Phase 5a's supervisor.
+**Anthropic client setup:** Use `anthropic.AsyncAnthropicBedrock()` consistently, matching the pattern established in Phase 5a's supervisor. The model ID and AWS region are read from `app/config.py`. This keeps the entire codebase on a single Anthropic client type (Bedrock) rather than mixing direct API and Bedrock clients.
 
 **Page context injection:**
 
