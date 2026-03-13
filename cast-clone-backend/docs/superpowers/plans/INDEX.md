@@ -246,3 +246,63 @@ These can be added as a standalone M6 plan or folded into a Phase 4 polish pass.
 - Frontend: ~18 new files, ~6 modified
 - Backend tasks follow TDD; frontend verified via typecheck + manual testing
 - New dependencies: python-jose[cryptography], passlib[bcrypt], python-multipart
+
+---
+
+# Phase 5a — AI-Powered Pull Request Impact Analysis
+
+Spec: `cast-clone-backend/docs/05a-PHASE-5A-PR-IMPACT-ANALYSIS.md`
+
+## Execution Order
+
+```
+M1 (Foundation: models, config, schemas)
+    ↓
+M2 (Git Platform Clients: webhook parsing + diff fetching)
+    ↓
+M3 (Webhook Receivers + Git Config API)
+    ↓
+M4 (Diff-to-Graph Mapper) ←── M5 (Risk Scorer + Drift Detector) [parallel]
+    ↓                                 ↓
+M6 (Impact Aggregator) ──────────────┘
+    ↓
+M7a (AI Pipeline Foundation) → M7b (Tools + Runner + Prompts) → M7c (Supervisor + API)
+    ↓
+M8 (PR Analysis Orchestrator)
+    ↓
+M9 (PR Analysis API Endpoints)
+    ↓
+M10 (Frontend — PR Dashboard)
+```
+
+M1 → M2 → M3 are sequential (each depends on the previous).
+M4 and M5 can run in parallel (both depend only on M1).
+M6 depends on M4. M7 depends on M1/M5/M6.
+M8 wires M2-M7 together. M9 exposes API. M10 builds UI.
+
+## Plan Files
+
+| Milestone | File | Description | Depends On |
+|-----------|------|-------------|------------|
+| **M1** | `2026-03-13-phase5a-m1-foundation.md` | ProjectGitConfig + PrAnalysis ORM models, anthropic_api_key config, Pydantic schemas (webhooks, pull_requests, git_config), PR analysis pipeline dataclasses (PullRequestEvent, PRDiff, FileDiff, DiffHunk, AggregatedImpact, DriftReport) | — |
+| **M2** | `2026-03-13-phase5a-m2-git-platform-clients.md` | GitPlatformClient ABC, unified diff parser, GitHub/GitLab/Bitbucket/Gitea webhook parsing + signature verification + diff fetching, platform client factory | M1 |
+| **M3** | `2026-03-13-phase5a-m3-webhook-receivers-git-config-api.md` | Webhook receiver endpoints (unauthenticated, signature-verified), git config CRUD (admin-only), webhook URL generation, connectivity test, router registration | M1, M2 |
+| **M4** | `2026-03-13-phase5a-m4-diff-to-graph-mapper.md` | DiffMapper: Neo4j path+line range queries, handles modified/added/deleted/renamed files, Neo4j path indexes | M1 |
+| **M5** | `2026-03-13-phase5a-m5-risk-scorer-drift-detector.md` | Risk classification (High/Medium/Low scoring), drift detection (circular deps, new module deps), pure logic + Neo4j queries | M1 |
+| **M6** | `2026-03-13-phase5a-m6-impact-aggregator.md` | Per-node impact (reuse Phase 3 Cypher), cross-tech detection (API/MQ/DB), transaction detection, dedup + aggregation, node enrichment (fan-in, hub status) | M1, M4 |
+| **M7a** | `2026-03-13-phase5a-m7a-ai-pipeline-foundation.md` | anthropic[bedrock] dep, Bedrock config (aws_region, model IDs, circuit breakers), SummaryResult, report types, ToolContext, deterministic triage (file categorization + module batching) | M1 |
+| **M7b** | `2026-03-13-phase5a-m7b-ai-pipeline-tools-runner-prompts.md` | 8 tool handlers (read_file, search_files, grep_content, list_directory, query_graph_node, get_node_impact, find_path, dispatch_subagent), shared agentic loop runner (run_agent), system prompts for all 5 roles | M7a |
+| **M7c** | `2026-03-13-phase5a-m7c-ai-pipeline-supervisor-api.md` | Supervisor agent (50 tool calls, ad-hoc subagent dispatch), generate_pr_summary() public API, triage→parallel subagents→supervisor pipeline, single-call fallback, M8 orchestrator integration, old ai_summary.py removal | M7a, M7b |
+| **M8** | `2026-03-13-phase5a-m8-orchestrator.md` | run_pr_analysis() pipeline: fetch diff → map → impact → drift → risk → AI → store. BackgroundTasks execution, stale analysis detection, activity logging | M2-M7 |
+| **M9** | `2026-03-13-phase5a-m9-pr-analysis-api.md` | PR list (paginated, filterable), detail, impact detail, drift report, re-analyze endpoints. JWT auth required | M1, M3, M8 |
+| **M10** | `2026-03-13-phase5a-m10-frontend-pr-dashboard.md` | TypeScript types + API client + hooks, PR list page (table + filters + badges), PR detail page (AI summary, stats, changed nodes, cross-tech, drift alerts), Git Integration settings page, project nav links | M9 |
+
+## Totals
+
+- **12 plans**, ~45 tasks, ~80 test cases
+- Backend: ~22 new files, ~6 modified (config.py, db.py, neo4j.py, main.py, api/__init__.py, analyzer.py)
+- Frontend: ~15 new files, ~3 modified (types.ts, api.ts, nav component)
+- Backend tasks follow TDD; frontend verified via typecheck + manual testing
+- New dependencies: anthropic[bedrock]>=0.40
+- AI pipeline: multi-agent architecture with Bedrock (supervisor + specialist subagents)
+- Spec: `docs/superpowers/specs/2026-03-13-pr-ai-agent-pipeline-design.md`
