@@ -29,6 +29,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
     is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def __init__(self, **kwargs: object) -> None:
         if "role" not in kwargs:
@@ -36,10 +40,6 @@ class User(Base):
         if "is_active" not in kwargs:
             kwargs["is_active"] = True
         super().__init__(**kwargs)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class GitConnector(Base):
