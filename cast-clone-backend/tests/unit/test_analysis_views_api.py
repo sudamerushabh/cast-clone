@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.analysis_views import get_graph_store
 from app.main import app
 
 
@@ -22,8 +23,12 @@ def mock_graph_store():
     mock_store.query = AsyncMock(return_value=[])
     mock_store.query_single = AsyncMock(return_value=None)
 
-    with patch("app.api.analysis_views.get_graph_store", return_value=mock_store):
-        yield mock_store
+    async def override_get_graph_store():
+        return mock_store
+
+    app.dependency_overrides[get_graph_store] = override_get_graph_store
+    yield mock_store
+    app.dependency_overrides.clear()
 
 
 class TestImpactAnalysis:
@@ -78,6 +83,54 @@ class TestImpactAnalysis:
         resp = client.get("/api/v1/analysis/test-project/impact/com.app.X")
         assert resp.status_code == 200
         assert resp.json()["max_depth"] == 5
+
+    def test_impact_direction_both_deduplicates_by_minimum_depth(
+        self, client, mock_graph_store
+    ):
+        """direction=both runs two queries and deduplicates by minimum depth."""
+        # First call (downstream): node A at depth 2, node B at depth 1
+        # Second call (upstream): node A at depth 1 (closer upstream), node C at depth 3
+        # Expected: A kept at depth 1 (minimum), B at depth 1, C at depth 3
+        mock_graph_store.query.side_effect = [
+            [
+                {
+                    "fqn": "com.app.A", "name": "A", "type": "Class",
+                    "file": "A.java", "depth": 2,
+                },
+                {
+                    "fqn": "com.app.B", "name": "B", "type": "Function",
+                    "file": "B.java", "depth": 1,
+                },
+            ],
+            [
+                {
+                    "fqn": "com.app.A", "name": "A", "type": "Class",
+                    "file": "A.java", "depth": 1,
+                },
+                {
+                    "fqn": "com.app.C", "name": "C", "type": "Class",
+                    "file": "C.java", "depth": 3,
+                },
+            ],
+        ]
+        resp = client.get(
+            "/api/v1/analysis/test-project/impact/com.app.Service.create",
+            params={"direction": "both", "max_depth": 3},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["direction"] == "both"
+        assert data["max_depth"] == 3
+        # 3 unique nodes: A, B, C (A deduplicated, depth kept at 1)
+        assert data["summary"]["total"] == 3
+        affected_by_fqn = {n["fqn"]: n for n in data["affected"]}
+        assert "com.app.A" in affected_by_fqn
+        assert "com.app.B" in affected_by_fqn
+        assert "com.app.C" in affected_by_fqn
+        # A's depth should be 1 (minimum of 2 and 1)
+        assert affected_by_fqn["com.app.A"]["depth"] == 1
+        # Both store.query calls are made (one for downstream, one for upstream)
+        assert mock_graph_store.query.call_count == 2
 
 
 class TestPathFinder:
