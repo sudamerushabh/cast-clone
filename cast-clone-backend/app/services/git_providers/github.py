@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.services.git_providers.base import GitProvider, GitRepo, GitUser
+from app.services.git_providers.base import GitProvider, GitRepo, GitUser, WebhookCreateResult
 
 
 class GitHubProvider(GitProvider):
@@ -109,3 +109,33 @@ class GitHubProvider(GitProvider):
             )
             resp.raise_for_status()
             return [b["name"] for b in resp.json()]
+
+    async def create_webhook(
+        self, full_name: str, webhook_url: str, secret: str,
+    ) -> WebhookCreateResult:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._api_base}/repos/{full_name}/hooks",
+                headers=self._headers,
+                json={
+                    "name": "web",
+                    "active": True,
+                    "events": ["pull_request"],
+                    "config": {
+                        "url": webhook_url,
+                        "content_type": "json",
+                        "secret": secret,
+                        "insecure_ssl": "0",
+                    },
+                },
+                timeout=15,
+            )
+            if resp.status_code in (201, 200):
+                data = resp.json()
+                return WebhookCreateResult(
+                    success=True, webhook_id=str(data.get("id", ""))
+                )
+            return WebhookCreateResult(
+                success=False,
+                error=f"GitHub API {resp.status_code}: {resp.text[:200]}",
+            )

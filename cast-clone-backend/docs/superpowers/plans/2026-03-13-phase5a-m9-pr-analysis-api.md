@@ -93,7 +93,7 @@ async def client(mock_session, admin_user):
 def _make_pr_analysis() -> MagicMock:
     pr = MagicMock(spec=PrAnalysis)
     pr.id = "pr-1"
-    pr.project_id = "proj-1"
+    pr.repository_id = "repo-1"
     pr.platform = "github"
     pr.pr_number = 42
     pr.pr_title = "Fix bug"
@@ -131,7 +131,7 @@ class TestListPrAnalyses:
         mock_count.scalar.return_value = 1
         mock_session.execute.side_effect = [mock_count, mock_result]
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
@@ -146,7 +146,7 @@ class TestListPrAnalyses:
         mock_result.scalars.return_value.all.return_value = []
         mock_session.execute.side_effect = [mock_count, mock_result]
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests?status=failed")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests?status=failed")
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
 
@@ -159,7 +159,7 @@ class TestGetPrAnalysis:
         mock_result.scalar_one_or_none.return_value = pr
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests/pr-1")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests/pr-1")
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "pr-1"
@@ -171,7 +171,7 @@ class TestGetPrAnalysis:
         mock_result.scalar_one_or_none.return_value = None
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests/nonexistent")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests/nonexistent")
         assert resp.status_code == 404
 
 
@@ -194,7 +194,7 @@ class TestGetPrImpact:
         mock_result.scalar_one_or_none.return_value = pr
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests/pr-1/impact")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests/pr-1/impact")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_blast_radius"] == 47
@@ -214,7 +214,7 @@ class TestGetPrDrift:
         mock_result.scalar_one_or_none.return_value = pr
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests/pr-1/drift")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests/pr-1/drift")
         assert resp.status_code == 200
         assert resp.json()["has_drift"] is False
 
@@ -238,7 +238,7 @@ class TestReanalyze:
         mock_session.execute.side_effect = [mock_result, mock_result2]
 
         with patch("app.api.pull_requests.BackgroundTasks"):
-            resp = await client.post("/api/v1/projects/proj-1/pull-requests/pr-1/reanalyze")
+            resp = await client.post("/api/v1/repositories/repo-1/pull-requests/pr-1/reanalyze")
         assert resp.status_code == 202
 ```
 
@@ -261,7 +261,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
 from app.config import Settings, get_settings
-from app.models.db import PrAnalysis, ProjectGitConfig, User
+from app.models.db import PrAnalysis, RepositoryGitConfig, User
 from app.schemas.pull_requests import (
     PrAnalysisListResponse,
     PrAnalysisResponse,
@@ -273,18 +273,18 @@ from app.services.postgres import get_session
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/projects/{project_id}/pull-requests",
+    prefix="/api/v1/repositories/{repo_id}/pull-requests",
     tags=["pull-requests"],
 )
 
 
 async def _get_pr_or_404(
-    project_id: str, pr_analysis_id: str, session: AsyncSession
+    repo_id: str, pr_analysis_id: str, session: AsyncSession
 ) -> PrAnalysis:
     result = await session.execute(
         select(PrAnalysis).where(
             PrAnalysis.id == pr_analysis_id,
-            PrAnalysis.project_id == project_id,
+            PrAnalysis.repository_id == repo_id,
         )
     )
     pr = result.scalar_one_or_none()
@@ -295,7 +295,7 @@ async def _get_pr_or_404(
 
 @router.get("", response_model=PrAnalysisListResponse)
 async def list_pr_analyses(
-    project_id: str,
+    repo_id: str,
     status: str | None = Query(None),
     risk: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
@@ -303,8 +303,8 @@ async def list_pr_analyses(
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> PrAnalysisListResponse:
-    """List PR analyses for a project, with optional filters."""
-    base_filter = [PrAnalysis.project_id == project_id]
+    """List PR analyses for a repository, with optional filters."""
+    base_filter = [PrAnalysis.repository_id == repo_id]
     if status:
         base_filter.append(PrAnalysis.status == status)
     if risk:
@@ -336,25 +336,25 @@ async def list_pr_analyses(
 
 @router.get("/{pr_analysis_id}", response_model=PrAnalysisResponse)
 async def get_pr_analysis(
-    project_id: str,
+    repo_id: str,
     pr_analysis_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> PrAnalysisResponse:
     """Get full PR analysis detail."""
-    pr = await _get_pr_or_404(project_id, pr_analysis_id, session)
+    pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
     return PrAnalysisResponse.model_validate(pr)
 
 
 @router.get("/{pr_analysis_id}/impact")
 async def get_pr_impact(
-    project_id: str,
+    repo_id: str,
     pr_analysis_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> dict:
     """Get detailed impact data for a PR analysis."""
-    pr = await _get_pr_or_404(project_id, pr_analysis_id, session)
+    pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
     if not pr.impact_summary:
         raise HTTPException(status_code=404, detail="Impact data not available")
     return {"pr_analysis_id": pr.id, **pr.impact_summary}
@@ -362,13 +362,13 @@ async def get_pr_impact(
 
 @router.get("/{pr_analysis_id}/drift")
 async def get_pr_drift(
-    project_id: str,
+    repo_id: str,
     pr_analysis_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> dict:
     """Get drift report for a PR analysis."""
-    pr = await _get_pr_or_404(project_id, pr_analysis_id, session)
+    pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
     if not pr.drift_report:
         raise HTTPException(status_code=404, detail="Drift data not available")
     return {"pr_analysis_id": pr.id, **pr.drift_report}
@@ -376,7 +376,7 @@ async def get_pr_drift(
 
 @router.post("/{pr_analysis_id}/reanalyze", status_code=202)
 async def reanalyze_pr(
-    project_id: str,
+    repo_id: str,
     pr_analysis_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
@@ -384,11 +384,11 @@ async def reanalyze_pr(
     _user: User = Depends(get_current_user),
 ) -> dict:
     """Re-run analysis for a PR (e.g., after graph update)."""
-    pr = await _get_pr_or_404(project_id, pr_analysis_id, session)
+    pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
 
     # Get git config for API token
     config_result = await session.execute(
-        select(ProjectGitConfig).where(ProjectGitConfig.project_id == project_id)
+        select(RepositoryGitConfig).where(RepositoryGitConfig.repository_id == repo_id)
     )
     config = config_result.scalar_one_or_none()
     if not config:
@@ -402,7 +402,7 @@ async def reanalyze_pr(
     background_tasks.add_task(
         _run_analysis_background,
         pr_analysis_id=pr.id,
-        project_id=project_id,
+        repo_id=repo_id,
         api_token_encrypted=config.api_token_encrypted,
         platform=config.platform,
         secret_key=settings.secret_key,
@@ -444,11 +444,11 @@ git commit -m "feat(phase5a): add PR analysis list, detail, impact, drift, and r
 
 ## Success Criteria
 
-- [ ] `GET /projects/{id}/pull-requests` returns paginated list with status/risk filters
-- [ ] `GET /projects/{id}/pull-requests/{id}` returns full PR analysis detail
-- [ ] `GET /projects/{id}/pull-requests/{id}/impact` returns structured impact data
-- [ ] `GET /projects/{id}/pull-requests/{id}/drift` returns drift report
-- [ ] `POST /projects/{id}/pull-requests/{id}/reanalyze` queues re-analysis (202)
+- [ ] `GET /repositories/{id}/pull-requests` returns paginated list with status/risk filters
+- [ ] `GET /repositories/{id}/pull-requests/{id}` returns full PR analysis detail
+- [ ] `GET /repositories/{id}/pull-requests/{id}/impact` returns structured impact data
+- [ ] `GET /repositories/{id}/pull-requests/{id}/drift` returns drift report
+- [ ] `POST /repositories/{id}/pull-requests/{id}/reanalyze` queues re-analysis (202)
 - [ ] 404 returned for nonexistent analyses
 - [ ] All endpoints require auth
 - [ ] All tests pass: `uv run pytest tests/unit/test_pull_requests_api.py -v`

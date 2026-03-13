@@ -215,6 +215,7 @@ class Project(Base):
         ForeignKey("repositories.id", ondelete="CASCADE"), nullable=True
     )
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_analyzed_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -257,3 +258,82 @@ class AnalysisRun(Base):
     commit_sha: Mapped[str | None] = mapped_column(String(40))
 
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
+
+
+class RepositoryGitConfig(Base):
+    __tablename__ = "repository_git_config"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    api_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    webhook_secret: Mapped[str] = mapped_column(String(255), nullable=False)
+    monitored_branches: Mapped[list] = mapped_column(
+        JSONB, default=lambda: ["main", "master", "develop"]
+    )
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    repository: Mapped[Repository] = relationship()
+
+
+# Keep old name as alias for backwards compat in imports
+ProjectGitConfig = RepositoryGitConfig
+
+
+class PrAnalysis(Base):
+    __tablename__ = "pr_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "repository_id", "pr_number", "commit_sha", name="uq_pr_repo_commit"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    pr_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    pr_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pr_author: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_branch: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_branch: Mapped[str] = mapped_column(String(200), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    pr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    risk_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    changed_node_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    blast_radius_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    impact_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    drift_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    files_changed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    additions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deletions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    graph_analysis_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=True
+    )
+    analysis_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_summary_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    repository: Mapped[Repository] = relationship()

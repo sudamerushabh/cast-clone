@@ -17,6 +17,8 @@ import type {
   CreateRepositoryRequest,
   DeadCodeResponse,
   EvolutionTimelineResponse,
+  GitConfig,
+  GitConfigCreateResponse,
   GraphEdgeListResponse,
   GraphNodeListResponse,
   GraphSearchResponse,
@@ -27,6 +29,11 @@ import type {
   NodeDetailResponse,
   NodeWithNeighborsResponse,
   PathFinderResponse,
+  PrAnalysis,
+  PrAnalysisList,
+  PrDriftDetail,
+  PrImpactDetail,
+  ProjectBranchResponse,
   ProjectListResponse,
   ProjectResponse,
   RemoteRepoListResponse,
@@ -46,6 +53,7 @@ import type {
   SavedViewResponse,
   SavedViewListItem,
   ActivityLogEntry,
+  WebhookUrlInfo,
 } from "./types";
 
 const BASE_URL =
@@ -424,6 +432,16 @@ export async function getRepository(id: string): Promise<RepositoryResponse> {
   return apiFetch<RepositoryResponse>(`/api/v1/repositories/${id}`);
 }
 
+export async function addBranch(
+  repoId: string,
+  branch: string,
+): Promise<ProjectBranchResponse> {
+  return apiFetch<ProjectBranchResponse>(`/api/v1/repositories/${repoId}/branches`, {
+    method: "POST",
+    body: JSON.stringify({ branch }),
+  });
+}
+
 export async function deleteRepository(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/repositories/${id}`, { method: "DELETE" });
 }
@@ -663,4 +681,155 @@ export async function getActivityFeed(params?: {
   if (params?.user_id) searchParams.set("user_id", params.user_id);
   if (params?.action) searchParams.set("action", params.action);
   return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
+}
+
+// ── Phase 5a: PR Analysis API (repository-level) ──
+
+export async function fetchRepoPrAnalyses(
+  repoId: string,
+  params?: { status?: string; risk?: string; limit?: number; offset?: number },
+): Promise<PrAnalysisList> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set("status", params.status);
+  if (params?.risk) searchParams.set("risk", params.risk);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const qs = searchParams.toString();
+  return apiFetch<PrAnalysisList>(
+    `/api/v1/repositories/${repoId}/pull-requests${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function fetchRepoPrAnalysis(
+  repoId: string,
+  analysisId: string,
+): Promise<PrAnalysis> {
+  return apiFetch<PrAnalysis>(
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}`,
+  );
+}
+
+export async function fetchRepoPrImpact(
+  repoId: string,
+  analysisId: string,
+): Promise<PrImpactDetail> {
+  return apiFetch<PrImpactDetail>(
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/impact`,
+  );
+}
+
+export async function fetchRepoPrDrift(
+  repoId: string,
+  analysisId: string,
+): Promise<PrDriftDetail> {
+  return apiFetch<PrDriftDetail>(
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/drift`,
+  );
+}
+
+export async function reanalyzeRepoPr(
+  repoId: string,
+  analysisId: string,
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/reanalyze`,
+    { method: "POST" },
+  );
+}
+
+// ── Git Config (repository-level) ──
+
+export async function fetchGitConfig(
+  repoId: string,
+): Promise<GitConfig | null> {
+  try {
+    return await apiFetch<GitConfig>(
+      `/api/v1/repositories/${repoId}/git-config`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function createGitConfig(
+  repoId: string,
+  body: {
+    platform: string;
+    repo_url: string;
+    api_token: string;
+    monitored_branches?: string[];
+  },
+): Promise<GitConfigCreateResponse> {
+  return apiFetch<GitConfigCreateResponse>(
+    `/api/v1/repositories/${repoId}/git-config`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export async function deleteGitConfig(repoId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${repoId}/git-config`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchWebhookUrl(
+  repoId: string,
+): Promise<WebhookUrlInfo> {
+  return apiFetch<WebhookUrlInfo>(
+    `/api/v1/repositories/${repoId}/git-config/webhook-url`,
+  );
+}
+
+export async function testGitConnectivity(
+  repoId: string,
+): Promise<{ status: string; username?: string; message?: string }> {
+  return apiFetch<{ status: string; username?: string; message?: string }>(
+    `/api/v1/repositories/${repoId}/git-config/test`,
+    { method: "POST" },
+  );
+}
+
+export interface EnableWebhooksResponse {
+  webhook_url: string;
+  webhook_secret: string;
+  platform: string;
+  monitored_branches: string[] | null;
+  is_active: boolean;
+  auto_registered: boolean;
+  auto_register_error: string | null;
+}
+
+export async function enableWebhooks(
+  repoId: string,
+  opts: {
+    monitorAll?: boolean;
+    monitoredBranches?: string[];
+    autoRegister?: boolean;
+  } = {},
+): Promise<EnableWebhooksResponse> {
+  return apiFetch<EnableWebhooksResponse>(
+    `/api/v1/repositories/${repoId}/git-config/enable-webhooks`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        monitor_all_branches: opts.monitorAll ?? true,
+        monitored_branches: opts.monitoredBranches ?? null,
+        auto_register: opts.autoRegister ?? false,
+      }),
+    },
+  );
+}
+
+export async function autoRegisterWebhook(
+  repoId: string,
+): Promise<{ success: boolean; error: string | null }> {
+  return apiFetch<{ success: boolean; error: string | null }>(
+    `/api/v1/repositories/${repoId}/git-config/auto-register-webhook`,
+    { method: "POST" },
+  );
+}
+
+export async function disableWebhooks(repoId: string): Promise<void> {
+  return deleteGitConfig(repoId);
 }

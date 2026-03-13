@@ -4,7 +4,7 @@
 
 **Goal:** Add database models, configuration settings, Pydantic schemas, and shared data types required by all Phase 5a milestones.
 
-**Architecture:** Two new SQLAlchemy models (`ProjectGitConfig`, `PrAnalysis`) in the existing `db.py`. New Pydantic schemas for webhook payloads, PR analysis responses, and git config CRUD. Shared dataclasses for the PR analysis pipeline (`PullRequestEvent`, `PRDiff`, `FileDiff`, `DiffHunk`). New config fields for the Anthropic API key.
+**Architecture:** Two new SQLAlchemy models (`RepositoryGitConfig`, `PrAnalysis`) in the existing `db.py`. New Pydantic schemas for webhook payloads, PR analysis responses, and git config CRUD. Shared dataclasses for the PR analysis pipeline (`PullRequestEvent`, `PRDiff`, `FileDiff`, `DiffHunk`). New config fields for the Anthropic API key.
 
 **Tech Stack:** SQLAlchemy 2.0 (async, mapped_column), Pydantic v2, Python dataclasses.
 
@@ -19,7 +19,7 @@ cast-clone-backend/
 ├── app/
 │   ├── config.py                       # MODIFY — add anthropic_api_key
 │   ├── models/
-│   │   └── db.py                       # MODIFY — add ProjectGitConfig, PrAnalysis
+│   │   └── db.py                       # MODIFY — add RepositoryGitConfig, PrAnalysis
 │   ├── schemas/
 │   │   ├── webhooks.py                 # CREATE — webhook payload response models
 │   │   ├── pull_requests.py            # CREATE — PR analysis request/response models
@@ -432,18 +432,18 @@ git commit -m "feat(phase5a): add PR analysis data models and pipeline types"
 Append to `tests/unit/test_pr_schemas.py`:
 
 ```python
-from app.models.db import ProjectGitConfig, PrAnalysis
+from app.models.db import RepositoryGitConfig, PrAnalysis
 
 
-class TestProjectGitConfigModel:
+class TestRepositoryGitConfigModel:
     def test_table_name(self):
-        assert ProjectGitConfig.__tablename__ == "project_git_config"
+        assert RepositoryGitConfig.__tablename__ == "repository_git_config"
 
     def test_fields_exist(self):
         """Verify all required columns are defined."""
-        columns = {c.name for c in ProjectGitConfig.__table__.columns}
+        columns = {c.name for c in RepositoryGitConfig.__table__.columns}
         expected = {
-            "id", "project_id", "platform", "repo_url",
+            "id", "repository_id", "platform", "repo_url",
             "api_token_encrypted", "webhook_secret",
             "monitored_branches", "is_active",
             "created_at", "updated_at",
@@ -458,7 +458,7 @@ class TestPrAnalysisModel:
     def test_fields_exist(self):
         columns = {c.name for c in PrAnalysis.__table__.columns}
         expected = {
-            "id", "project_id", "platform", "pr_number",
+            "id", "repository_id", "platform", "pr_number",
             "pr_title", "pr_author", "source_branch", "target_branch",
             "commit_sha", "status", "risk_level",
             "changed_node_count", "blast_radius_total",
@@ -470,7 +470,7 @@ class TestPrAnalysisModel:
         assert expected.issubset(columns)
 
     def test_unique_constraint(self):
-        """pr_analyses has a unique constraint on (project_id, pr_number, commit_sha)."""
+        """pr_analyses has a unique constraint on (repository_id, pr_number, commit_sha)."""
         constraints = PrAnalysis.__table__.constraints
         unique_names = [
             c.name for c in constraints
@@ -481,29 +481,29 @@ class TestPrAnalysisModel:
         for c in constraints:
             if hasattr(c, "columns"):
                 col_names = {col.name for col in c.columns}
-                if col_names == {"project_id", "pr_number", "commit_sha"}:
+                if col_names == {"repository_id", "pr_number", "commit_sha"}:
                     unique_cols.append(col_names)
         assert len(unique_cols) == 1
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd cast-clone-backend && uv run pytest tests/unit/test_pr_schemas.py::TestProjectGitConfigModel -v`
-Expected: FAIL — `ImportError: cannot import name 'ProjectGitConfig'`
+Run: `cd cast-clone-backend && uv run pytest tests/unit/test_pr_schemas.py::TestRepositoryGitConfigModel -v`
+Expected: FAIL — `ImportError: cannot import name 'RepositoryGitConfig'`
 
 - [ ] **Step 3: Add models to db.py**
 
 Add to the end of `app/models/db.py` (after `AnalysisRun`):
 
 ```python
-class ProjectGitConfig(Base):
-    __tablename__ = "project_git_config"
+class RepositoryGitConfig(Base):
+    __tablename__ = "repository_git_config"
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -520,22 +520,22 @@ class ProjectGitConfig(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    project: Mapped[Project] = relationship()
+    repository: Mapped[Repository] = relationship()
 
 
 class PrAnalysis(Base):
     __tablename__ = "pr_analyses"
     __table_args__ = (
         UniqueConstraint(
-            "project_id", "pr_number", "commit_sha", name="uq_pr_project_commit"
+            "repository_id", "pr_number", "commit_sha", name="uq_pr_repository_commit"
         ),
     )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
     )
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
     pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -579,7 +579,7 @@ class PrAnalysis(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    project: Mapped[Project] = relationship()
+    repository: Mapped[Repository] = relationship()
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -592,7 +592,7 @@ Expected: PASS (all tests including Task 1 config tests)
 ```bash
 cd cast-clone-backend
 git add app/models/db.py tests/unit/test_pr_schemas.py
-git commit -m "feat(phase5a): add ProjectGitConfig and PrAnalysis ORM models"
+git commit -m "feat(phase5a): add RepositoryGitConfig and PrAnalysis ORM models"
 ```
 
 ---
@@ -637,7 +637,7 @@ class TestGitConfigSchemas:
     def test_response_masks_token(self):
         r = GitConfigResponse(
             id="abc",
-            project_id="proj1",
+            repository_id="repo1",
             platform="github",
             repo_url="https://github.com/org/repo",
             monitored_branches=["main"],
@@ -692,7 +692,7 @@ class GitConfigUpdate(BaseModel):
 
 class GitConfigResponse(BaseModel):
     id: str
-    project_id: str
+    repository_id: str
     platform: str
     repo_url: str
     monitored_branches: list[str] | None
@@ -746,7 +746,7 @@ class TestPullRequestSchemas:
     def test_pr_analysis_response(self):
         r = PrAnalysisResponse(
             id="abc",
-            project_id="proj1",
+            repository_id="repo1",
             platform="github",
             pr_number=42,
             pr_title="Fix bug",
@@ -849,7 +849,7 @@ class PrModuleDepResponse(BaseModel):
 
 class PrAnalysisResponse(BaseModel):
     id: str
-    project_id: str
+    repository_id: str
     platform: str
     pr_number: int
     pr_title: str
@@ -983,7 +983,7 @@ git commit -m "feat(phase5a): add webhook response schema"
 ## Success Criteria
 
 - [ ] `app/config.py` has `anthropic_api_key` field
-- [ ] `app/models/db.py` has `ProjectGitConfig` and `PrAnalysis` models with correct columns and constraints
+- [ ] `app/models/db.py` has `RepositoryGitConfig` and `PrAnalysis` models with correct columns and constraints
 - [ ] `app/pr_analysis/models.py` has all pipeline dataclasses (`PullRequestEvent`, `PRDiff`, `FileDiff`, `DiffHunk`, `AggregatedImpact`, `DriftReport`, etc.)
 - [ ] `app/schemas/git_config.py`, `app/schemas/pull_requests.py`, `app/schemas/webhooks.py` all exist with validated Pydantic v2 models
 - [ ] All tests pass: `uv run pytest tests/unit/test_pr_analysis_models.py tests/unit/test_pr_schemas.py -v`

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import (
@@ -37,6 +38,14 @@ async def close_postgres() -> None:
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency that yields an async session."""
+    assert _session_factory is not None, "PostgreSQL not initialized"
+    async with _session_factory() as session:
+        yield session
+
+
+@contextlib.asynccontextmanager
+async def get_background_session() -> AsyncIterator[AsyncSession]:
+    """Get a session outside of FastAPI's Depends (for background tasks)."""
     assert _session_factory is not None, "PostgreSQL not initialized"
     async with _session_factory() as session:
         yield session

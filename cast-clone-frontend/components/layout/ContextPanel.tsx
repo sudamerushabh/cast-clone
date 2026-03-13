@@ -25,6 +25,9 @@ function parseProjectRoute(pathname: string): {
   repoId: string;
   branch: string;
 } | null {
+  // Exclude pull-requests routes — they are not branch/project pages
+  if (pathname.match(/^\/repositories\/[^/]+\/pull-requests/)) return null;
+
   const match = pathname.match(
     /^\/repositories\/([^/]+)\/(?:(?:graph|dependencies|transactions|search|impact|views|chat|settings)\/)?(.+)$/,
   );
@@ -76,6 +79,26 @@ function SectionNav({
   );
 }
 
+/**
+ * Hook to check if the current route has a context panel.
+ * Used by GlobalShell to conditionally render the aside.
+ */
+export function useHasContextPanel(): boolean {
+  const pathname = usePathname();
+
+  // Branch/project pages have the ProjectContextNav
+  if (pathname.match(/^\/repositories\/[^/]+\/pull-requests/)) return false;
+  const projectMatch = pathname.match(
+    /^\/repositories\/([^/]+)\/(?:(?:graph|dependencies|transactions|search|impact|views|chat|settings)\/)?(.+)$/,
+  );
+  if (projectMatch) return true;
+
+  // Settings has sub-navigation
+  if (pathname.startsWith("/settings")) return true;
+
+  return false;
+}
+
 export function ContextPanel() {
   const pathname = usePathname();
 
@@ -90,7 +113,7 @@ export function ContextPanel() {
     );
   }
 
-  // Settings section
+  // Settings section — has multiple sub-pages worth navigating
   if (pathname.startsWith("/settings")) {
     return (
       <SectionNav
@@ -106,42 +129,7 @@ export function ContextPanel() {
     );
   }
 
-  // Connectors section
-  if (pathname.startsWith("/connectors")) {
-    return (
-      <SectionNav
-        title="Git Connectors"
-        pathname={pathname}
-        items={[
-          { label: "All Connectors", href: "/connectors", icon: GitBranch },
-        ]}
-      />
-    );
-  }
-
-  // Repositories section
-  if (pathname.startsWith("/repositories")) {
-    return (
-      <SectionNav
-        title="Repositories"
-        pathname={pathname}
-        items={[
-          { label: "All Repositories", href: "/repositories", icon: FolderGit2 },
-        ]}
-      />
-    );
-  }
-
-  // Home — default
-  return (
-    <SectionNav
-      title="Home"
-      pathname={pathname}
-      items={[
-        { label: "Dashboard", href: "/", icon: LayoutDashboard },
-        { label: "Repositories", href: "/repositories", icon: FolderGit2 },
-        { label: "Connectors", href: "/connectors", icon: GitBranch },
-      ]}
-    />
-  );
+  // All other pages (Home, Repositories list, Repository detail,
+  // Connectors, PR analysis) — the main sidebar is sufficient.
+  return null;
 }

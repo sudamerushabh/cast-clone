@@ -148,6 +148,42 @@ class TestDeleteRepository:
         resp = client.delete("/api/v1/repositories/repo-1")
         assert resp.status_code == 204
 
+    def test_delete_repository_calls_cleanup(self, client, mock_session):
+        mock_repo = MagicMock()
+        mock_repo.id = "repo-1"
+        mock_repo.local_path = "/data/repos/repo-1"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_repo
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.api.repositories.cleanup_repo_dirs",
+            new_callable=AsyncMock,
+        ) as mock_cleanup:
+            resp = client.delete("/api/v1/repositories/repo-1")
+
+        assert resp.status_code == 204
+        mock_cleanup.assert_awaited_once_with("/data/repos/repo-1")
+
+    def test_delete_repository_cleanup_failure_does_not_fail_request(
+        self, client, mock_session
+    ):
+        mock_repo = MagicMock()
+        mock_repo.id = "repo-1"
+        mock_repo.local_path = "/data/repos/repo-1"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_repo
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.api.repositories.cleanup_repo_dirs",
+            new_callable=AsyncMock,
+            side_effect=OSError("permission denied"),
+        ):
+            resp = client.delete("/api/v1/repositories/repo-1")
+
+        assert resp.status_code == 204
+
     def test_delete_not_found(self, client, mock_session):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None

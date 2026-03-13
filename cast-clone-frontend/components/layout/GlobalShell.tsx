@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconRail } from "./IconRail";
-import { ContextPanel } from "./ContextPanel";
+import { ContextPanel, useHasContextPanel } from "./ContextPanel";
 import { TopBar } from "./TopBar";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ interface GlobalShellProps {
 export function GlobalShell({ children }: GlobalShellProps) {
   const pathname = usePathname();
   const [panelOpen, setPanelOpen] = React.useState(true);
+  const hasPanel = useHasContextPanel();
 
   // Auth pages render full-screen without the shell
   if (AUTH_ROUTES.includes(pathname)) {
@@ -34,33 +35,35 @@ export function GlobalShell({ children }: GlobalShellProps) {
         {/* Icon rail — always visible */}
         <IconRail />
 
-        {/* Context panel — collapsible */}
-        <aside
-          className={cn(
-            "relative shrink-0 border-r bg-sidebar transition-[width] duration-200",
-            panelOpen ? "w-60" : "w-0 overflow-hidden border-r-0",
-          )}
-        >
-          {/* Collapse/expand toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute right-1 top-1 z-10 size-6"
-            onClick={() => setPanelOpen((prev) => !prev)}
-            aria-label={panelOpen ? "Collapse panel" : "Expand panel"}
-          >
-            {panelOpen ? (
-              <PanelLeftClose className="size-3.5" />
-            ) : (
-              <PanelLeftOpen className="size-3.5" />
+        {/* Context panel — only visible when there's content */}
+        {hasPanel && (
+          <aside
+            className={cn(
+              "relative shrink-0 border-r bg-sidebar transition-[width] duration-200",
+              panelOpen ? "w-60" : "w-0 overflow-hidden border-r-0",
             )}
-          </Button>
+          >
+            {/* Collapse/expand toggle */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1 z-10 size-6"
+              onClick={() => setPanelOpen((prev) => !prev)}
+              aria-label={panelOpen ? "Collapse panel" : "Expand panel"}
+            >
+              {panelOpen ? (
+                <PanelLeftClose className="size-3.5" />
+              ) : (
+                <PanelLeftOpen className="size-3.5" />
+              )}
+            </Button>
 
-          <ContextPanel />
-        </aside>
+            <ContextPanel />
+          </aside>
+        )}
 
         {/* Show expand button when panel is collapsed */}
-        {!panelOpen && (
+        {hasPanel && !panelOpen && (
           <Button
             variant="ghost"
             size="icon"
