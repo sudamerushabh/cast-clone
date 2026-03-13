@@ -1,6 +1,7 @@
 """API router registry."""
 
 from app.api.analysis import router as analysis_router
+from app.api.connectors import router as connectors_router
 from app.api.graph import router as graph_router
 from app.api.graph_views import router as graph_views_router
 from app.api.health import router as health_router
@@ -9,6 +10,7 @@ from app.api.websocket import router as websocket_router
 
 __all__ = [
     "analysis_router",
+    "connectors_router",
     "graph_router",
     "graph_views_router",
     "health_router",

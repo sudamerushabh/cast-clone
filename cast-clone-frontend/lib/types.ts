@@ -187,3 +187,59 @@ export interface CodeViewerResponse {
 
 export type ViewMode = "architecture" | "dependency" | "transaction";
 export type DrilldownLevel = "module" | "class" | "method";
+
+// ─── Phase 4A: Git Connector types ──────────────────────────────────────────
+
+export type ConnectorProvider = "github" | "gitlab" | "gitea" | "bitbucket";
+export type ConnectorStatus = "connected" | "expired" | "revoked" | "error";
+
+export interface ConnectorResponse {
+  id: string;
+  name: string;
+  provider: ConnectorProvider;
+  base_url: string;
+  auth_method: string;
+  status: ConnectorStatus;
+  remote_username: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorListResponse {
+  connectors: ConnectorResponse[];
+  total: number;
+}
+
+export interface CreateConnectorRequest {
+  name: string;
+  provider: ConnectorProvider;
+  base_url: string;
+  token: string;
+}
+
+export interface ConnectorTestResponse {
+  status: string;
+  remote_username: string | null;
+  error: string | null;
+}
+
+export interface RemoteRepoResponse {
+  full_name: string;
+  clone_url: string;
+  default_branch: string;
+  description: string | null;
+  language: string | null;
+  is_private: boolean;
+}
+
+export interface RemoteRepoListResponse {
+  repos: RemoteRepoResponse[];
+  has_more: boolean;
+  page: number;
+  per_page: number;
+}
+
+export interface BranchListResponse {
+  branches: string[];
+  default_branch: string;
+}

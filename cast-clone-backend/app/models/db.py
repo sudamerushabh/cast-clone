@@ -62,3 +62,27 @@ class AnalysisRun(Base):
     report: Mapped[dict | None] = mapped_column(JSON)
 
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
+
+
+class GitConnector(Base):
+    __tablename__ = "git_connectors"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    auth_method: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pat"
+    )
+    encrypted_token: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="connected")
+    remote_username: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

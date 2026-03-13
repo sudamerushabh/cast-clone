@@ -2,8 +2,13 @@ import type {
   AnalysisStatusResponse,
   AnalysisTriggerResponse,
   AggregatedEdgeListResponse,
+  BranchListResponse,
   ClassListResponse,
   CodeViewerResponse,
+  ConnectorListResponse,
+  ConnectorResponse,
+  ConnectorTestResponse,
+  CreateConnectorRequest,
   CreateProjectRequest,
   GraphEdgeListResponse,
   GraphNodeListResponse,
@@ -13,6 +18,8 @@ import type {
   NodeWithNeighborsResponse,
   ProjectListResponse,
   ProjectResponse,
+  RemoteRepoListResponse,
+  RemoteRepoResponse,
   TransactionDetailResponse,
   TransactionListResponse,
 } from "./types";
@@ -224,4 +231,58 @@ export async function getCodeView(
   return apiFetch<CodeViewerResponse>(
     `/api/v1/graph-views/${projectId}/code?${params.toString()}`,
   );
+}
+
+// ─── Connector endpoints (Phase 4A) ─────────────────────────────────────────
+
+export async function createConnector(
+  data: CreateConnectorRequest,
+): Promise<ConnectorResponse> {
+  return apiFetch<ConnectorResponse>("/api/v1/connectors", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listConnectors(): Promise<ConnectorListResponse> {
+  return apiFetch<ConnectorListResponse>("/api/v1/connectors");
+}
+
+export async function getConnector(id: string): Promise<ConnectorResponse> {
+  return apiFetch<ConnectorResponse>(`/api/v1/connectors/${id}`);
+}
+
+export async function deleteConnector(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/connectors/${id}`, { method: "DELETE" });
+}
+
+export async function testConnector(id: string): Promise<ConnectorTestResponse> {
+  return apiFetch<ConnectorTestResponse>(`/api/v1/connectors/${id}/test`, { method: "POST" });
+}
+
+export async function listRemoteRepos(
+  connectorId: string,
+  page: number = 1,
+  perPage: number = 30,
+  search?: string,
+): Promise<RemoteRepoListResponse> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (search) params.set("search", search);
+  return apiFetch<RemoteRepoListResponse>(`/api/v1/connectors/${connectorId}/repos?${params.toString()}`);
+}
+
+export async function getRemoteRepo(
+  connectorId: string,
+  owner: string,
+  repo: string,
+): Promise<RemoteRepoResponse> {
+  return apiFetch<RemoteRepoResponse>(`/api/v1/connectors/${connectorId}/repos/${owner}/${repo}`);
+}
+
+export async function listRemoteBranches(
+  connectorId: string,
+  owner: string,
+  repo: string,
+): Promise<BranchListResponse> {
+  return apiFetch<BranchListResponse>(`/api/v1/connectors/${connectorId}/repos/${owner}/${repo}/branches`);
 }

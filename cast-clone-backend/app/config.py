@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     cors_origins: list[str] = ["*"]
 
+    # Security
+    secret_key: str = "change-me-in-production"
+
+    # Repository storage
+    repo_storage_path: str = "/data/repos"
+    git_clone_timeout: int = 600
+
     # Analysis defaults
     scip_timeout: int = 600
     total_analysis_timeout: int = 3600
