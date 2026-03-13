@@ -1,4 +1,4 @@
-"""Analysis pipeline orchestrator — runs 9 stages sequentially.
+"""Analysis pipeline orchestrator — runs 10 stages sequentially.
 
 Each stage function delegates to the real implementation from app.stages.*.
 Services (GraphStore) are injected via PipelineServices.
@@ -112,7 +112,7 @@ async def _stage_linking(context: AnalysisContext, services: PipelineServices) -
 async def _stage_enrichment(
     context: AnalysisContext, services: PipelineServices
 ) -> None:
-    """Stage 7: Compute metrics and run community detection."""
+    """Stage 7: Compute metrics and aggregations."""
     from app.stages.enricher import enrich_graph
 
     await enrich_graph(context)
@@ -134,6 +134,17 @@ async def _stage_transactions(
     await discover_transactions(context)
 
 
+async def _stage_gds_enrichment(
+    context: AnalysisContext, services: PipelineServices
+) -> None:
+    """Stage 10: Run GDS algorithms (Louvain community detection)."""
+    from app.services.neo4j import get_driver
+    from app.stages.gds_enricher import run_gds_community_detection
+
+    driver = get_driver()
+    await run_gds_community_detection(context, driver)
+
+
 # ── Stage registry ────────────────────────────────────────────────────────
 
 StageFunc = Callable[[AnalysisContext, PipelineServices], Coroutine[Any, Any, None]]
@@ -150,6 +161,10 @@ PIPELINE_STAGES: list[PipelineStage] = [
     PipelineStage("enrichment", "Computing metrics and communities..."),
     PipelineStage("transactions", "Discovering transaction flows..."),
     PipelineStage("writing", "Writing to database...", critical=True),
+    PipelineStage(
+        "gds_enrichment",
+        "Running graph algorithms (community detection)...",
+    ),
 ]
 
 _STAGE_FUNCS: dict[str, StageFunc] = {
@@ -163,6 +178,7 @@ _STAGE_FUNCS: dict[str, StageFunc] = {
     "enrichment": _stage_enrichment,
     "writing": _stage_writing,
     "transactions": _stage_transactions,
+    "gds_enrichment": _stage_gds_enrichment,
 }
 
 
@@ -182,7 +198,7 @@ async def run_analysis_pipeline(
     run_id: str | None = None,
     services: PipelineServices | None = None,
 ) -> None:
-    """Run the full 9-stage analysis pipeline.
+    """Run the full 10-stage analysis pipeline.
 
     Called as a FastAPI BackgroundTask. Loads the project from DB,
     runs each stage sequentially, updates status, and reports progress

@@ -19,7 +19,7 @@ class EntryPoint:
 
 @dataclass
 class AnalysisContext:
-    """Mutable state accumulated across all 9 pipeline stages.
+    """Mutable state accumulated across all 10 pipeline stages.
 
     Each stage reads from previous stages' outputs and writes its own.
     This is the single object threaded through the entire pipeline.
@@ -48,7 +48,7 @@ class AnalysisContext:
     # Stage 6 tracking
     cross_tech_edge_count: int = 0
 
-    # Stage 7 tracking
+    # Stage 10 tracking
     community_count: int = 0
 
     # Stage 9 tracking

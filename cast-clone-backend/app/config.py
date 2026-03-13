@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,3 +25,9 @@ class Settings(BaseSettings):
     max_traversal_depth: int = 15
     treesitter_workers: int | None = None  # None = os.cpu_count()
     log_level: str = "info"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return a cached Settings instance."""
+    return Settings()

@@ -12,3 +12,215 @@
 [   17800ms] [WARNING] Do not assign mappings to elements without corresponding data (i.e. ele `org.training.transactions.controller.TransactionController.addTransactions` has no mapping for property `height` with data field `loc`); try a `[loc]` selector to limit scope to elements with `loc` defined @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:2297
 [   17800ms] [WARNING] Do not assign mappings to elements without corresponding data (i.e. ele `org.training.transactions.controller.TransactionController.addTransactions` has no mapping for property `width` with data field `loc`); try a `[loc]` selector to limit scope to elements with `loc` defined @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:2297
 [   17801ms] [WARNING] Do not assign mappings to elements without corresponding data (i.e. ele `org.training.transactions.controller.TransactionController.addTransactions` has no mapping for property `height` with data field `loc`); try a `[loc]` selector to limit scope to elements with `loc` defined @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:2297
+[ 3632360ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 3633326ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 3633516ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 3634168ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 3634366ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/projects/30af79f5-4317-4cce-9090-cb1d54c10885/graph?_rsc=16ova:0
+[ 3634444ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_f3530cac._.js:3127
+[ 3634453ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/projects/30af79f5-4317-4cce-9090-cb1d54c10885/graph?_rsc=16ova:0
+[ 3634622ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/projects/30af79f5-4317-4cce-9090-cb1d54c10885/graph:0
+[ 3635564ms] Error: ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+
+    at <unknown> (Error: ./app/projects/[id]/graph/page.tsx:527:4)
+    at Object.getCompilationErrors (file:///home/ubuntu/cast-clone/cast-clone-frontend/node_modules/next/dist/server/dev/hot-reloader-turbopack.js:1008:59)
+    at DevBundlerService.getCompilationError (file:///home/ubuntu/cast-clone/cast-clone-frontend/node_modules/next/dist/server/lib/dev-bundler-service.js:44:55)
+    at DevServer.getCompilationError (file:///home/ubuntu/cast-clone/cast-clone-frontend/node_modules/next/dist/server/dev/next-dev-server.js:706:42)
+    at DevServer.findPageComponents (file:///home/ubuntu/cast-clone/cast-clone-frontend/node_modules/next/dist/server/dev/next-dev-server.js:676:43)
+    at async DevServer.renderErrorToResponseImpl (file:///home/ubuntu/cast-clone/cast-clone-frontend/node_modules/next/dist/server/base-server.js:1733:26)
+[ 3635597ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1920
+[ 3635721ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1920
+[ 3637091ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1920
+[ 3637410ms] [ERROR] ./app/projects/[id]/graph/page.tsx:527:4
+Parsing ecmascript source code failed
+  525 |         </div>
+  526 |
+> 527 | <<<<<<< HEAD
+      |    ^^
+  528 |         {/* Right: Node properties panel */}
+  529 |         <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
+  530 |           <NodeProperties
+
+Expression expected
+
+Import traces:
+  Client Component Browser:
+    ./app/projects/[id]/graph/page.tsx [Client Component Browser]
+    ./app/projects/[id]/graph/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./app/projects/[id]/graph/page.tsx [Client Component SSR]
+    ./app/projects/[id]/graph/page.tsx [Server Component] @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1920
+[ 3661807ms] [WARNING] [Fast Refresh] performing full reload because your application had an unrecoverable error @ http://localhost:3000/_next/static/chunks/node_modules_next_dist_b3fb3b5f._.js:1206

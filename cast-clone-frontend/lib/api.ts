@@ -2,15 +2,22 @@ import type {
   AnalysisStatusResponse,
   AnalysisTriggerResponse,
   AggregatedEdgeListResponse,
+  CircularDependenciesResponse,
   ClassListResponse,
   CodeViewerResponse,
+  CommunitiesResponse,
   CreateProjectRequest,
+  DeadCodeResponse,
   GraphEdgeListResponse,
   GraphNodeListResponse,
   GraphSearchResponse,
+  ImpactAnalysisResponse,
   MethodListResponse,
+  MetricsResponse,
   ModuleListResponse,
+  NodeDetailResponse,
   NodeWithNeighborsResponse,
+  PathFinderResponse,
   ProjectListResponse,
   ProjectResponse,
   TransactionDetailResponse,
@@ -223,5 +230,86 @@ export async function getCodeView(
   }
   return apiFetch<CodeViewerResponse>(
     `/api/v1/graph-views/${projectId}/code?${params.toString()}`,
+  );
+}
+
+// ── Phase 3: Analysis APIs ──────────────────────────────
+
+export async function getImpactAnalysis(
+  projectId: string,
+  nodeFqn: string,
+  direction: "downstream" | "upstream" | "both" = "downstream",
+  maxDepth: number = 5,
+): Promise<ImpactAnalysisResponse> {
+  const params = new URLSearchParams({
+    direction,
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<ImpactAnalysisResponse>(
+    `/api/v1/analysis/${projectId}/impact/${encodeURIComponent(nodeFqn)}?${params}`,
+  );
+}
+
+export async function getShortestPath(
+  projectId: string,
+  fromFqn: string,
+  toFqn: string,
+  maxDepth: number = 10,
+): Promise<PathFinderResponse> {
+  const params = new URLSearchParams({
+    from_fqn: fromFqn,
+    to_fqn: toFqn,
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<PathFinderResponse>(
+    `/api/v1/analysis/${projectId}/path?${params}`,
+  );
+}
+
+export async function getCommunities(
+  projectId: string,
+): Promise<CommunitiesResponse> {
+  return apiFetch<CommunitiesResponse>(
+    `/api/v1/analysis/${projectId}/communities`,
+  );
+}
+
+export async function getCircularDependencies(
+  projectId: string,
+  level: "module" | "class" = "module",
+): Promise<CircularDependenciesResponse> {
+  return apiFetch<CircularDependenciesResponse>(
+    `/api/v1/analysis/${projectId}/circular-dependencies?level=${level}`,
+  );
+}
+
+export async function getDeadCode(
+  projectId: string,
+  type: "function" | "class" = "function",
+  minLoc: number = 5,
+): Promise<DeadCodeResponse> {
+  const params = new URLSearchParams({
+    type,
+    minLoc: String(minLoc),
+  });
+  return apiFetch<DeadCodeResponse>(
+    `/api/v1/analysis/${projectId}/dead-code?${params}`,
+  );
+}
+
+export async function getMetrics(
+  projectId: string,
+): Promise<MetricsResponse> {
+  return apiFetch<MetricsResponse>(
+    `/api/v1/analysis/${projectId}/metrics`,
+  );
+}
+
+export async function getNodeDetails(
+  projectId: string,
+  nodeFqn: string,
+): Promise<NodeDetailResponse> {
+  return apiFetch<NodeDetailResponse>(
+    `/api/v1/analysis/${projectId}/node/${encodeURIComponent(nodeFqn)}/details`,
   );
 }

@@ -2,10 +2,12 @@
 
 import * as React from "react"
 import {
+  Activity,
   Code2,
   FileCode2,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Route,
   Ruler,
   Gauge,
   X,
@@ -33,6 +35,8 @@ interface NodePropertiesProps {
   node: Record<string, unknown> | null
   onClose: () => void
   onViewSource?: (file: string, line: number) => void
+  onShowImpact?: (fqn: string) => void
+  onStartPathFrom?: (fqn: string) => void
 }
 
 function MetricRow({
@@ -56,7 +60,7 @@ function MetricRow({
   )
 }
 
-export function NodeProperties({ node, onClose, onViewSource }: NodePropertiesProps) {
+export function NodeProperties({ node, onClose, onViewSource, onShowImpact, onStartPathFrom }: NodePropertiesProps) {
   if (!node) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -187,6 +191,32 @@ export function NodeProperties({ node, onClose, onViewSource }: NodePropertiesPr
             <Code2 className="size-3.5" />
             View Source
           </Button>
+        ) : null}
+
+        {/* Impact & Path buttons */}
+        {fqn ? (
+          <div className="mt-2 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => onShowImpact?.(fqn)}
+              disabled={!onShowImpact}
+            >
+              <Activity className="size-3.5" />
+              Show Impact
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => onStartPathFrom?.(fqn)}
+              disabled={!onStartPathFrom}
+            >
+              <Route className="size-3.5" />
+              Find Path
+            </Button>
+          </div>
         ) : null}
 
         {node.drillable ? (
