@@ -233,6 +233,23 @@ class TestTraceTransactionFlow:
         assert len(flow.visited_fqns) == 2
         assert "C.fn" not in flow.visited_fqns
 
+    def test_follows_implements_edges_in_reverse(self):
+        """BFS follows IMPLEMENTS edges in reverse to find impl classes."""
+        g = SymbolGraph()
+        g.add_node(_fn("ctrl.addAccount"))
+        g.add_node(_fn("svc.AccountService.createAccount"))
+        g.add_node(_fn("svc.AccountServiceImpl.createAccount"))
+        g.add_node(_fn("repo.AccountRepository.save"))
+
+        g.add_edge(_edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS))
+        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "svc.AccountService.createAccount", EdgeKind.IMPLEMENTS))
+        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "repo.AccountRepository.save", EdgeKind.CALLS))
+
+        flow = trace_transaction_flow("ctrl.addAccount", g, max_depth=15)
+
+        assert "svc.AccountServiceImpl.createAccount" in flow.visited_fqns
+        assert "repo.AccountRepository.save" in flow.visited_fqns
+
     def test_terminal_node_still_continues_bfs(self):
         """BFS continues past terminal nodes."""
         g = SymbolGraph()

@@ -131,6 +131,20 @@ public interface UserRepository extends JpaRepository, CustomRepo {
         ]
         assert len(inherits_edges) == 2
 
+    def test_interface_extends_generic(self, extractor):
+        """Interface extending a generic type should produce an INHERITS edge."""
+        source = b"""
+package com.example;
+public interface AccountRepo extends JpaRepository<Account, Long> {}
+"""
+        nodes, edges = extractor.extract(source, "AccountRepo.java", "/project")
+        inherits_edges = [
+            e for e in edges
+            if "AccountRepo" in e.source_fqn and e.kind == EdgeKind.INHERITS
+        ]
+        assert len(inherits_edges) == 1
+        assert "JpaRepository" in inherits_edges[0].target_fqn
+
 
 # ──────────────────────────────────────────────
 # Test 3: Methods
