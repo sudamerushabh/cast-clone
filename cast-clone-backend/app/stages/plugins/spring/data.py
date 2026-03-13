@@ -16,6 +16,7 @@ Produces:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 import structlog
 
 from app.models.enums import Confidence, EdgeKind, NodeKind
@@ -63,6 +64,54 @@ _QUERY_KEYWORDS = re.compile(
     r"EndingWith|Containing|OrderBy|Not|In|NotIn|True|False|"
     r"IgnoreCase|AllIgnoreCase|Top\d*|First\d*|Distinct)"
 )
+
+
+def _is_spring_data_repo(node: GraphNode, graph: SymbolGraph) -> bool:
+    """Check if an interface node extends a known Spring Data repository base.
+
+    Checks both:
+    - INHERITS edges from tree-sitter (target may be a simple name like 'JpaRepository')
+    - The node's 'implements' property (if populated by SCIP or other resolvers)
+    """
+    if node.kind != NodeKind.INTERFACE:
+        return False
+    # Check implements property
+    implements = set(node.properties.get("implements", []))
+    if implements & _REPO_BASE_INTERFACES:
+        return True
+    # Check INHERITS edges (tree-sitter stores extends as INHERITS with simple names)
+    for edge in graph.get_edges_from(node.fqn):
+        if edge.kind == EdgeKind.INHERITS:
+            target_simple = edge.target_fqn.rsplit(".", 1)[-1]
+            if target_simple in _REPO_BASE_INTERFACES:
+                return True
+    return False
+
+
+# Regex to extract generic type args from extends clause, e.g.:
+# interface FooRepo extends JpaRepository<Account, Long> -> "Account"
+_EXTENDS_GENERIC_RE = re.compile(
+    r"extends\s+(?:" + "|".join(_REPO_BASE_INTERFACES) + r")\s*<\s*(\w+)",
+)
+
+
+def _extract_entity_name_from_source(
+    node: GraphNode, root_path: Path | None
+) -> str | None:
+    """Extract the entity type name from an interface's source file.
+
+    Reads the source file and parses the generic type argument from the extends clause.
+    E.g., 'extends JpaRepository<Account, Long>' -> 'Account'
+    """
+    if not node.path or not root_path:
+        return None
+    source_path = root_path / node.path
+    try:
+        content = source_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = _EXTENDS_GENERIC_RE.search(content)
+    return match.group(1) if match else None
 
 
 def _camel_to_snake(name: str) -> str:
@@ -195,8 +244,7 @@ class SpringDataPlugin(FrameworkPlugin):
                     )
         # Fallback: look for JPA repository interfaces in graph
         for node in context.graph.nodes.values():
-            implements = set(node.properties.get("implements", []))
-            if implements & _REPO_BASE_INTERFACES:
+            if _is_spring_data_repo(node, context.graph):
                 return PluginDetectionResult(
                     confidence=Confidence.MEDIUM,
                     reason="Spring Data repository interfaces found in graph",
@@ -223,19 +271,24 @@ class SpringDataPlugin(FrameworkPlugin):
                     entity_to_table[entity_node.name] = edge.target_fqn
                     entity_name_to_table_name[entity_node.name] = table_node.name
 
+        # Resolve root path for reading source files
+        root_path = context.manifest.root_path if context.manifest else None
+
         # Find repository interfaces
         for node in graph.nodes.values():
-            if not node.properties.get("is_interface", False):
-                continue
-            implements = set(node.properties.get("implements", []))
-            if not (implements & _REPO_BASE_INTERFACES):
+            if not _is_spring_data_repo(node, graph):
                 continue
 
+            # Get entity type name from type_args property or by parsing source file
             type_args = node.properties.get("type_args", [])
-            if not type_args:
+            entity_name: str | None = type_args[0] if type_args else None
+            if not entity_name:
+                entity_name = _extract_entity_name_from_source(node, root_path)
+            if not entity_name:
+                warnings.append(
+                    f"Could not determine entity type for repo '{node.fqn}'"
+                )
                 continue
-
-            entity_name = type_args[0]
 
             # MANAGES edge: repository -> entity
             entity_fqn = self._find_entity_fqn(graph, entity_name)

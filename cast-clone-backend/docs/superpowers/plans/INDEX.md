@@ -158,3 +158,40 @@ M4 and M5 require M2 + M3. M6 requires M3. M7 requires M4/M5.
 - Backend: ~3 new files, ~3 modified
 - Frontend: ~12 new files, ~5 modified
 - Backend tasks follow TDD; frontend verified via typecheck + manual testing
+
+---
+
+# Phase 4A — Product Shell, Git Connectors, Repo Onboarding
+
+Spec: `cast-clone-backend/docs/12-PHASE-4A-FRONTEND-DESIGN-GITCONNECTOR-REPO-ONBOARDING.MD`
+
+## Execution Order
+
+```
+M7a (Nav Shell) ← pure frontend, no backend changes
+    │
+    ▼
+M7b (Git Connectors) ← needs M7a for /connectors route
+    │               backend: GitConnector model, crypto, providers, API
+    ▼
+M7c (Repo Onboarding) ← needs M7b for connector + repo browsing
+                    backend: Repository model, clone service, Project changes,
+                             snapshot builder, evolution API
+```
+
+M7a is a frontend-only prerequisite. M7b and M7c are sequential (M7c depends on M7b's connector model and provider adapters).
+
+## Plan Files
+
+| Milestone | File | Description | Depends On |
+|-----------|------|-------------|------------|
+| **M7a** | `2026-03-13-phase4a-m7a-nav-shell.md` | GlobalShell (IconRail + ContextPanel + TopBar), route restructuring (/repositories, /connectors, /settings), project-level nav, legacy /projects compat | Phase 2 M2 |
+| **M7b** | `2026-03-13-phase4a-m7b-git-connectors.md` | Fernet crypto, GitProvider ABC + 4 implementations (GitHub/GitLab/Gitea/Bitbucket), GitConnector model, connector CRUD + test + repo browsing API, frontend connector pages | M7a |
+| **M7c** | `2026-03-13-phase4a-m7c-repo-onboarding.md` | Repository model, Project branch fields + neo4j_app_name, git clone service, repository CRUD + clone + sync + evolution API, AddSourceModal, RepoCard, CloneProgress | M7b |
+
+## Totals
+
+- **3 plans**, ~36 tasks
+- Backend: ~12 new files, ~4 modified
+- Frontend: ~18 new files, ~5 modified
+- Backend tasks follow TDD; frontend verified via typecheck + manual testing

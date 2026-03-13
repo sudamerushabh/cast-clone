@@ -387,7 +387,7 @@ def detect_frameworks(
     frameworks: list[DetectedFramework] = []
 
     for tool in build_tools:
-        config_path = root / tool.config_file
+        config_path = root / tool.subproject_root / tool.config_file
         if not config_path.is_file():
             continue
 
