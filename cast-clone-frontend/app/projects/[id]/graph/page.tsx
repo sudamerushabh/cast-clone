@@ -387,21 +387,20 @@ export default function GraphPage() {
   // ─── Trace Route handlers ──────────────────────────────────────────────
   const handleTraceRoute = useCallback(
     (fqn: string) => {
-      // Build TraceRouteNode from selectedNode data
+      const cy = cyInstanceRef.current
+      const cyNode = cy?.getElementById(fqn)
+      const data = cyNode?.data() ?? {} as Record<string, unknown>
       const node: TraceRouteNode = {
         fqn,
-        name: typeof selectedNode?.label === "string" ? selectedNode.label : fqn,
-        kind: typeof selectedNode?.kind === "string" ? selectedNode.kind : "",
-        language:
-          typeof selectedNode?.language === "string"
-            ? selectedNode.language
-            : null,
+        name: typeof data.label === "string" ? data.label : fqn,
+        kind: typeof data.kind === "string" ? data.kind : "",
+        language: typeof data.language === "string" ? data.language : null,
       }
       setTraceRouteNode(node)
       setTraceRouteOpen(true)
       setContextMenu(null)
     },
-    [selectedNode],
+    [cyInstanceRef],
   )
 
   const handleNodeRightClick = useCallback(
@@ -414,6 +413,16 @@ export default function GraphPage() {
   const handleContextMenuClose = useCallback(() => {
     setContextMenu(null)
   }, [])
+
+  // Dismiss context menu on Escape key
+  useEffect(() => {
+    if (!contextMenu) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleContextMenuClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [contextMenu, handleContextMenuClose])
 
   // ─── Apply overlays when data changes ─────────────────────────────────
   useEffect(() => {
