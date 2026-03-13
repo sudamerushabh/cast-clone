@@ -23,7 +23,6 @@ from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.context import AnalysisContext
 from app.stages.plugins.base import (
     FrameworkPlugin,
-    LayerRules,
     PluginDetectionResult,
     PluginResult,
 )
@@ -125,15 +124,21 @@ class SQLAlchemyPlugin(FrameworkPlugin):
         """Find classes with __tablename__ field. Returns {class_fqn: table_name}."""
         models: dict[str, str] = {}
         for node in graph.nodes.values():
-            if node.kind != NodeKind.FIELD or node.name != "__tablename__":
+            if node.kind != NodeKind.CLASS or node.language != "python":
                 continue
-            for edge in graph.edges:
-                if edge.target_fqn == node.fqn and edge.kind == EdgeKind.CONTAINS:
-                    class_fqn = edge.source_fqn
-                    value = node.properties.get("value", "").strip()
+            for edge in graph.get_edges_from(node.fqn):
+                if edge.kind != EdgeKind.CONTAINS:
+                    continue
+                child = graph.nodes.get(edge.target_fqn)
+                if (
+                    child
+                    and child.kind == NodeKind.FIELD
+                    and child.name == "__tablename__"
+                ):
+                    value = child.properties.get("value", "").strip()
                     match = _TABLENAME_RE.match(value)
                     if match:
-                        models[class_fqn] = match.group(1)
+                        models[node.fqn] = match.group(1)
                     break
         return models
 
@@ -149,8 +154,8 @@ class SQLAlchemyPlugin(FrameworkPlugin):
         fk_edges: list[GraphEdge] = []
         table_fqn = f"table:{table_name}"
 
-        for edge in graph.edges:
-            if edge.source_fqn != model_fqn or edge.kind != EdgeKind.CONTAINS:
+        for edge in graph.get_edges_from(model_fqn):
+            if edge.kind != EdgeKind.CONTAINS:
                 continue
             field_node = graph.nodes.get(edge.target_fqn)
             if not field_node or field_node.kind != NodeKind.FIELD:
