@@ -247,7 +247,7 @@ export default function BranchPage() {
           </h2>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Link
-              href={`/projects/${project.id}/graph`}
+              href={`/repositories/${repoId}/graph/${encodeURIComponent(branchName)}`}
               className="group flex items-center gap-3 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
               <GitGraph className="size-5 text-primary" />
@@ -257,7 +257,7 @@ export default function BranchPage() {
               </div>
             </Link>
             <Link
-              href={`/projects/${project.id}/graph?view=transaction`}
+              href={`/repositories/${repoId}/transactions/${encodeURIComponent(branchName)}`}
               className="group flex items-center gap-3 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
               <Activity className="size-5 text-primary" />

@@ -1,16 +1,33 @@
-export default async function BranchDependenciesPage({
-  params,
-}: {
-  params: Promise<{ repoId: string; branch: string[] }>;
-}) {
-  const { repoId, branch } = await params;
-  const branchName = branch.join("/");
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold">Dependencies</h1>
-      <p className="mt-1 text-muted-foreground">
-        Dependency graph for {repoId} / {decodeURIComponent(branchName)}.
-      </p>
-    </div>
-  );
+"use client"
+
+import { useParams } from "next/navigation"
+import { Loader2 } from "lucide-react"
+import { GraphExplorer } from "@/components/graph/GraphExplorer"
+import { useRepoProject } from "@/hooks/useRepoProject"
+
+export default function BranchDependenciesPage() {
+  const params = useParams()
+  const repoId = params.repoId as string
+  const branchSegments = params.branch as string[]
+  const branchName = branchSegments.map(decodeURIComponent).join("/")
+
+  const { projectId, isLoading, error } = useRepoProject(repoId, branchName)
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (error || !projectId) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-destructive">{error ?? "Project not found"}</p>
+      </div>
+    )
+  }
+
+  return <GraphExplorer projectId={projectId} defaultViewMode="dependency" />
 }

@@ -2,9 +2,6 @@
 
 import React from "react"
 import {
-  Layers,
-  Network,
-  ArrowRight,
   ZoomIn,
   ZoomOut,
   Maximize,
@@ -22,13 +19,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import type { ViewMode } from "@/lib/types"
 import { CommunityToggle } from "@/components/analysis/CommunityToggle"
 import { ExportButtons } from "./ExportButtons"
 
 interface GraphToolbarProps {
-  viewMode: ViewMode
-  onViewModeChange: (mode: ViewMode) => void
   onZoomIn: () => void
   onZoomOut: () => void
   onFitToScreen: () => void
@@ -41,27 +35,7 @@ interface GraphToolbarProps {
   onShowDeadCode?: () => void
 }
 
-const VIEW_TABS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
-  {
-    mode: "architecture",
-    label: "Architecture",
-    icon: <Layers className="size-3.5" />,
-  },
-  {
-    mode: "dependency",
-    label: "Dependency",
-    icon: <Network className="size-3.5" />,
-  },
-  {
-    mode: "transaction",
-    label: "Transaction",
-    icon: <ArrowRight className="size-3.5" />,
-  },
-]
-
 export function GraphToolbar({
-  viewMode,
-  onViewModeChange,
   onZoomIn,
   onZoomOut,
   onFitToScreen,
@@ -74,25 +48,7 @@ export function GraphToolbar({
   onShowDeadCode,
 }: GraphToolbarProps) {
   return (
-    <div className="flex items-center justify-between border-b bg-background px-3 py-1.5">
-      {/* Left: View switcher */}
-      <div className="flex items-center gap-1">
-        {VIEW_TABS.map((tab) => (
-          <Button
-            key={tab.mode}
-            variant={viewMode === tab.mode ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => onViewModeChange(tab.mode)}
-            disabled={isLoading}
-          >
-            {tab.icon}
-            <span className="ml-1">{tab.label}</span>
-          </Button>
-        ))}
-      </div>
-
-      {/* Right: Zoom + layout controls */}
-      <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="sm"
@@ -185,7 +141,6 @@ export function GraphToolbar({
             </Tooltip>
           </TooltipProvider>
         )}
-      </div>
     </div>
   )
 }

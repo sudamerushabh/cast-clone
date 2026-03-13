@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -16,11 +17,15 @@ from app.schemas.graph import GraphEdgeResponse, GraphNodeResponse
 from app.schemas.graph_views import (
     AggregatedEdgeListResponse,
     AggregatedEdgeResponse,
+    ArchitectureLayerResponse,
+    ArchitectureLinkResponse,
+    ArchitectureResponse,
     ClassListResponse,
     CodeViewerResponse,
     MethodListResponse,
     ModuleListResponse,
     ModuleResponse,
+    TechnologyNodeResponse,
     TransactionDetailResponse,
     TransactionListResponse,
     TransactionSummary,
@@ -169,15 +174,11 @@ async def list_classes(project_id: str, fqn: str) -> ClassListResponse:
         "WHERE c.app_name = $app_name AND (c.kind = 'CLASS' OR c.kind = 'INTERFACE') "
         "RETURN c AS n ORDER BY c.name"
     )
-    records = await store.query(
-        cypher, {"fqn": fqn, "app_name": project_id}
-    )
+    records = await store.query(cypher, {"fqn": fqn, "app_name": project_id})
 
     classes = [_record_to_node(r) for r in records]
 
-    return ClassListResponse(
-        classes=classes, total=len(classes), parent_fqn=fqn
-    )
+    return ClassListResponse(classes=classes, total=len(classes), parent_fqn=fqn)
 
 
 # ── Endpoint 3: List Methods in Class ───────────────────────────────────
@@ -196,15 +197,11 @@ async def list_methods(project_id: str, fqn: str) -> MethodListResponse:
         "WHERE f.app_name = $app_name AND f.kind = 'FUNCTION' "
         "RETURN f AS n ORDER BY f.name"
     )
-    records = await store.query(
-        cypher, {"fqn": fqn, "app_name": project_id}
-    )
+    records = await store.query(cypher, {"fqn": fqn, "app_name": project_id})
 
     methods = [_record_to_node(r) for r in records]
 
-    return MethodListResponse(
-        methods=methods, total=len(methods), parent_fqn=fqn
-    )
+    return MethodListResponse(methods=methods, total=len(methods), parent_fqn=fqn)
 
 
 # ── Endpoint 4: Aggregated Edges ────────────────────────────────────────
@@ -249,19 +246,21 @@ async def aggregated_edges(
             "MATCH (c1)-[:CONTAINS]->(f1)-[:CALLS]->(f2)<-[:CONTAINS]-(c2) "
             "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
             "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
-            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight, 'CALLS' AS kind "
+            "RETURN c1.fqn AS source, c2.fqn AS target, "
+            "count(*) AS weight, 'CALLS' AS kind "
             "UNION ALL "
             # Branch 2: direct class-to-class DEPENDS_ON
-            "MATCH (m {fqn: $parent, app_name: $app_name})-[:CONTAINS]->(c1) "
+            "MATCH (m {fqn: $parent, app_name: $app_name})"
+            "-[:CONTAINS]->(c1) "
             "WHERE c1.kind IN ['CLASS', 'INTERFACE'] "
             "MATCH (c1)-[:DEPENDS_ON]->(c2) "
-            "WHERE c2.kind IN ['CLASS', 'INTERFACE'] AND c1 <> c2 "
+            "WHERE c2.kind IN ['CLASS', 'INTERFACE'] "
+            "AND c1 <> c2 "
             "AND EXISTS { MATCH (:Module)-[:CONTAINS]->(c2) } "
-            "RETURN c1.fqn AS source, c2.fqn AS target, count(*) AS weight, 'DEPENDS_ON' AS kind"
+            "RETURN c1.fqn AS source, c2.fqn AS target, "
+            "count(*) AS weight, 'DEPENDS_ON' AS kind"
         )
-        records = await store.query(
-            cypher, {"parent": parent, "app_name": project_id}
-        )
+        records = await store.query(cypher, {"parent": parent, "app_name": project_id})
         # Group by (source, target, kind)
         merged: dict[tuple[str, str, str], int] = {}
         for r in records:
@@ -281,15 +280,19 @@ async def aggregated_edges(
             "(f2)<-[:CONTAINS]-(c2)<-[:CONTAINS]-(m2) "
             "WHERE m1.app_name = $app_name AND m1.kind = 'MODULE' "
             "AND m2.kind = 'MODULE' AND m1 <> m2 "
-            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight, 'CALLS' AS kind "
+            "RETURN m1.fqn AS source, m2.fqn AS target, "
+            "count(*) AS weight, 'CALLS' AS kind "
             "UNION ALL "
             # Branch 2: direct class-to-class DEPENDS_ON
-            "MATCH (m1)-[:CONTAINS]->(c1)-[:DEPENDS_ON]->(c2)<-[:CONTAINS]-(m2) "
-            "WHERE m1.app_name = $app_name AND m1.kind = 'MODULE' "
+            "MATCH (m1)-[:CONTAINS]->(c1)"
+            "-[:DEPENDS_ON]->(c2)<-[:CONTAINS]-(m2) "
+            "WHERE m1.app_name = $app_name "
+            "AND m1.kind = 'MODULE' "
             "AND m2.kind = 'MODULE' AND m1 <> m2 "
             "AND c1.kind IN ['CLASS', 'INTERFACE'] "
             "AND c2.kind IN ['CLASS', 'INTERFACE'] "
-            "RETURN m1.fqn AS source, m2.fqn AS target, count(*) AS weight, 'DEPENDS_ON' AS kind"
+            "RETURN m1.fqn AS source, m2.fqn AS target, "
+            "count(*) AS weight, 'DEPENDS_ON' AS kind"
         )
         records = await store.query(cypher, {"app_name": project_id})
         # Group by (source, target, kind) — keep CALLS and DEPENDS_ON separate
@@ -312,9 +315,7 @@ async def aggregated_edges(
         for r in records
     ]
 
-    return AggregatedEdgeListResponse(
-        edges=edges, total=len(edges), level=level.value
-    )
+    return AggregatedEdgeListResponse(edges=edges, total=len(edges), level=level.value)
 
 
 # ── Endpoint 5: List Transactions ───────────────────────────────────────
@@ -348,9 +349,7 @@ async def list_transactions(project_id: str) -> TransactionListResponse:
         for r in records
     ]
 
-    return TransactionListResponse(
-        transactions=transactions, total=len(transactions)
-    )
+    return TransactionListResponse(transactions=transactions, total=len(transactions))
 
 
 # ── Endpoint 6: Transaction Detail ──────────────────────────────────────
@@ -360,9 +359,7 @@ async def list_transactions(project_id: str) -> TransactionListResponse:
     "/{project_id}/transactions/{fqn:path}",
     response_model=TransactionDetailResponse,
 )
-async def get_transaction(
-    project_id: str, fqn: str
-) -> TransactionDetailResponse:
+async def get_transaction(project_id: str, fqn: str) -> TransactionDetailResponse:
     """Get the full call graph for a specific transaction."""
     store = get_graph_store()
 
@@ -380,22 +377,34 @@ async def get_transaction(
 
     # Get all nodes included in the transaction
     node_records = await store.query(
-        "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f) "
-        "RETURN f AS n",
+        "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f) RETURN f AS n",
         {"fqn": fqn, "app_name": project_id},
     )
     nodes = [_record_to_node(r) for r in node_records]
 
-    # Get edges between the included nodes
+    # Get edges between the included nodes.
+    # Include CALLS, WRITES, READS (data flow) plus IMPLEMENTS and INJECTS
+    # so that interface→impl hops and DI connections render correctly.
     edge_records = await store.query(
         "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f1) "
-        "MATCH (f1)-[r:CALLS|WRITES|READS]->(f2) "
+        "MATCH (f1)-[r:CALLS|WRITES|READS|INJECTS|DEPENDS_ON]->(f2) "
         "WHERE (t)-[:INCLUDES]->(f2) "
         "RETURN f1.fqn AS source_fqn, f2.fqn AS target_fqn, "
         "type(r) AS kind, r.confidence AS confidence, r.evidence AS evidence",
         {"fqn": fqn, "app_name": project_id},
     )
+    # Also fetch IMPLEMENTS edges in reverse (impl → interface) so the
+    # interface-to-implementation hop that the BFS followed is visible.
+    impl_records = await store.query(
+        "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f1) "
+        "MATCH (t)-[:INCLUDES]->(f2) "
+        "MATCH (f2)-[r:IMPLEMENTS]->(f1) "
+        "RETURN f2.fqn AS source_fqn, f1.fqn AS target_fqn, "
+        "type(r) AS kind, r.confidence AS confidence, r.evidence AS evidence",
+        {"fqn": fqn, "app_name": project_id},
+    )
     edges = [_record_to_edge(r) for r in edge_records]
+    edges.extend(_record_to_edge(r) for r in impl_records)
 
     txn_node = txn_result["n"]
     return TransactionDetailResponse(
@@ -406,7 +415,143 @@ async def get_transaction(
     )
 
 
-# ── Endpoint 7: Code Viewer ─────────────────────────────────────────────
+# ── Endpoint 7: Architecture View ──────────────────────────────────────
+
+
+@router.get("/{project_id}/architecture", response_model=ArchitectureResponse)
+async def get_architecture(project_id: str) -> ArchitectureResponse:
+    """Return the architecture view: technology layers, components, and links."""
+    store = get_graph_store()
+
+    # 1. Get APPLICATION node metadata
+    app_result = await store.query_single(
+        "MATCH (a) WHERE a.app_name = $app_name AND a.kind = 'APPLICATION' RETURN a",
+        {"app_name": project_id},
+    )
+    languages: list[str] = []
+    frameworks: list[str] = []
+    if app_result:
+        a = app_result["a"]
+        languages = a.get("detected_languages", a.get("languages", []))
+        frameworks = a.get("detected_frameworks", a.get("frameworks", []))
+
+    # 2. Get Layer -> CONTAINS -> Component hierarchy
+    layer_records = await store.query(
+        "MATCH (l) WHERE l.app_name = $app_name AND l.kind = 'LAYER' "
+        "OPTIONAL MATCH (l)-[:CONTAINS]->(t) "
+        "WHERE t.kind = 'COMPONENT' AND t.type = 'technology' "
+        "RETURN l, collect(t) AS techs ORDER BY l.name",
+        {"app_name": project_id},
+    )
+
+    layers: list[ArchitectureLayerResponse] = []
+    for r in layer_records:
+        l_node = r["l"]
+        techs_raw = r["techs"]
+
+        tech_nodes: list[TechnologyNodeResponse] = []
+        total_classes = 0
+        total_loc = 0
+
+        for t in techs_raw:
+            if t is None:
+                continue
+            class_count = t.get("class_count", 0)
+            loc_total = t.get("loc_total", 0)
+            total_classes += class_count
+            total_loc += loc_total
+
+            tech_nodes.append(
+                TechnologyNodeResponse(
+                    fqn=t.get("fqn", ""),
+                    name=t.get("name", ""),
+                    category=t.get("category", ""),
+                    language=t.get("language"),
+                    layer=t.get("layer", ""),
+                    class_count=class_count,
+                    loc_total=loc_total,
+                    endpoint_count=t.get("endpoint_count", 0),
+                    table_count=t.get("table_count", 0),
+                    properties={
+                        k: v
+                        for k, v in t.items()
+                        if k
+                        not in {
+                            "fqn",
+                            "name",
+                            "kind",
+                            "category",
+                            "language",
+                            "layer",
+                            "class_count",
+                            "loc_total",
+                            "endpoint_count",
+                            "table_count",
+                            "app_name",
+                            "type",
+                        }
+                    },
+                )
+            )
+
+        layers.append(
+            ArchitectureLayerResponse(
+                fqn=l_node.get("fqn", ""),
+                name=l_node.get("name", ""),
+                technologies=tech_nodes,
+                total_classes=total_classes,
+                total_loc=total_loc,
+            )
+        )
+
+    # 3. Aggregate class-level edges up to Component pairs
+    link_records = await store.query(
+        "MATCH (t1 {app_name: $app_name, "
+        "kind: 'COMPONENT', type: 'technology'})"
+        "-[:CONTAINS]->(c1)"
+        "-[r:CALLS|DEPENDS_ON|INJECTS|READS|"
+        "WRITES|CALLS_API|MAPS_TO]->"
+        "(c2)<-[:CONTAINS]-"
+        "(t2 {app_name: $app_name, "
+        "kind: 'COMPONENT', type: 'technology'}) "
+        "WHERE t1 <> t2 "
+        "RETURN t1.fqn AS source, "
+        "t2.fqn AS target, "
+        "type(r) AS kind, count(*) AS cnt",
+        {"app_name": project_id},
+    )
+
+    # Merge by (source, target) -> aggregate weight and collect kinds
+    link_map: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    for r in link_records:
+        pair = (r["source"], r["target"])
+        link_map[pair][r["kind"]] += r["cnt"]
+
+    links: list[ArchitectureLinkResponse] = []
+    for (src, tgt), kinds_map in sorted(
+        link_map.items(), key=lambda x: -sum(x[1].values())
+    ):
+        links.append(
+            ArchitectureLinkResponse(
+                source=src,
+                target=tgt,
+                weight=sum(kinds_map.values()),
+                kinds=sorted(kinds_map.keys()),
+            )
+        )
+
+    return ArchitectureResponse(
+        app_name=project_id,
+        languages=languages,
+        frameworks=frameworks,
+        layers=layers,
+        links=links,
+    )
+
+
+# ── Endpoint 8: Code Viewer ─────────────────────────────────────────────
 
 
 @router.get("/{project_id}/code", response_model=CodeViewerResponse)
@@ -419,9 +564,7 @@ async def get_code(
 ) -> CodeViewerResponse:
     """Read source code from the project's filesystem."""
     # Look up the project to get source_path
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
+    result = await session.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(
@@ -454,9 +597,7 @@ async def get_code(
         )
 
     # Read the file
-    async with aiofiles.open(
-        full_path, encoding="utf-8", errors="replace"
-    ) as f:
+    async with aiofiles.open(full_path, encoding="utf-8", errors="replace") as f:
         all_lines = await f.readlines()
 
     total_lines = len(all_lines)

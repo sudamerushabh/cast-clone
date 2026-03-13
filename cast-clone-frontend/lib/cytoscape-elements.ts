@@ -1,5 +1,6 @@
 import type cytoscape from "cytoscape"
 import type {
+  ArchitectureResponse,
   GraphNodeResponse,
   GraphEdgeResponse,
   ModuleResponse,
@@ -159,6 +160,86 @@ export function edgesToElements(
   return elements
 }
 
+function _buildTechSubtitle(
+  classCount: number,
+  endpointCount: number,
+  locTotal: number,
+  tableCount: number
+): string {
+  const parts: string[] = []
+  if (classCount > 0) parts.push(`${classCount} classes`)
+  if (endpointCount > 0) parts.push(`${endpointCount} endpoints`)
+  if (tableCount > 0) parts.push(`${tableCount} tables`)
+  if (locTotal > 0) parts.push(`${locTotal} LOC`)
+  return parts.join(" · ")
+}
+
+export function architectureToElements(
+  data: ArchitectureResponse
+): ElementDefinition[] {
+  const elements: ElementDefinition[] = []
+
+  for (const layer of data.layers) {
+    // Layer node (compound parent)
+    elements.push({
+      group: "nodes",
+      data: {
+        id: layer.fqn,
+        label: layer.name,
+        kind: "LAYER",
+        drillable: false,
+        drillLevel: undefined,
+      },
+    })
+
+    // Technology nodes (children of layer)
+    for (const tech of layer.technologies) {
+      elements.push({
+        group: "nodes",
+        data: {
+          id: tech.fqn,
+          label: tech.name,
+          kind: "COMPONENT",
+          parent: layer.fqn,
+          category: tech.category,
+          language: tech.language ?? undefined,
+          layer: layer.name,
+          loc: tech.loc_total,
+          subtitle: _buildTechSubtitle(
+            tech.class_count,
+            tech.endpoint_count,
+            tech.loc_total,
+            tech.table_count
+          ),
+          classCount: tech.class_count,
+          endpointCount: tech.endpoint_count,
+          tableCount: tech.table_count,
+          drillable: tech.class_count > 0,
+          drillLevel: "module",
+        },
+      })
+    }
+  }
+
+  // Links between technology nodes
+  for (const link of data.links) {
+    const kindLabel = link.kinds.join(", ")
+    elements.push({
+      group: "edges",
+      data: {
+        id: `arch-edge-${link.source}-${link.target}`,
+        source: link.source,
+        target: link.target,
+        weight: link.weight,
+        kind: link.kinds[0] ?? "DEPENDS_ON",
+        label: link.weight > 1 ? `${kindLabel} (${link.weight})` : kindLabel,
+      },
+    })
+  }
+
+  return elements
+}
+
 export function getPerformanceTier(
   nodeCount: number
 ): "full" | "no-animation" | "simplified" | "force-drilldown" {
@@ -243,7 +324,12 @@ export function transactionToElements(
         label: edge.kind,
         weight: 1,
       },
-      classes: edge.kind === "WRITES" || edge.kind === "READS" ? "data-edge" : "call-edge",
+      classes:
+        edge.kind === "WRITES" || edge.kind === "READS"
+          ? "data-edge"
+          : edge.kind === "IMPLEMENTS"
+            ? "impl-edge"
+            : "call-edge",
     })
   }
 

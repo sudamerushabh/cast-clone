@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { ChevronDown, Loader2, Route, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import type { TransactionSummary } from "@/lib/types"
 
@@ -23,21 +23,25 @@ export function TransactionSelector({
 }: TransactionSelectorProps) {
   const [open, setOpen] = React.useState(false)
   const [filter, setFilter] = React.useState("")
-  const containerRef = React.useRef<HTMLDivElement>(null)
+  const buttonRef = React.useRef<HTMLButtonElement>(null)
+  const [dropdownPos, setDropdownPos] = React.useState({ top: 0, left: 0 })
 
+  // Position the dropdown relative to the button when opening
   React.useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false)
-      }
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left })
     }
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside)
-      return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [open])
+
+  // Close on Escape
+  React.useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false)
     }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
   }, [open])
 
   const filtered = React.useMemo(() => {
@@ -54,8 +58,9 @@ export function TransactionSelector({
   const selectedTxn = transactions.find((t) => t.fqn === selectedFqn)
 
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <Button
+        ref={buttonRef}
         variant="outline"
         size="default"
         className="w-72 justify-between gap-2"
@@ -75,56 +80,67 @@ export function TransactionSelector({
         <ChevronDown className="size-3.5 shrink-0 opacity-50" />
       </Button>
 
-      {open ? (
-        <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-md border bg-popover shadow-lg">
-          <div className="border-b p-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter transactions..."
-                className="h-7 pl-7 text-xs"
-                autoFocus
-              />
+      {open && typeof document !== "undefined" && createPortal(
+        <>
+          {/* Invisible backdrop to dismiss on outside click */}
+          <div
+            className="fixed inset-0 z-[10000]"
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="fixed z-[10001] w-[480px] rounded-md border bg-popover shadow-lg"
+            style={{ top: dropdownPos.top, left: dropdownPos.left }}
+          >
+            <div className="border-b p-2">
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter transactions..."
+                  className="h-7 pl-7 text-xs"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  {transactions.length === 0
+                    ? "No transactions discovered"
+                    : "No matching transactions"}
+                </div>
+              ) : (
+                <div className="p-1">
+                  {filtered.map((txn) => (
+                    <button
+                      key={txn.fqn}
+                      className={cn(
+                        "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                        txn.fqn === selectedFqn && "bg-accent"
+                      )}
+                      onClick={() => {
+                        onSelect(txn.fqn)
+                        setOpen(false)
+                        setFilter("")
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{txn.name}</div>
+                        <div className="mt-0.5 truncate text-muted-foreground">
+                          {txn.kind} &middot; {txn.fqn}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-
-          <ScrollArea className="max-h-72">
-            {filtered.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                {transactions.length === 0
-                  ? "No transactions discovered"
-                  : "No matching transactions"}
-              </div>
-            ) : (
-              <div className="p-1">
-                {filtered.map((txn) => (
-                  <button
-                    key={txn.fqn}
-                    className={cn(
-                      "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
-                      txn.fqn === selectedFqn && "bg-accent"
-                    )}
-                    onClick={() => {
-                      onSelect(txn.fqn)
-                      setOpen(false)
-                      setFilter("")
-                    }}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{txn.name}</div>
-                      <div className="mt-0.5 truncate text-muted-foreground">
-                        {txn.kind} &middot; {txn.fqn}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </div>
-      ) : null}
+        </>,
+        document.body
+      )}
     </div>
   )
 }

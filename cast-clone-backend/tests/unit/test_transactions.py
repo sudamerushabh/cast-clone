@@ -219,8 +219,8 @@ class TestTraceTransactionFlow:
         assert flow.end_point_types == []
         assert flow.terminal_fqns == []
 
-    def test_only_follows_calls_edges(self):
-        """BFS only follows CALLS edges, not CONTAINS."""
+    def test_does_not_follow_contains_edges(self):
+        """BFS does not follow CONTAINS edges."""
         g = SymbolGraph()
         g.add_node(_fn("A.fn"))
         g.add_node(_fn("B.fn"))
@@ -232,6 +232,33 @@ class TestTraceTransactionFlow:
 
         assert len(flow.visited_fqns) == 2
         assert "C.fn" not in flow.visited_fqns
+
+    def test_follows_injects_edges(self):
+        """BFS follows INJECTS edges (Spring DI)."""
+        g = SymbolGraph()
+        g.add_node(_fn("A.fn"))
+        g.add_node(_fn("B.fn"))
+        g.add_node(_fn("C.fn"))
+        g.add_edge(_edge("A.fn", "B.fn", EdgeKind.INJECTS))
+        g.add_edge(_edge("B.fn", "C.fn", EdgeKind.CALLS))
+
+        flow = trace_transaction_flow("A.fn", g, max_depth=15)
+
+        assert len(flow.visited_fqns) == 3
+        assert "B.fn" in flow.visited_fqns
+        assert "C.fn" in flow.visited_fqns
+
+    def test_follows_depends_on_edges(self):
+        """BFS follows DEPENDS_ON edges."""
+        g = SymbolGraph()
+        g.add_node(_fn("A.fn"))
+        g.add_node(_fn("B.fn"))
+        g.add_edge(_edge("A.fn", "B.fn", EdgeKind.DEPENDS_ON))
+
+        flow = trace_transaction_flow("A.fn", g, max_depth=15)
+
+        assert len(flow.visited_fqns) == 2
+        assert "B.fn" in flow.visited_fqns
 
     def test_follows_implements_edges_in_reverse(self):
         """BFS follows IMPLEMENTS edges in reverse to find impl classes."""

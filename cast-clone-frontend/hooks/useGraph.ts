@@ -8,12 +8,14 @@ import {
   getModuleClasses,
   getClassMethods,
   getAggregatedEdges,
+  getArchitecture,
 } from "@/lib/api"
 import {
   modulesToElements,
   classesToElements,
   methodsToElements,
   aggregatedEdgesToClassElements,
+  architectureToElements,
   getPerformanceTier,
 } from "@/lib/cytoscape-elements"
 
@@ -35,6 +37,7 @@ interface UseGraphReturn {
   drilldownPath: DrilldownEntry[]
   performanceTier: "full" | "no-animation" | "simplified" | "force-drilldown"
   layoutMode: LayoutMode
+  loadArchitecture: (projectId: string) => Promise<void>
   loadModules: (projectId: string) => Promise<void>
   drillIntoModule: (
     projectId: string,
@@ -90,6 +93,39 @@ export function useGraph(): UseGraphReturn {
       setElements(els)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load modules")
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  const loadArchitecture = useCallback(async (projectId: string) => {
+    const cacheKey = `architecture:${projectId}`
+
+    setIsLoading(true)
+    setError(null)
+    setDrilldownPath([])
+    setLayoutMode("full")
+
+    try {
+      if (cache.current.has(cacheKey)) {
+        const cached = cache.current.get(cacheKey)!
+        setElements(cached)
+        setPerformanceTier(
+          getPerformanceTier(cached.filter((e) => e.group === "nodes").length)
+        )
+        return
+      }
+
+      const archResp = await getArchitecture(projectId)
+      const els = architectureToElements(archResp)
+
+      cache.current.set(cacheKey, els)
+
+      const nodeCount = els.filter((e) => e.group === "nodes").length
+      setPerformanceTier(getPerformanceTier(nodeCount))
+      setElements(els)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load architecture")
     } finally {
       setIsLoading(false)
     }
@@ -223,6 +259,7 @@ export function useGraph(): UseGraphReturn {
     drilldownPath,
     performanceTier,
     layoutMode,
+    loadArchitecture,
     loadModules,
     drillIntoModule,
     drillIntoClass,

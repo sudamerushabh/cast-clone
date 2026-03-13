@@ -2,6 +2,7 @@ import type {
   AnalysisStatusResponse,
   AnalysisTriggerResponse,
   AggregatedEdgeListResponse,
+  ArchitectureResponse,
   BranchListResponse,
   CircularDependenciesResponse,
   ClassListResponse,
@@ -207,6 +208,16 @@ export async function getAggregatedEdges(
   }
   return apiFetch<AggregatedEdgeListResponse>(
     `/api/v1/graph-views/${projectId}/edges/aggregated?${params.toString()}`,
+  );
+}
+
+// ─── Architecture view endpoint (Phase 2) ───────────────────────────────────
+
+export async function getArchitecture(
+  projectId: string,
+): Promise<ArchitectureResponse> {
+  return apiFetch<ArchitectureResponse>(
+    `/api/v1/graph-views/${projectId}/architecture`,
   );
 }
 

@@ -14,6 +14,7 @@ if it fails, the pipeline continues with a warning.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
@@ -38,6 +39,7 @@ async def enrich_graph(context: AnalysisContext) -> None:
     1. Compute fan-in/fan-out metrics on CLASS nodes
     2. Aggregate class-level DEPENDS_ON edges from method CALLS
     3. Aggregate module-level IMPORTS edges from class DEPENDS_ON
+    3b. Apply layer and framework assignments from plugins to CLASS nodes
     4. Assign architectural layers (create Layer nodes + CONTAINS edges)
 
     Note: Community detection moved to Stage 10 (GDS Louvain).
@@ -80,6 +82,15 @@ async def enrich_graph(context: AnalysisContext) -> None:
         context.warnings.append(msg)
         logger.warning("enricher.imports.failed", error=str(exc))
 
+    # Step 3b: Apply layer + framework assignments from plugins to CLASS nodes
+    try:
+        applied = _apply_plugin_assignments(context)
+        logger.info("enricher.apply_assignments.done", classes_updated=applied)
+    except Exception as exc:
+        msg = f"Plugin assignment application failed: {exc}"
+        context.warnings.append(msg)
+        logger.warning("enricher.apply_assignments.failed", error=str(exc))
+
     # Step 4: Architectural layers
     try:
         layer_count = assign_architectural_layers(graph, app_name=app_name)
@@ -88,6 +99,15 @@ async def enrich_graph(context: AnalysisContext) -> None:
         msg = f"Layer assignment failed: {exc}"
         context.warnings.append(msg)
         logger.warning("enricher.layers.failed", error=str(exc))
+
+    # Step 5: Technology nodes (architecture view)
+    try:
+        tech_count = create_technology_nodes(graph, app_name=app_name)
+        logger.info("enricher.technology_nodes.done", tech_nodes_created=tech_count)
+    except Exception as exc:
+        msg = f"Technology node creation failed: {exc}"
+        context.warnings.append(msg)
+        logger.warning("enricher.technology_nodes.failed", error=str(exc))
 
     logger.info(
         "enricher.done",
@@ -288,6 +308,74 @@ def aggregate_module_imports(graph: SymbolGraph) -> int:
     return created
 
 
+# ── Step 3b: Apply Plugin Assignments ─────────────────────
+
+
+# Annotation -> framework key mapping for inferring framework from class annotations
+_ANNOTATION_TO_FRAMEWORK: dict[str, str] = {
+    "Component": "spring-boot",
+    "Service": "spring-boot",
+    "Repository": "spring-data-jpa",
+    "Controller": "spring-web",
+    "RestController": "spring-web",
+    "Configuration": "spring-boot",
+    "Bean": "spring-boot",
+    "Entity": "hibernate",
+    "Table": "hibernate",
+    "MappedSuperclass": "hibernate",
+    "Embeddable": "hibernate",
+    "RequestMapping": "spring-web",
+    "GetMapping": "spring-web",
+    "PostMapping": "spring-web",
+    "PutMapping": "spring-web",
+    "DeleteMapping": "spring-web",
+    "PatchMapping": "spring-web",
+}
+
+
+def _apply_plugin_assignments(context: AnalysisContext) -> int:
+    """Apply layer and framework assignments from plugins to CLASS node properties.
+
+    Plugins compute ``layer_assignments`` (fqn -> layer name) during Stage 5
+    and store them in ``context.layer_assignments``. This function writes those
+    assignments to ``node.properties["layer"]`` on CLASS/INTERFACE nodes.
+
+    Also infers ``node.properties["framework"]`` from class annotations using
+    ``_ANNOTATION_TO_FRAMEWORK``.
+
+    Returns the number of nodes updated.
+    """
+    graph = context.graph
+    updated = 0
+
+    # Apply layer assignments from plugins
+    for fqn, layer_name in context.layer_assignments.items():
+        node = graph.get_node(fqn)
+        if node is not None and node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+            if "layer" not in node.properties:
+                node.properties["layer"] = layer_name
+                updated += 1
+
+    # Infer framework from annotations for all CLASS/INTERFACE nodes
+    for node in graph.nodes.values():
+        if node.kind not in (NodeKind.CLASS, NodeKind.INTERFACE):
+            continue
+        if node.properties.get("framework"):
+            continue  # already set
+
+        annotations = node.properties.get("annotations", [])
+        for ann in annotations:
+            fw = _ANNOTATION_TO_FRAMEWORK.get(ann)
+            if fw:
+                node.properties["framework"] = fw
+                if "layer" not in node.properties and fw in _TECHNOLOGY_MAP:
+                    node.properties["layer"] = _TECHNOLOGY_MAP[fw].layer_hint
+                    updated += 1
+                break
+
+    return updated
+
+
 # ── Step 4: Architectural Layer Assignment ───────────────
 
 
@@ -340,6 +428,292 @@ def assign_architectural_layers(graph: SymbolGraph, app_name: str) -> int:
 
     return len(layer_members)
 
+
+# ── Step 5: Technology Nodes (Architecture View) ─────────
+
+
+@dataclass(frozen=True)
+class _TechnologyInfo:
+    display: str
+    category: str
+    language: str
+    layer_hint: str
+
+
+_TECHNOLOGY_MAP: dict[str, _TechnologyInfo] = {
+    "spring-boot": _TechnologyInfo(
+        "Spring Boot", "di_container", "java", "Business Logic"
+    ),
+    "spring-web": _TechnologyInfo(
+        "Spring Web", "web_framework", "java", "Presentation"
+    ),
+    "spring-data-jpa": _TechnologyInfo("Spring Data JPA", "orm", "java", "Data Access"),
+    "hibernate": _TechnologyInfo("Hibernate", "orm", "java", "Data Access"),
+    "fastapi": _TechnologyInfo("FastAPI", "web_framework", "python", "Presentation"),
+    "django": _TechnologyInfo("Django", "web_framework", "python", "Presentation"),
+    "django-drf": _TechnologyInfo(
+        "Django REST Framework", "web_framework", "python", "Presentation"
+    ),
+    "django-orm": _TechnologyInfo("Django ORM", "orm", "python", "Data Access"),
+    "django-settings": _TechnologyInfo(
+        "Django Settings", "configuration", "python", "Configuration"
+    ),
+    "sqlalchemy": _TechnologyInfo("SQLAlchemy", "orm", "python", "Data Access"),
+    "react": _TechnologyInfo(
+        "React", "frontend_framework", "typescript", "Presentation"
+    ),
+    "angular": _TechnologyInfo(
+        "Angular", "frontend_framework", "typescript", "Presentation"
+    ),
+    "express": _TechnologyInfo(
+        "Express.js", "web_framework", "javascript", "Presentation"
+    ),
+    "nestjs": _TechnologyInfo("NestJS", "web_framework", "typescript", "Presentation"),
+    "aspnet": _TechnologyInfo(
+        "ASP.NET Core", "web_framework", "csharp", "Presentation"
+    ),
+    "entity-framework": _TechnologyInfo(
+        "Entity Framework", "orm", "csharp", "Data Access"
+    ),
+}
+
+_LANGUAGE_DISPLAY: dict[str, str] = {
+    "java": "Java",
+    "python": "Python",
+    "typescript": "TypeScript",
+    "javascript": "JavaScript",
+    "csharp": "C#",
+    "go": "Go",
+    "kotlin": "Kotlin",
+    "scala": "Scala",
+    "ruby": "Ruby",
+    "rust": "Rust",
+}
+
+
+def create_technology_nodes(graph: SymbolGraph, app_name: str) -> int:
+    """Create COMPONENT nodes representing technologies, grouped under Layer nodes.
+
+    Inspects the APPLICATION node's ``detected_frameworks`` list and class-level
+    ``framework`` properties to group classes by (layer, technology). Creates
+    technology COMPONENT nodes with ``Layer → CONTAINS → Component → CONTAINS → Class``
+    edges.
+
+    Returns the number of technology COMPONENT nodes created.
+    """
+    # Find APPLICATION node to get detected frameworks
+    app_node = None
+    for node in graph.nodes.values():
+        if node.kind == NodeKind.APPLICATION:
+            app_node = node
+            break
+
+    detected_frameworks: list[str] = []
+    if app_node is not None:
+        detected_frameworks = app_node.properties.get(
+            "detected_frameworks",
+            app_node.properties.get("frameworks", []),
+        )
+
+    # Group classes by (layer, tech_key)
+    # tech_key is either a framework key or "lang:{language}"
+    tech_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+
+    for fqn, node in graph.nodes.items():
+        if node.kind != NodeKind.CLASS:
+            continue
+
+        layer = node.properties.get("layer")
+        framework = node.properties.get("framework")
+
+        if framework and framework in _TECHNOLOGY_MAP:
+            info = _TECHNOLOGY_MAP[framework]
+            effective_layer = layer or info.layer_hint
+            tech_groups[(effective_layer, framework)].append(fqn)
+        elif layer:
+            # Fallback: group by language
+            lang = node.language or "unknown"
+            tech_key = f"lang:{lang}"
+            tech_groups[(layer, tech_key)].append(fqn)
+
+    # Find existing Layer nodes
+    layer_nodes: dict[str, str] = {}  # layer_name -> layer_fqn
+    for fqn, node in graph.nodes.items():
+        if node.kind == NodeKind.LAYER:
+            layer_nodes[node.name] = fqn
+
+    # Count API endpoints per framework
+    endpoint_counts: dict[str, int] = defaultdict(int)
+    for node in graph.nodes.values():
+        if node.kind == NodeKind.API_ENDPOINT:
+            fw = node.properties.get("framework", "")
+            if fw:
+                endpoint_counts[fw] += 1
+
+    # Handle TABLE nodes -> database component
+    table_nodes: list[str] = []
+    for fqn, node in graph.nodes.items():
+        if node.kind == NodeKind.TABLE:
+            table_nodes.append(fqn)
+
+    if not tech_groups and not table_nodes:
+        return 0
+
+    created = 0
+
+    # Create technology COMPONENT nodes
+    for (layer_name, tech_key), member_fqns in tech_groups.items():
+        if tech_key in _TECHNOLOGY_MAP:
+            info = _TECHNOLOGY_MAP[tech_key]
+            display_name = info.display
+            category = info.category
+            language = info.language
+        else:
+            # lang:{language} fallback
+            lang = tech_key.removeprefix("lang:")
+            display_name = f"{_LANGUAGE_DISPLAY.get(lang, lang.title())} Classes"
+            category = "language_classes"
+            language = lang
+
+        comp_fqn = f"tech:{app_name}:{layer_name}:{tech_key}"
+
+        # Compute LOC total (loc is a top-level GraphNode attribute)
+        loc_total = 0
+        for cfqn in member_fqns:
+            cnode = graph.get_node(cfqn)
+            if cnode and cnode.loc:
+                loc_total += cnode.loc
+
+        comp_node = GraphNode(
+            fqn=comp_fqn,
+            name=display_name,
+            kind=NodeKind.COMPONENT,
+            language=language,
+            properties={
+                "type": "technology",
+                "category": category,
+                "layer": layer_name,
+                "app_name": app_name,
+                "class_count": len(member_fqns),
+                "loc_total": loc_total,
+                "endpoint_count": endpoint_counts.get(tech_key, 0),
+                "table_count": 0,
+            },
+        )
+        graph.add_node(comp_node)
+        created += 1
+
+        # Layer -> CONTAINS -> Component
+        if layer_name in layer_nodes:
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=layer_nodes[layer_name],
+                    target_fqn=comp_fqn,
+                    kind=EdgeKind.CONTAINS,
+                )
+            )
+
+        # Component -> CONTAINS -> Class
+        for class_fqn in member_fqns:
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=comp_fqn,
+                    target_fqn=class_fqn,
+                    kind=EdgeKind.CONTAINS,
+                )
+            )
+
+    # Create database component if TABLE nodes exist
+    if table_nodes:
+        db_engine = _infer_database_engine(graph, detected_frameworks)
+        db_layer = "Data Access"
+        db_tech_key = f"db:{db_engine}"
+        db_fqn = f"tech:{app_name}:{db_layer}:{db_tech_key}"
+
+        db_node = GraphNode(
+            fqn=db_fqn,
+            name=_normalize_db_engine(db_engine),
+            kind=NodeKind.COMPONENT,
+            properties={
+                "type": "technology",
+                "category": "database",
+                "layer": db_layer,
+                "app_name": app_name,
+                "class_count": 0,
+                "loc_total": 0,
+                "endpoint_count": 0,
+                "table_count": len(table_nodes),
+            },
+        )
+        graph.add_node(db_node)
+        created += 1
+
+        if db_layer in layer_nodes:
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=layer_nodes[db_layer],
+                    target_fqn=db_fqn,
+                    kind=EdgeKind.CONTAINS,
+                )
+            )
+
+        for table_fqn in table_nodes:
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=db_fqn,
+                    target_fqn=table_fqn,
+                    kind=EdgeKind.CONTAINS,
+                )
+            )
+
+    return created
+
+
+def _infer_database_engine(graph: SymbolGraph, detected_frameworks: list[str]) -> str:
+    """Infer the database engine from TABLE properties or framework hints."""
+    for node in graph.nodes.values():
+        if node.kind == NodeKind.TABLE:
+            engine = node.properties.get("engine")
+            if engine:
+                return str(engine)
+
+    # Check for Django config hints
+    for node in graph.nodes.values():
+        if node.kind == NodeKind.CONFIG_ENTRY:
+            if "database" in node.name.lower() and "engine" in node.name.lower():
+                val = node.properties.get("value", "")
+                if val:
+                    return str(val)
+
+    # Framework-based hints
+    if any("hibernate" in fw for fw in detected_frameworks):
+        return "postgresql"
+    if any("sqlalchemy" in fw for fw in detected_frameworks):
+        return "postgresql"
+    if any("entity-framework" in fw for fw in detected_frameworks):
+        return "sqlserver"
+
+    return "database"
+
+
+def _normalize_db_engine(engine: str) -> str:
+    """Convert raw engine string to a display name."""
+    engine_lower = engine.lower()
+    if "postgres" in engine_lower or "psycopg" in engine_lower:
+        return "PostgreSQL"
+    if "mysql" in engine_lower or "mariadb" in engine_lower:
+        return "MySQL"
+    if "sqlite" in engine_lower:
+        return "SQLite"
+    if "oracle" in engine_lower:
+        return "Oracle"
+    if "sqlserver" in engine_lower or "mssql" in engine_lower:
+        return "SQL Server"
+    if "mongo" in engine_lower:
+        return "MongoDB"
+    if engine == "database":
+        return "Database"
+    return engine.title()
 
 
 # ── Internal Helpers ─────────────────────────────────────

@@ -188,6 +188,44 @@ export interface CodeViewerResponse {
 export type ViewMode = "architecture" | "dependency" | "transaction";
 export type DrilldownLevel = "module" | "class" | "method";
 
+// ── Architecture View types ──────────────────────────────
+
+export interface TechnologyNode {
+  fqn: string;
+  name: string;
+  category: string;
+  language: string | null;
+  layer: string;
+  class_count: number;
+  loc_total: number;
+  endpoint_count: number;
+  table_count: number;
+  properties: Record<string, unknown>;
+}
+
+export interface ArchitectureLayer {
+  fqn: string;
+  name: string;
+  technologies: TechnologyNode[];
+  total_classes: number;
+  total_loc: number;
+}
+
+export interface ArchitectureLink {
+  source: string;
+  target: string;
+  weight: number;
+  kinds: string[];
+}
+
+export interface ArchitectureResponse {
+  app_name: string;
+  languages: string[];
+  frameworks: string[];
+  layers: ArchitectureLayer[];
+  links: ArchitectureLink[];
+}
+
 // ── Phase 3: Impact Analysis ────────────────────────────
 
 export interface AffectedNode {

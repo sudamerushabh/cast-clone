@@ -5,7 +5,7 @@ import CytoscapeComponent from "react-cytoscapejs"
 import type cytoscape from "cytoscape"
 
 import { ensureCytoscapeExtensions } from "@/lib/cytoscape-setup"
-import { defaultStylesheet, layerStylesheet } from "@/lib/graph-styles"
+import { defaultStylesheet, layerStylesheet, architectureStylesheet } from "@/lib/graph-styles"
 import type { ViewMode } from "@/lib/types"
 import type { LayoutMode } from "@/hooks/useGraph"
 
@@ -47,7 +47,7 @@ interface GraphViewProps {
   viewMode: ViewMode
   performanceTier: "full" | "no-animation" | "simplified" | "force-drilldown"
   layoutMode?: LayoutMode
-  colorBy?: "kind" | "layer"
+  colorBy?: "kind" | "layer" | "architecture"
   onNodeSelect?: (nodeData: Record<string, unknown>) => void
   onNodeDrillDown?: (fqn: string, name: string, level: string) => void
   onCyInit?: (cy: cytoscape.Core) => void
@@ -71,7 +71,7 @@ export function GraphView({
   const parentPositionsRef = useRef<Map<string, { x: number; y: number; w: number; h: number }>>(new Map())
   const dblTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const stylesheet = colorBy === "layer" ? layerStylesheet : defaultStylesheet
+  const stylesheet = colorBy === "architecture" ? architectureStylesheet : colorBy === "layer" ? layerStylesheet : defaultStylesheet
 
   const handleCyRef = useCallback(
     (cy: cytoscape.Core) => {

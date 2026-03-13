@@ -122,6 +122,45 @@ def _find_descendants_by_type(node: Node, type_name: str) -> list[Node]:
     return results
 
 
+def _compute_loc(node: Node) -> int:
+    """Compute lines of code for a tree-sitter node."""
+    return node.end_point[0] - node.start_point[0] + 1
+
+
+_COMPLEXITY_NODE_TYPES: set[str] = {
+    "if_statement",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "ternary_expression",
+}
+
+
+def _compute_complexity(node: Node) -> int:
+    """Compute cyclomatic complexity for a function body."""
+    complexity = 1
+
+    def _visit(n: Node) -> None:
+        nonlocal complexity
+        if n.type in _COMPLEXITY_NODE_TYPES:
+            complexity += 1
+        elif n.type == "switch_case":
+            complexity += 1
+        elif n.type == "binary_expression":
+            op_node = n.child_by_field_name("operator")
+            if op_node is not None and op_node.text and op_node.text.decode("utf-8") in ("&&", "||"):
+                complexity += 1
+        for child in n.children:
+            _visit(child)
+
+    body = node.child_by_field_name("body")
+    if body is not None:
+        _visit(body)
+    return complexity
+
+
 class TypeScriptExtractor:
     """Extracts structural information from TypeScript/JavaScript files.
 
@@ -535,6 +574,7 @@ class TypeScriptExtractor:
                 path=file_path,
                 line=class_node.start_point[0] + 1,
                 end_line=class_node.end_point[0] + 1,
+                loc=_compute_loc(class_node),
                 properties=properties,
             )
             nodes.append(graph_node)
@@ -634,6 +674,8 @@ class TypeScriptExtractor:
                 path=file_path,
                 line=child.start_point[0] + 1,
                 end_line=child.end_point[0] + 1,
+                loc=_compute_loc(child),
+                complexity=_compute_complexity(child),
                 visibility=visibility,
                 properties=properties,
             )
@@ -714,6 +756,8 @@ class TypeScriptExtractor:
                 path=file_path,
                 line=func_node.start_point[0] + 1,
                 end_line=func_node.end_point[0] + 1,
+                loc=_compute_loc(func_node),
+                complexity=_compute_complexity(func_node),
                 properties=properties,
             )
             nodes.append(graph_node)
@@ -786,6 +830,8 @@ class TypeScriptExtractor:
                     path=file_path,
                     line=declarator.start_point[0] + 1,
                     end_line=declarator.end_point[0] + 1,
+                    loc=_compute_loc(arrow_node),
+                    complexity=_compute_complexity(arrow_node),
                     properties=properties,
                 )
                 nodes.append(graph_node)
@@ -850,6 +896,7 @@ class TypeScriptExtractor:
                 path=file_path,
                 line=iface_node.start_point[0] + 1,
                 end_line=iface_node.end_point[0] + 1,
+                loc=_compute_loc(iface_node),
                 properties=properties,
             )
             nodes.append(graph_node)

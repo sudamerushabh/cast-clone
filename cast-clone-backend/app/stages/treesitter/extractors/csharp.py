@@ -186,6 +186,44 @@ def _get_return_type(node: Node, source: bytes) -> str | None:
     return None
 
 
+def _compute_loc(node: Node) -> int:
+    """Compute lines of code for a tree-sitter node."""
+    return node.end_point[0] - node.start_point[0] + 1
+
+
+_COMPLEXITY_NODE_TYPES: set[str] = {
+    "if_statement",
+    "for_statement",
+    "for_each_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "conditional_expression",
+    "case_switch_label",
+}
+
+
+def _compute_complexity(node: Node) -> int:
+    """Compute cyclomatic complexity for a method body."""
+    complexity = 1
+
+    def _visit(n: Node) -> None:
+        nonlocal complexity
+        if n.type in _COMPLEXITY_NODE_TYPES:
+            complexity += 1
+        elif n.type == "binary_expression":
+            op_node = n.child_by_field_name("operator")
+            if op_node is not None and op_node.text and op_node.text.decode("utf-8") in ("&&", "||"):
+                complexity += 1
+        for child in n.children:
+            _visit(child)
+
+    body = node.child_by_field_name("body")
+    if body is not None:
+        _visit(body)
+    return complexity
+
+
 def _resolve_namespace(node: Node, source: bytes) -> str:
     """Walk up the tree to find the enclosing namespace(s).
 
@@ -388,6 +426,7 @@ class CSharpExtractor:
             line=class_node.start_point[0] + 1,
             end_line=class_node.end_point[0] + 1,
             visibility=visibility,
+            loc=_compute_loc(class_node),
             properties=props,
         )
         nodes.append(node)
@@ -461,6 +500,7 @@ class CSharpExtractor:
             line=iface_node.start_point[0] + 1,
             end_line=iface_node.end_point[0] + 1,
             visibility=visibility,
+            loc=_compute_loc(iface_node),
             properties=props,
         )
         nodes.append(node)
@@ -622,6 +662,8 @@ class CSharpExtractor:
             line=method_node.start_point[0] + 1,
             end_line=method_node.end_point[0] + 1,
             visibility=visibility,
+            loc=_compute_loc(method_node),
+            complexity=_compute_complexity(method_node),
             properties=props,
         )
         nodes.append(node)
@@ -681,6 +723,8 @@ class CSharpExtractor:
             line=ctor_node.start_point[0] + 1,
             end_line=ctor_node.end_point[0] + 1,
             visibility=visibility,
+            loc=_compute_loc(ctor_node),
+            complexity=_compute_complexity(ctor_node),
             properties=props,
         )
         nodes.append(node)

@@ -32,6 +32,52 @@ def _node_text(node: Node) -> str:
     return node.text.decode("utf-8")
 
 
+def _compute_loc(node: Node) -> int:
+    """Compute lines of code for a tree-sitter node (end_line - start_line + 1)."""
+    return node.end_point[0] - node.start_point[0] + 1
+
+
+# Java AST node types that contribute to cyclomatic complexity.
+_COMPLEXITY_NODE_TYPES: set[str] = {
+    "if_statement",
+    "for_statement",
+    "enhanced_for_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "ternary_expression",
+}
+
+
+def _compute_complexity(node: Node) -> int:
+    """Compute cyclomatic complexity for a method/constructor body.
+
+    Starts at 1 (base path) and increments for each branching construct:
+    if, for, enhanced_for, while, do, catch, ternary, case label, &&, ||.
+    """
+    complexity = 1
+
+    def _visit(n: Node) -> None:
+        nonlocal complexity
+        if n.type in _COMPLEXITY_NODE_TYPES:
+            complexity += 1
+        elif n.type == "switch_block_statement_group":
+            # Each case label adds a branch (but we count the group once)
+            complexity += 1
+        elif n.type == "binary_expression":
+            # Count && and || operators
+            op_node = n.child_by_field_name("operator")
+            if op_node is not None and _node_text(op_node) in ("&&", "||"):
+                complexity += 1
+        for child in n.children:
+            _visit(child)
+
+    body = node.child_by_field_name("body")
+    if body is not None:
+        _visit(body)
+    return complexity
+
+
 def _get_modifiers(node: Node) -> list[str]:
     """Extract modifier keywords from a declaration node."""
     modifiers: list[str] = []
@@ -469,6 +515,7 @@ class JavaExtractor:
                     path=file_path,
                     line=class_node.start_point[0] + 1,
                     end_line=class_node.end_point[0] + 1,
+                    loc=_compute_loc(class_node),
                     properties=properties,
                 )
             )
@@ -539,6 +586,7 @@ class JavaExtractor:
                     path=file_path,
                     line=iface_node.start_point[0] + 1,
                     end_line=iface_node.end_point[0] + 1,
+                    loc=_compute_loc(iface_node),
                     properties=properties,
                 )
             )
@@ -631,6 +679,8 @@ class JavaExtractor:
                     path=file_path,
                     line=method_node.start_point[0] + 1,
                     end_line=method_node.end_point[0] + 1,
+                    loc=_compute_loc(method_node),
+                    complexity=_compute_complexity(method_node),
                     properties=properties,
                 )
             )
@@ -688,6 +738,8 @@ class JavaExtractor:
                     path=file_path,
                     line=ctor_node.start_point[0] + 1,
                     end_line=ctor_node.end_point[0] + 1,
+                    loc=_compute_loc(ctor_node),
+                    complexity=_compute_complexity(ctor_node),
                     properties=properties,
                 )
             )

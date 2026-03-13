@@ -186,11 +186,74 @@ export function buildStylesheet(
         "line-color": "#6B7280",
         "target-arrow-color": "#6B7280",
       },
+    },
+    {
+      selector: ".impl-edge",
+      style: {
+        "line-style": "dashed" as cytoscape.Css.LineStyle,
+        "line-color": "#8B5CF6",
+        "target-arrow-color": "#8B5CF6",
+      },
+    },
+    // Path/impact overlay: dim non-path elements without blurring
+    {
+      selector: ".path-dimmed",
+      style: {
+        opacity: 0.15,
+      },
     }
   )
 
   return styles
 }
 
+const CATEGORY_COLORS: Record<string, string> = {
+  web_framework: "#3B82F6",
+  frontend_framework: "#8B5CF6",
+  di_container: "#22C55E",
+  orm: "#F97316",
+  database: "#EF4444",
+  configuration: "#6B7280",
+  language_classes: "#9CA3AF",
+  messaging: "#06B6D4",
+}
+
+export function buildArchitectureStylesheet(): cytoscape.StylesheetJsonBlock[] {
+  const styles = buildStylesheet("layer")
+
+  // Category-based colors for COMPONENT nodes
+  for (const [category, color] of Object.entries(CATEGORY_COLORS)) {
+    styles.push({
+      selector: `node[category = "${category}"]`,
+      style: { "background-color": color, "border-color": color },
+    })
+  }
+
+  // Database nodes get barrel shape
+  styles.push({
+    selector: 'node[category = "database"]',
+    style: {
+      shape: "barrel" as cytoscape.Css.NodeShape,
+      "background-color": "#EF4444",
+      "border-color": "#EF4444",
+    },
+  })
+
+  // COMPONENT nodes with subtitle
+  styles.push({
+    selector: 'node[kind = "COMPONENT"]',
+    style: {
+      width: "mapData(loc, 0, 10000, 40, 100)",
+      height: "mapData(loc, 0, 10000, 40, 100)",
+      "font-size": "12px",
+      "font-weight": "bold",
+      "text-max-width": "120px",
+    } as cytoscape.Css.Node,
+  })
+
+  return styles
+}
+
 export const defaultStylesheet = buildStylesheet("kind")
 export const layerStylesheet = buildStylesheet("layer")
+export const architectureStylesheet = buildArchitectureStylesheet()

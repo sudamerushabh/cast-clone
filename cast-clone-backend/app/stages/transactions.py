@@ -122,7 +122,10 @@ def trace_transaction_flow(
         # Continue BFS if within depth limit
         if current_depth < max_depth:
             for edge in graph.get_edges_from(current_fqn):
-                if edge.kind == EdgeKind.CALLS and edge.target_fqn not in visited:
+                if edge.target_fqn in visited:
+                    continue
+                # Follow CALLS, INJECTS (Spring DI), and DEPENDS_ON edges
+                if edge.kind in (EdgeKind.CALLS, EdgeKind.INJECTS, EdgeKind.DEPENDS_ON):
                     queue.append((edge.target_fqn, current_depth + 1))
 
             # Follow IMPLEMENTS edges in reverse: if another function implements
@@ -131,7 +134,9 @@ def trace_transaction_flow(
             # common Java pattern where a controller calls a service *interface*
             # and the real logic lives in the implementation class.
             for edge in graph.get_edges_to(current_fqn):
-                if edge.kind == EdgeKind.IMPLEMENTS and edge.source_fqn not in visited:
+                if edge.source_fqn in visited:
+                    continue
+                if edge.kind == EdgeKind.IMPLEMENTS:
                     queue.append((edge.source_fqn, current_depth))
 
     return flow

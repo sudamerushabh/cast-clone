@@ -11,6 +11,7 @@ from app.stages.enricher import (
     aggregate_module_imports,
     assign_architectural_layers,
     compute_fan_metrics,
+    create_technology_nodes,
     enrich_graph,
 )
 
@@ -418,8 +419,6 @@ class TestSingleClass:
         assert g.get_node("com.app.Lonely").properties["fan_out"] == 0
 
 
-
-
 # ── Test 9: Full Integration ─────────────────────────────
 
 
@@ -516,3 +515,192 @@ class TestEnrichGraphIntegration:
         assert len(layer_nodes) == 3
 
         # Note: Community detection moved to Stage 10 (GDS Louvain)
+
+
+# ── Test: Technology Nodes ───────────────────────────────
+
+
+def _make_app(fqn: str, frameworks: list[str] | None = None) -> GraphNode:
+    node = GraphNode(fqn=fqn, name=fqn, kind=NodeKind.APPLICATION)
+    if frameworks:
+        node.properties["detected_frameworks"] = frameworks
+    return node
+
+
+def _make_table(fqn: str, engine: str | None = None) -> GraphNode:
+    node = GraphNode(fqn=fqn, name=fqn.split(".")[-1], kind=NodeKind.TABLE)
+    if engine:
+        node.properties["engine"] = engine
+    return node
+
+
+class TestTechnologyNodes:
+    def test_framework_classes_grouped_into_tech_nodes(self):
+        """Classes with framework property are grouped into COMPONENT nodes."""
+        g = SymbolGraph()
+
+        # Layer nodes must exist (created by assign_architectural_layers)
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Presentation",
+                name="Presentation",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Business Logic",
+                name="Business Logic",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+
+        # Classes with framework hints
+        ctrl = _make_class("com.app.UserController")
+        ctrl.properties["layer"] = "Presentation"
+        ctrl.properties["framework"] = "spring-web"
+        g.add_node(ctrl)
+
+        svc = _make_class("com.app.UserService")
+        svc.properties["layer"] = "Business Logic"
+        svc.properties["framework"] = "spring-boot"
+        g.add_node(svc)
+
+        count = create_technology_nodes(g, app_name="app")
+        assert count == 2
+
+        # Check COMPONENT nodes exist
+        comp_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.COMPONENT]
+        assert len(comp_nodes) == 2
+
+        names = {n.name for n in comp_nodes}
+        assert "Spring Web" in names
+        assert "Spring Boot" in names
+
+    def test_fallback_language_classes(self):
+        """Classes with layer but no framework get grouped as language classes."""
+        g = SymbolGraph()
+
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Business Logic",
+                name="Business Logic",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+
+        cls = _make_class("com.app.Helper")
+        cls.properties["layer"] = "Business Logic"
+        cls.language = "java"
+        g.add_node(cls)
+
+        count = create_technology_nodes(g, app_name="app")
+        assert count == 1
+
+        comp = [n for n in g.nodes.values() if n.kind == NodeKind.COMPONENT][0]
+        assert comp.name == "Java Classes"
+        assert comp.properties["category"] == "language_classes"
+
+    def test_table_nodes_create_database_component(self):
+        """TABLE nodes get grouped under a database COMPONENT."""
+        g = SymbolGraph()
+
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Data Access",
+                name="Data Access",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+        g.add_node(_make_table("db.users", engine="postgresql"))
+        g.add_node(_make_table("db.orders", engine="postgresql"))
+
+        count = create_technology_nodes(g, app_name="app")
+        assert count == 1
+
+        comp = [n for n in g.nodes.values() if n.kind == NodeKind.COMPONENT][0]
+        assert comp.name == "PostgreSQL"
+        assert comp.properties["category"] == "database"
+        assert comp.properties["table_count"] == 2
+
+    def test_layer_contains_component_edges(self):
+        """Layer -> CONTAINS -> Component edges are created."""
+        g = SymbolGraph()
+
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Presentation",
+                name="Presentation",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+
+        ctrl = _make_class("com.app.Controller")
+        ctrl.properties["layer"] = "Presentation"
+        ctrl.properties["framework"] = "spring-web"
+        g.add_node(ctrl)
+
+        create_technology_nodes(g, app_name="app")
+
+        # Check Layer -> Component -> Class containment
+        layer_to_comp = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.CONTAINS
+            and e.source_fqn == "layer:app:Presentation"
+            and g.get_node(e.target_fqn) is not None
+            and g.get_node(e.target_fqn).kind == NodeKind.COMPONENT
+        ]
+        assert len(layer_to_comp) == 1
+
+        comp_fqn = layer_to_comp[0].target_fqn
+        comp_to_class = [
+            e
+            for e in g.edges
+            if e.kind == EdgeKind.CONTAINS
+            and e.source_fqn == comp_fqn
+            and e.target_fqn == "com.app.Controller"
+        ]
+        assert len(comp_to_class) == 1
+
+    def test_empty_graph_returns_zero(self):
+        """Empty graph produces no technology nodes."""
+        g = SymbolGraph()
+        count = create_technology_nodes(g, app_name="app")
+        assert count == 0
+
+    def test_loc_total_aggregated(self):
+        """LOC is summed across member classes."""
+        g = SymbolGraph()
+
+        g.add_node(
+            GraphNode(
+                fqn="layer:app:Presentation",
+                name="Presentation",
+                kind=NodeKind.LAYER,
+                properties={"app_name": "app"},
+            )
+        )
+
+        c1 = _make_class("com.app.A")
+        c1.properties["layer"] = "Presentation"
+        c1.properties["framework"] = "fastapi"
+        c1.loc = 100
+        g.add_node(c1)
+
+        c2 = _make_class("com.app.B")
+        c2.properties["layer"] = "Presentation"
+        c2.properties["framework"] = "fastapi"
+        c2.loc = 200
+        g.add_node(c2)
+
+        create_technology_nodes(g, app_name="app")
+
+        comp = [n for n in g.nodes.values() if n.kind == NodeKind.COMPONENT][0]
+        assert comp.properties["loc_total"] == 300
+        assert comp.properties["class_count"] == 2

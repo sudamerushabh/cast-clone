@@ -83,6 +83,41 @@ def _walk_tree(node: Node, node_type: str) -> list[Node]:
     return results
 
 
+def _compute_loc(node: Node) -> int:
+    """Compute lines of code for a tree-sitter node."""
+    return node.end_point[0] - node.start_point[0] + 1
+
+
+_COMPLEXITY_NODE_TYPES: set[str] = {
+    "if_statement",
+    "elif_clause",
+    "for_statement",
+    "while_statement",
+    "except_clause",
+    "with_statement",
+    "conditional_expression",
+}
+
+
+def _compute_complexity(node: Node) -> int:
+    """Compute cyclomatic complexity for a function body."""
+    complexity = 1
+
+    def _visit(n: Node) -> None:
+        nonlocal complexity
+        if n.type in _COMPLEXITY_NODE_TYPES:
+            complexity += 1
+        elif n.type == "boolean_operator":
+            complexity += 1
+        for child in n.children:
+            _visit(child)
+
+    body = node.child_by_field_name("body")
+    if body is not None:
+        _visit(body)
+    return complexity
+
+
 class PythonExtractor:
     """Extracts graph nodes and edges from Python source using tree-sitter."""
 
@@ -282,6 +317,7 @@ class PythonExtractor:
             path=file_path,
             line=class_node.start_point[0] + 1,
             end_line=class_node.end_point[0] + 1,
+            loc=_compute_loc(class_node),
             properties={"annotations": decorators} if decorators else {},
         )
         nodes.append(class_graph_node)
@@ -447,6 +483,8 @@ class PythonExtractor:
             path=file_path,
             line=func_node.start_point[0] + 1,
             end_line=func_node.end_point[0] + 1,
+            loc=_compute_loc(func_node),
+            complexity=_compute_complexity(func_node),
             properties=properties,
         )
         nodes.append(func_graph_node)

@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useState, useEffect } from "react"
 import type cytoscape from "cytoscape"
-import { Route, X, Search } from "lucide-react"
+import { Route, X, Search, GitGraph } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,9 +17,9 @@ export function applyPathOverlay(
   cy: cytoscape.Core,
   pathData: PathFinderResponse,
 ): void {
-  // Dim everything
-  cy.nodes().style("opacity", 0.2)
-  cy.edges().style("opacity", 0.2)
+  // De-emphasise non-path elements (keep them visible, not blurred)
+  cy.nodes().addClass("path-dimmed")
+  cy.edges().addClass("path-dimmed")
 
   const pathFqns = new Set(pathData.nodes.map((n) => n.fqn))
   const endpointFqns = new Set([pathData.from_fqn, pathData.to_fqn])
@@ -28,12 +28,13 @@ export function applyPathOverlay(
   for (const node of pathData.nodes) {
     const cyNode = cy.getElementById(node.fqn)
     if (cyNode.length > 0) {
+      cyNode.removeClass("path-dimmed")
       const isEndpoint = endpointFqns.has(node.fqn)
       cyNode.style({
-        "opacity": 1,
         "background-color": "#3b82f6",
         "border-color": isEndpoint ? "#1e3a5f" : "#3b82f6",
         "border-width": isEndpoint ? 3 : 1,
+        "z-index": 10,
       })
     }
   }
@@ -43,15 +44,15 @@ export function applyPathOverlay(
     const src = edge.source().id()
     const tgt = edge.target().id()
     if (pathFqns.has(src) && pathFqns.has(tgt)) {
-      // Check if this edge is actually in the path
       const isPathEdge = pathData.edges.some(
         (e) => (e.source === src && e.target === tgt) || (e.source === tgt && e.target === src),
       )
       if (isPathEdge) {
+        edge.removeClass("path-dimmed")
         edge.style({
-          "opacity": 1,
           "line-color": "#3b82f6",
           "width": 3,
+          "z-index": 10,
         })
       }
     }
@@ -59,8 +60,10 @@ export function applyPathOverlay(
 }
 
 export function clearPathOverlay(cy: cytoscape.Core): void {
-  cy.nodes().removeStyle("opacity background-color border-color border-width")
-  cy.edges().removeStyle("opacity line-color width")
+  cy.nodes().removeClass("path-dimmed")
+  cy.edges().removeClass("path-dimmed")
+  cy.nodes().removeStyle("background-color border-color border-width z-index")
+  cy.edges().removeStyle("line-color width z-index")
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -73,6 +76,7 @@ interface PathFinderPanelProps {
   onFindPath: (fromFqn: string, toFqn: string) => void
   onClose: () => void
   onNodeClick?: (fqn: string) => void
+  onViewPathGraph?: (data: PathFinderResponse) => void
 }
 
 export function PathFinderPanel({
@@ -83,6 +87,7 @@ export function PathFinderPanel({
   onFindPath,
   onClose,
   onNodeClick,
+  onViewPathGraph,
 }: PathFinderPanelProps) {
   const [fromFqn, setFromFqn] = useState(initialFromFqn ?? "")
   const [toFqn, setToFqn] = useState("")
@@ -176,7 +181,7 @@ export function PathFinderPanel({
             </div>
           ) : (
             <>
-              <div className="mb-3 flex items-center gap-2">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="text-xs">
                   Path length: {data.path_length}
                 </Badge>
@@ -184,6 +189,18 @@ export function PathFinderPanel({
                   {data.nodes.length} nodes
                 </Badge>
               </div>
+
+              {onViewPathGraph && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mb-3 w-full"
+                  onClick={() => onViewPathGraph(data)}
+                >
+                  <GitGraph className="mr-1.5 size-3.5" />
+                  View Path Graph
+                </Button>
+              )}
 
               {/* Path visualization */}
               <div className="space-y-0">
