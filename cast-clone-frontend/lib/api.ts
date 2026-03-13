@@ -42,6 +42,8 @@ import type {
   UserUpdateRequest,
   AnnotationResponse,
   TagResponse,
+  SavedViewResponse,
+  SavedViewListItem,
 } from "./types";
 
 const BASE_URL =
@@ -558,4 +560,47 @@ export async function listTags(
 
 export async function deleteTag(tagId: string): Promise<void> {
   await apiFetch<void>(`/api/v1/tags/${tagId}`, { method: "DELETE" });
+}
+
+// ── Saved Views ──
+
+export async function saveView(
+  projectId: string,
+  name: string,
+  state: Record<string, unknown>,
+  description?: string
+): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(
+    `/api/v1/projects/${projectId}/views`,
+    {
+      method: "POST",
+      body: JSON.stringify({ name, description, state }),
+    }
+  );
+}
+
+export async function listViews(
+  projectId: string
+): Promise<SavedViewListItem[]> {
+  return apiFetch<SavedViewListItem[]>(
+    `/api/v1/projects/${projectId}/views`
+  );
+}
+
+export async function getView(viewId: string): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(`/api/v1/views/${viewId}`);
+}
+
+export async function updateView(
+  viewId: string,
+  data: { name?: string; description?: string; state?: Record<string, unknown> }
+): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(`/api/v1/views/${viewId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteView(viewId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/views/${viewId}`, { method: "DELETE" });
 }

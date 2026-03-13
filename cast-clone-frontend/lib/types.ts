@@ -517,3 +517,44 @@ export interface TagResponse {
   author: AnnotationAuthor;
   created_at: string;
 }
+
+// ── Phase 4: Saved Views ──
+
+export interface SavedViewState {
+  viewType: ViewMode;
+  selectedTransaction?: string;
+  visibleNodeFqns: string[];
+  drilldownPath: string[];
+  layout: { name: string; [key: string]: unknown };
+  zoom: number;
+  pan: { x: number; y: number };
+  filters: {
+    nodeTypes?: string[];
+    languages?: string[];
+  };
+  highlights?: {
+    impact?: { startNode: string; depth: number; direction: string };
+    path?: { from: string; to: string };
+  };
+}
+
+export interface SavedViewResponse {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  author: { id: string; username: string };
+  state: SavedViewState;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedViewListItem {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  author: { id: string; username: string };
+  created_at: string;
+  updated_at: string;
+}
