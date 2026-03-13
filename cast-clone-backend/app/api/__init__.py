@@ -1,5 +1,6 @@
 """API router registry."""
 
+from app.api.activity import router as activity_router
 from app.api.analysis import router as analysis_router
 from app.api.analysis_views import router as analysis_views_router
 from app.api.annotations import annotation_router as annotations_router
@@ -19,6 +20,7 @@ from app.api.users import router as users_router
 from app.api.websocket import router as websocket_router
 
 __all__ = [
+    "activity_router",
     "annotations_project_router",
     "annotations_router",
     "auth_router",
