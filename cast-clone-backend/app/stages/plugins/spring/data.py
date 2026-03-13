@@ -37,6 +37,22 @@ _REPO_BASE_INTERFACES = frozenset({
 _READ_PREFIXES = ("findBy", "getBy", "queryBy", "readBy", "searchBy", "streamBy", "countBy", "existsBy")
 _WRITE_PREFIXES = ("deleteBy", "removeBy")
 
+# Standard JPA inherited CRUD methods — not declared in source, but called via service layer
+_JPA_INHERITED_METHODS: list[str] = [
+    "save", "saveAll",
+    "findById", "findAll", "findAllById",
+    "deleteById", "delete", "deleteAll",
+    "count", "existsById",
+]
+
+_JPA_WRITE_METHODS: frozenset[str] = frozenset({
+    "save", "saveAll", "deleteById", "delete", "deleteAll",
+})
+
+_JPA_READ_METHODS: frozenset[str] = frozenset({
+    "findById", "findAll", "findAllById", "count", "existsById",
+})
+
 # Keywords that separate field names in derived queries
 _QUERY_KEYWORDS = re.compile(
     r"(And|Or|Between|LessThan|GreaterThan|LessThanEqual|GreaterThanEqual|"
@@ -174,6 +190,14 @@ class SpringDataPlugin(FrameworkPlugin):
                         confidence=Confidence.HIGH,
                         reason=f"Framework '{fw.name}' detected in manifest",
                     )
+        # Fallback: look for JPA repository interfaces in graph
+        for node in context.graph.nodes.values():
+            implements = set(node.properties.get("implements", []))
+            if implements & _REPO_BASE_INTERFACES:
+                return PluginDetectionResult(
+                    confidence=Confidence.MEDIUM,
+                    reason="Spring Data repository interfaces found in graph",
+                )
         return PluginDetectionResult.not_detected()
 
     async def extract(self, context: AnalysisContext) -> PluginResult:
@@ -181,6 +205,7 @@ class SpringDataPlugin(FrameworkPlugin):
         log.info("spring_data_extract_start")
 
         graph = context.graph
+        nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
         warnings: list[str] = []
 
@@ -220,13 +245,58 @@ class SpringDataPlugin(FrameworkPlugin):
                     evidence="spring-data",
                 ))
 
+            # Add stub FUNCTION nodes for inherited JPA CRUD methods
+            for method_name in _JPA_INHERITED_METHODS:
+                stub_fqn = f"{node.fqn}.{method_name}"
+                if graph.get_node(stub_fqn) is not None:
+                    continue  # Already exists (e.g., explicitly declared override)
+                stub = GraphNode(
+                    fqn=stub_fqn,
+                    name=method_name,
+                    kind=NodeKind.FUNCTION,
+                    language="java",
+                    properties={"is_jpa_stub": True},
+                )
+                nodes.append(stub)
+                edges.append(GraphEdge(
+                    source_fqn=node.fqn,
+                    target_fqn=stub_fqn,
+                    kind=EdgeKind.CONTAINS,
+                    confidence=Confidence.HIGH,
+                    evidence="spring-data",
+                ))
+
             # Get the table FQN for this entity
             table_fqn = entity_to_table.get(entity_name)
             if not table_fqn:
                 warnings.append(f"No table mapping found for entity '{entity_name}' in repo '{node.fqn}'")
+            else:
+                # Add READS/WRITES edges from JPA stubs to the managed table
+                for method_name in _JPA_INHERITED_METHODS:
+                    stub_fqn = f"{node.fqn}.{method_name}"
+                    if method_name in _JPA_WRITE_METHODS:
+                        edges.append(GraphEdge(
+                            source_fqn=stub_fqn,
+                            target_fqn=table_fqn,
+                            kind=EdgeKind.WRITES,
+                            confidence=Confidence.HIGH,
+                            evidence="spring-data",
+                            properties={"query_type": "JPA_INHERITED"},
+                        ))
+                    elif method_name in _JPA_READ_METHODS:
+                        edges.append(GraphEdge(
+                            source_fqn=stub_fqn,
+                            target_fqn=table_fqn,
+                            kind=EdgeKind.READS,
+                            confidence=Confidence.HIGH,
+                            evidence="spring-data",
+                            properties={"query_type": "JPA_INHERITED"},
+                        ))
+
+            # Process explicitly declared methods
+            if not table_fqn:
                 continue
 
-            # Process methods
             for containment_edge in graph.get_edges_from(node.fqn):
                 if containment_edge.kind != EdgeKind.CONTAINS:
                     continue
@@ -294,10 +364,10 @@ class SpringDataPlugin(FrameworkPlugin):
                         },
                     ))
 
-        log.info("spring_data_extract_done", edges=len(edges))
+        log.info("spring_data_extract_done", nodes=len(nodes), edges=len(edges))
 
         return PluginResult(
-            nodes=[],
+            nodes=nodes,
             edges=edges,
             layer_assignments={},
             entry_points=[],

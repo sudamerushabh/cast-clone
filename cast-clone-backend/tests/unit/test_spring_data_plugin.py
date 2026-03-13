@@ -192,7 +192,10 @@ class TestSpringDataDerivedQueries:
         result = await plugin.extract(ctx)
         reads_edges = [e for e in result.edges if e.kind == EdgeKind.READS]
         assert len(reads_edges) >= 1
-        reads_to_users = [e for e in reads_edges if "users" in e.target_fqn]
+        reads_to_users = [
+            e for e in reads_edges
+            if "users" in e.target_fqn and e.properties.get("query_type") == "FIND"
+        ]
         assert len(reads_to_users) == 1
         assert "email" in reads_to_users[0].properties.get("columns", [])
 
@@ -213,7 +216,10 @@ class TestSpringDataDerivedQueries:
 
         result = await plugin.extract(ctx)
         reads_edges = [e for e in result.edges if e.kind == EdgeKind.READS]
-        reads_to_users = [e for e in reads_edges if "users" in e.target_fqn]
+        reads_to_users = [
+            e for e in reads_edges
+            if "users" in e.target_fqn and e.properties.get("query_type") == "FIND"
+        ]
         assert len(reads_to_users) == 1
         cols = set(reads_to_users[0].properties.get("columns", []))
         assert cols == {"email", "status"}
