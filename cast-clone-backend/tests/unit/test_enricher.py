@@ -11,7 +11,6 @@ from app.stages.enricher import (
     aggregate_module_imports,
     assign_architectural_layers,
     compute_fan_metrics,
-    detect_communities,
     enrich_graph,
 )
 
@@ -399,7 +398,6 @@ class TestEmptyGraph:
         """Enriching an empty graph should not crash."""
         ctx = _make_context(SymbolGraph())
         await enrich_graph(ctx)
-        assert ctx.community_count == 0
         assert ctx.warnings == [] or all(isinstance(w, str) for w in ctx.warnings)
 
 
@@ -420,114 +418,6 @@ class TestSingleClass:
         assert g.get_node("com.app.Lonely").properties["fan_out"] == 0
 
 
-# ── Test 8: Community Detection ──────────────────────────
-
-
-class TestCommunityDetection:
-    def test_two_disconnected_components(self):
-        """Two disconnected clusters should yield 2 communities."""
-        g = SymbolGraph()
-
-        # Cluster 1: A -> B
-        g.add_node(_make_class("com.app.A"))
-        g.add_node(_make_class("com.app.B"))
-        g.add_edge(
-            GraphEdge(
-                source_fqn="com.app.A",
-                target_fqn="com.app.B",
-                kind=EdgeKind.DEPENDS_ON,
-                properties={"weight": 1},
-            )
-        )
-
-        # Cluster 2: X -> Y
-        g.add_node(_make_class("com.app.X"))
-        g.add_node(_make_class("com.app.Y"))
-        g.add_edge(
-            GraphEdge(
-                source_fqn="com.app.X",
-                target_fqn="com.app.Y",
-                kind=EdgeKind.DEPENDS_ON,
-                properties={"weight": 1},
-            )
-        )
-
-        count = detect_communities(g, app_name="test-app")
-
-        assert count == 2
-
-        # Community nodes should exist
-        community_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.COMMUNITY]
-        assert len(community_nodes) == 2
-
-        # Each class should have a community_id property
-        for fqn in ["com.app.A", "com.app.B", "com.app.X", "com.app.Y"]:
-            node = g.get_node(fqn)
-            assert "community_id" in node.properties
-
-        # A and B should be in the same community
-        assert (
-            g.get_node("com.app.A").properties["community_id"]
-            == g.get_node("com.app.B").properties["community_id"]
-        )
-
-        # X and Y should be in the same community
-        assert (
-            g.get_node("com.app.X").properties["community_id"]
-            == g.get_node("com.app.Y").properties["community_id"]
-        )
-
-        # But different from A/B's community
-        assert (
-            g.get_node("com.app.A").properties["community_id"]
-            != g.get_node("com.app.X").properties["community_id"]
-        )
-
-    def test_single_connected_component(self):
-        """Fully connected graph -> 1 community."""
-        g = SymbolGraph()
-
-        g.add_node(_make_class("a.A"))
-        g.add_node(_make_class("a.B"))
-        g.add_node(_make_class("a.C"))
-        g.add_edge(
-            GraphEdge(
-                source_fqn="a.A",
-                target_fqn="a.B",
-                kind=EdgeKind.DEPENDS_ON,
-                properties={"weight": 1},
-            )
-        )
-        g.add_edge(
-            GraphEdge(
-                source_fqn="a.B",
-                target_fqn="a.C",
-                kind=EdgeKind.DEPENDS_ON,
-                properties={"weight": 1},
-            )
-        )
-
-        count = detect_communities(g, app_name="test-app")
-        assert count == 1
-
-    def test_community_includes_edges(self):
-        """Community nodes should have INCLUDES edges to their member classes."""
-        g = SymbolGraph()
-        g.add_node(_make_class("a.A"))
-        g.add_node(_make_class("a.B"))
-        g.add_edge(
-            GraphEdge(
-                source_fqn="a.A",
-                target_fqn="a.B",
-                kind=EdgeKind.DEPENDS_ON,
-                properties={"weight": 1},
-            )
-        )
-
-        detect_communities(g, app_name="test-app")
-
-        includes_edges = [e for e in g.edges if e.kind == EdgeKind.INCLUDES]
-        assert len(includes_edges) == 2  # One for each class
 
 
 # ── Test 9: Full Integration ─────────────────────────────
@@ -625,22 +515,4 @@ class TestEnrichGraphIntegration:
         layer_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.LAYER]
         assert len(layer_nodes) == 3
 
-        # 5. Community detection ran
-        assert ctx.community_count >= 1
-        community_nodes = [n for n in g.nodes.values() if n.kind == NodeKind.COMMUNITY]
-        assert len(community_nodes) >= 1
-
-
-# ── Test 10: Isolated Class in Community Detection ───────
-
-
-class TestIsolatedCommunity:
-    def test_isolated_class_gets_own_community(self):
-        """A class with no DEPENDS_ON edges should still get a community assignment."""
-        g = SymbolGraph()
-        g.add_node(_make_class("com.app.Isolated"))
-
-        count = detect_communities(g, app_name="test-app")
-
-        assert count == 1
-        assert "community_id" in g.get_node("com.app.Isolated").properties
+        # Note: Community detection moved to Stage 10 (GDS Louvain)

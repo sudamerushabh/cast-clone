@@ -2,7 +2,10 @@
 """Stage 7: Graph Enricher.
 
 Computes derived metrics, aggregates class-level DEPENDS_ON and module-level
-IMPORTS edges, assigns architectural layers, and runs community detection.
+IMPORTS edges, and assigns architectural layers.
+
+Community detection has been moved to Stage 10 (GDS Louvain) which runs
+after Neo4j write, using the graphdatascience client.
 
 This stage operates entirely in-memory on the SymbolGraph. It is non-critical:
 if it fails, the pipeline continues with a warning.
@@ -10,7 +13,7 @@ if it fails, the pipeline continues with a warning.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import structlog
@@ -36,7 +39,8 @@ async def enrich_graph(context: AnalysisContext) -> None:
     2. Aggregate class-level DEPENDS_ON edges from method CALLS
     3. Aggregate module-level IMPORTS edges from class DEPENDS_ON
     4. Assign architectural layers (create Layer nodes + CONTAINS edges)
-    5. Detect communities (create Community nodes + INCLUDES edges)
+
+    Note: Community detection moved to Stage 10 (GDS Louvain).
 
     Non-critical: catches exceptions per step, logs warnings, continues.
     """
@@ -85,22 +89,10 @@ async def enrich_graph(context: AnalysisContext) -> None:
         context.warnings.append(msg)
         logger.warning("enricher.layers.failed", error=str(exc))
 
-    # Step 5: Community detection
-    try:
-        community_count = detect_communities(graph, app_name=app_name)
-        context.community_count = community_count
-        logger.info("enricher.communities.done", community_count=community_count)
-    except Exception as exc:
-        msg = f"Community detection failed: {exc}"
-        context.warnings.append(msg)
-        context.community_count = 0
-        logger.warning("enricher.communities.failed", error=str(exc))
-
     logger.info(
         "enricher.done",
         node_count=graph.node_count,
         edge_count=graph.edge_count,
-        community_count=context.community_count,
     )
 
 
@@ -348,98 +340,6 @@ def assign_architectural_layers(graph: SymbolGraph, app_name: str) -> int:
 
     return len(layer_members)
 
-
-# ── Step 5: Community Detection ──────────────────────────
-
-
-def detect_communities(graph: SymbolGraph, app_name: str) -> int:
-    """Detect communities among CLASS nodes using connected components via BFS.
-
-    Uses DEPENDS_ON edges (undirected) to find connected components. This is a
-    simple Python-based approach suitable for Phase 1 since Neo4j GDS is not
-    available at this stage (data has not been written to Neo4j yet).
-
-    For each community:
-    - Creates a Community node with member count
-    - Creates INCLUDES edges: Community -> Class
-    - Sets ``community_id`` property on each member class
-
-    Returns the number of communities detected.
-    """
-    # Collect class nodes
-    class_fqns = [
-        fqn for fqn, node in graph.nodes.items() if node.kind == NodeKind.CLASS
-    ]
-
-    if not class_fqns:
-        return 0
-
-    # Build undirected adjacency list from DEPENDS_ON edges
-    adjacency: dict[str, set[str]] = defaultdict(set)
-    class_set = set(class_fqns)
-
-    for edge in graph.edges:
-        if edge.kind == EdgeKind.DEPENDS_ON:
-            if edge.source_fqn in class_set and edge.target_fqn in class_set:
-                adjacency[edge.source_fqn].add(edge.target_fqn)
-                adjacency[edge.target_fqn].add(edge.source_fqn)
-
-    # BFS to find connected components
-    visited: set[str] = set()
-    communities: list[list[str]] = []
-
-    for fqn in class_fqns:
-        if fqn in visited:
-            continue
-
-        # BFS from this node
-        component: list[str] = []
-        queue: deque[str] = deque([fqn])
-        visited.add(fqn)
-
-        while queue:
-            current = queue.popleft()
-            component.append(current)
-
-            for neighbor in adjacency.get(current, set()):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-
-        communities.append(component)
-
-    # Create Community nodes and assign community_id to classes
-    for idx, members in enumerate(communities):
-        community_fqn = f"community:{app_name}:{idx}"
-
-        community_node = GraphNode(
-            fqn=community_fqn,
-            name=f"Community {idx}",
-            kind=NodeKind.COMMUNITY,
-            properties={
-                "algorithm": "connected_components",
-                "node_count": len(members),
-                "app_name": app_name,
-            },
-        )
-        graph.add_node(community_node)
-
-        for class_fqn in members:
-            # Set community_id on the class node
-            node = graph.get_node(class_fqn)
-            if node is not None:
-                node.properties["community_id"] = idx
-
-            # Create INCLUDES edge
-            graph.add_edge(
-                GraphEdge(
-                    source_fqn=community_fqn,
-                    target_fqn=class_fqn,
-                    kind=EdgeKind.INCLUDES,
-                )
-            )
-
-    return len(communities)
 
 
 # ── Internal Helpers ─────────────────────────────────────
