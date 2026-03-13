@@ -527,8 +527,7 @@ def _build_controller_service_repo_graph() -> tuple[SymbolGraph, list[EntryPoint
 async def test_transaction_includes_table_nodes():
     """Transaction INCLUDES edges should also point to TABLE nodes."""
     graph, entry_points = _build_controller_service_repo_graph()
-    ctx = AnalysisContext(project_id="test")
-    ctx.graph = graph
+    ctx = _make_context(graph)
     ctx.entry_points = entry_points
 
     await discover_transactions(ctx)
@@ -570,8 +569,7 @@ async def test_transaction_no_duplicate_table_includes():
         kind=EdgeKind.WRITES, confidence=Confidence.HIGH, evidence="spring-data",
     ))
 
-    ctx = AnalysisContext(project_id="test")
-    ctx.graph = graph
+    ctx = _make_context(graph)
     ctx.entry_points = entry_points
 
     await discover_transactions(ctx)

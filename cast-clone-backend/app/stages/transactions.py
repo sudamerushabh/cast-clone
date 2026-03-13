@@ -317,7 +317,7 @@ async def discover_transactions(
                 for edge in graph.get_edges_from(fn_fqn):
                     if edge.kind in (EdgeKind.WRITES, EdgeKind.READS):
                         table_node = graph.get_node(edge.target_fqn)
-                        if table_node is not None and edge.target_fqn not in seen_tables:
+                        if table_node is not None and table_node.kind == NodeKind.TABLE and edge.target_fqn not in seen_tables:
                             seen_tables.add(edge.target_fqn)
                             graph.add_edge(
                                 GraphEdge(
