@@ -280,6 +280,7 @@ Neo4j is the graph database backing CodeLens. This document covers the complete 
 (:Transaction)-[:STARTS_AT]->(:Function)
 (:Transaction)-[:ENDS_AT]->(:Function)
 (:Transaction)-[:INCLUDES {position: Integer}]->(:Function)
+(:Transaction)-[:INCLUDES]->(:Table)
 ```
 
 ---
