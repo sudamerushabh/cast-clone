@@ -46,7 +46,10 @@ class TestGdsCommunityDetection:
         mock_driver = AsyncMock()
         ctx = _make_context()
 
-        with patch("app.stages.gds_enricher._create_gds_client", side_effect=Exception("GDS not available")):
+        with patch(
+            "app.stages.gds_enricher._create_gds_client",
+            side_effect=Exception("GDS not available"),
+        ):
             result = await run_gds_community_detection(ctx, mock_driver)
 
         assert result["communityCount"] == 0
@@ -73,7 +76,7 @@ class TestGdsCommunityDetection:
 
     @pytest.mark.asyncio
     async def test_skips_if_node_count_is_zero(self):
-        """nodeCount == 0 in projection stats triggers early return without running Louvain."""
+        """nodeCount == 0 triggers early return without Louvain."""
         mock_driver = AsyncMock()
         mock_gds = MagicMock()
         mock_graph = MagicMock()
@@ -91,10 +94,12 @@ class TestGdsCommunityDetection:
 
     @pytest.mark.asyncio
     async def test_skips_if_projection_raises_no_nodes(self):
-        """Exception from gds.graph.project is handled gracefully (e.g. no matching labels)."""
+        """Exception from gds.graph.project is handled gracefully."""
         mock_driver = AsyncMock()
         mock_gds = MagicMock()
-        mock_gds.graph.project.side_effect = Exception("No nodes found with the specified labels")
+        mock_gds.graph.project.side_effect = Exception(
+            "No nodes found with the specified labels"
+        )
         ctx = _make_context()
 
         with patch("app.stages.gds_enricher._create_gds_client", return_value=mock_gds):
