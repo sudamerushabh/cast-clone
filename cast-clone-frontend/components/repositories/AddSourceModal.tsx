@@ -71,7 +71,9 @@ export function AddSourceModal({ open, onClose, onCreated }: AddSourceModalProps
     setStep("branches");
     setLoading(true);
     try {
-      const [owner, name] = repo.full_name.split("/");
+      const parts = repo.full_name.split("/");
+      const owner = parts[0];
+      const name = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
       const data = await listRemoteBranches(selectedConnector.id, owner, name);
       setBranches(data.branches);
       setDefaultBranch(data.default_branch);

@@ -10,7 +10,7 @@ from app.services.git_providers.base import GitProvider, GitRepo, GitUser
 class BitbucketProvider(GitProvider):
     @property
     def _api_base(self) -> str:
-        if "bitbucket.org" in self.base_url:
+        if self.base_url.rstrip("/") == "https://bitbucket.org":
             return "https://api.bitbucket.org/2.0"
         return f"{self.base_url}/rest/api/2.0"
 
@@ -21,7 +21,7 @@ class BitbucketProvider(GitProvider):
     async def validate(self) -> GitUser:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/user", headers=self._headers
+                f"{self._api_base}/user", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
@@ -50,6 +50,7 @@ class BitbucketProvider(GitProvider):
                 f"{self._api_base}/repositories",
                 headers=self._headers,
                 params=params,
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -82,6 +83,7 @@ class BitbucketProvider(GitProvider):
             resp = await client.get(
                 f"{self._api_base}/repositories/{full_name}",
                 headers=self._headers,
+                timeout=10,
             )
             resp.raise_for_status()
             r = resp.json()
@@ -105,6 +107,7 @@ class BitbucketProvider(GitProvider):
                 f"{self._api_base}/repositories/{full_name}/refs/branches",
                 headers=self._headers,
                 params={"pagelen": 100},
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()

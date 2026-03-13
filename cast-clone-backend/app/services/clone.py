@@ -34,6 +34,9 @@ async def clone_repo(
 ) -> None:
     auth_url = build_authenticated_url(clone_url, token)
     target = Path(target_dir)
+    resolved = target.resolve()
+    if not str(resolved).startswith(str(target.parent.resolve())):
+        raise ValueError(f"Invalid clone target: {target_dir}")
     target.parent.mkdir(parents=True, exist_ok=True)
 
     proc = await asyncio.create_subprocess_exec(

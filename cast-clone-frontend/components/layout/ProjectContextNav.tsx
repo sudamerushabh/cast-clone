@@ -34,7 +34,7 @@ export function ProjectContextNav({
   branch,
 }: ProjectContextNavProps) {
   const pathname = usePathname();
-  const basePath = `/repositories/${repoId}/${encodeURIComponent(branch)}`;
+  const basePath = `/repositories/${repoId}/${branch}`;
 
   const navItems: NavItem[] = [
     { label: "Overview", href: basePath, icon: LayoutDashboard },

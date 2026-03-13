@@ -10,7 +10,7 @@ from app.services.git_providers.base import GitProvider, GitRepo, GitUser
 class GitHubProvider(GitProvider):
     @property
     def _api_base(self) -> str:
-        if "github.com" in self.base_url:
+        if self.base_url.rstrip("/") == "https://github.com":
             return "https://api.github.com"
         return f"{self.base_url}/api/v3"
 
@@ -25,7 +25,7 @@ class GitHubProvider(GitProvider):
     async def validate(self) -> GitUser:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/user", headers=self._headers
+                f"{self._api_base}/user", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
@@ -48,6 +48,7 @@ class GitHubProvider(GitProvider):
                         "page": page,
                         "per_page": per_page,
                     },
+                    timeout=15,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -63,6 +64,7 @@ class GitHubProvider(GitProvider):
                         "per_page": per_page,
                         "sort": "updated",
                     },
+                    timeout=15,
                 )
                 resp.raise_for_status()
                 items = resp.json()
@@ -84,7 +86,7 @@ class GitHubProvider(GitProvider):
     async def get_repo(self, full_name: str) -> GitRepo:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/repos/{full_name}", headers=self._headers
+                f"{self._api_base}/repos/{full_name}", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             r = resp.json()
@@ -103,6 +105,7 @@ class GitHubProvider(GitProvider):
                 f"{self._api_base}/repos/{full_name}/branches",
                 headers=self._headers,
                 params={"per_page": 100},
+                timeout=15,
             )
             resp.raise_for_status()
             return [b["name"] for b in resp.json()]

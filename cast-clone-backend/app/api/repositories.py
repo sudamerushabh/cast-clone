@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -46,6 +46,14 @@ def _repo_to_response(repo: Repository) -> RepositoryResponse:
         last_analyzed_at = None
         node_count = None
         edge_count = None
+        if hasattr(p, 'analysis_runs') and p.analysis_runs:
+            completed = [r for r in p.analysis_runs if r.status == "completed"]
+            if completed:
+                latest = max(completed, key=lambda r: r.completed_at or r.started_at)
+                last_analyzed_at = (latest.completed_at or latest.started_at).isoformat() if (latest.completed_at or latest.started_at) else None
+                if latest.snapshot:
+                    node_count = latest.snapshot.get("node_count")
+                    edge_count = latest.snapshot.get("edge_count")
         projects.append(
             ProjectBranchResponse(
                 id=p.id,
@@ -95,7 +103,7 @@ async def _background_clone(
             repo.local_path = target_dir
             repo.clone_error = None
         except Exception as exc:
-            repo.clone_status = "failed"
+            repo.clone_status = "clone_failed"
             repo.clone_error = str(exc)
             await logger.awarning(
                 "clone_failed", repo_id=repo_id, error=str(exc)
@@ -287,8 +295,6 @@ async def sync_repository(
 
     try:
         await pull_latest(repo.local_path)
-        from datetime import datetime
-
         repo.last_synced_at = datetime.now(UTC)
         repo.clone_error = None
         await session.commit()
@@ -410,6 +416,7 @@ async def get_evolution_timeline(
             AnalysisRun.project_id == project.id,
             AnalysisRun.status == "completed",
         )
+        .where(AnalysisRun.snapshot.isnot(None))
         .order_by(AnalysisRun.completed_at.asc())
     )
     runs = runs_result.scalars().all()
@@ -434,8 +441,8 @@ async def get_evolution_timeline(
 @router.get("/{repo_id}/compare", response_model=BranchCompareResponse)
 async def compare_branches(
     repo_id: str,
-    branch_a: str = "main",
-    branch_b: str = "develop",
+    branch_a: str = Query(...),
+    branch_b: str = Query(...),
     session: AsyncSession = Depends(get_session),
 ) -> BranchCompareResponse:
     """Compare two branches of a repository (placeholder for full diff logic)."""

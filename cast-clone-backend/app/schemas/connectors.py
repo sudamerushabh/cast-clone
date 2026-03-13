@@ -80,4 +80,4 @@ class BranchListResponse(BaseModel):
     """GET /api/v1/connectors/{id}/repos/{owner}/{repo}/branches response."""
 
     branches: list[str]
-    default_branch: str | None = None
+    default_branch: str

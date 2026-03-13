@@ -21,7 +21,7 @@ class GitLabProvider(GitProvider):
     async def validate(self) -> GitUser:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/user", headers=self._headers
+                f"{self._api_base}/user", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
@@ -47,6 +47,7 @@ class GitLabProvider(GitProvider):
                 f"{self._api_base}/projects",
                 headers=self._headers,
                 params=params,
+                timeout=15,
             )
             resp.raise_for_status()
             items = resp.json()
@@ -71,6 +72,7 @@ class GitLabProvider(GitProvider):
             resp = await client.get(
                 f"{self._api_base}/projects/{encoded}",
                 headers=self._headers,
+                timeout=10,
             )
             resp.raise_for_status()
             r = resp.json()
@@ -90,6 +92,7 @@ class GitLabProvider(GitProvider):
                 f"{self._api_base}/projects/{encoded}/repository/branches",
                 headers=self._headers,
                 params={"per_page": 100},
+                timeout=15,
             )
             resp.raise_for_status()
             return [b["name"] for b in resp.json()]

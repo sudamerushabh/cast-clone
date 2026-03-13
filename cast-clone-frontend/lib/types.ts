@@ -251,7 +251,7 @@ export type CloneStatus = "pending" | "cloning" | "cloned" | "clone_failed";
 export interface ProjectBranchResponse {
   id: string;
   branch: string | null;
-  status: string;
+  status: ProjectStatus;
   last_analyzed_at: string | null;
   node_count: number | null;
   edge_count: number | null;

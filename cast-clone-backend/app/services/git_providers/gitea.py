@@ -19,7 +19,7 @@ class GiteaProvider(GitProvider):
     async def validate(self) -> GitUser:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/user", headers=self._headers
+                f"{self._api_base}/user", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
@@ -42,6 +42,7 @@ class GiteaProvider(GitProvider):
                         "page": page,
                         "limit": per_page,
                     },
+                    timeout=15,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -51,6 +52,7 @@ class GiteaProvider(GitProvider):
                     f"{self._api_base}/user/repos",
                     headers=self._headers,
                     params={"page": page, "limit": per_page},
+                    timeout=15,
                 )
                 resp.raise_for_status()
                 items = resp.json()
@@ -72,7 +74,7 @@ class GiteaProvider(GitProvider):
     async def get_repo(self, full_name: str) -> GitRepo:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self._api_base}/repos/{full_name}", headers=self._headers
+                f"{self._api_base}/repos/{full_name}", headers=self._headers, timeout=10
             )
             resp.raise_for_status()
             r = resp.json()
@@ -91,6 +93,7 @@ class GiteaProvider(GitProvider):
                 f"{self._api_base}/repos/{full_name}/branches",
                 headers=self._headers,
                 params={"limit": 100},
+                timeout=15,
             )
             resp.raise_for_status()
             return [b["name"] for b in resp.json()]
