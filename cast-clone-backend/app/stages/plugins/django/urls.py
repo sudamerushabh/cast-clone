@@ -34,7 +34,7 @@ logger = structlog.get_logger()
 
 _PATH_RE = re.compile(r'path\(\s*["\']([^"\']*)["\'],\s*([^,\)]+)')
 _INCLUDE_RE = re.compile(r'include\(\s*["\']([^"\']+)["\']')
-_AS_VIEW_RE = re.compile(r'(\w+)\.as_view\(\)')
+_AS_VIEW_RE = re.compile(r"(\w+)\.as_view\(\)")
 
 
 class DjangoURLsPlugin(FrameworkPlugin):
@@ -120,9 +120,7 @@ class DjangoURLsPlugin(FrameworkPlugin):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _find_urlpattern_modules(
-        self, graph: SymbolGraph
-    ) -> dict[str, str]:
+    def _find_urlpattern_modules(self, graph: SymbolGraph) -> dict[str, str]:
         """Find modules with urlpatterns fields; return {module_fqn: value}."""
         result: dict[str, str] = {}
         for node in graph.nodes.values():
@@ -217,22 +215,26 @@ class DjangoURLsPlugin(FrameworkPlugin):
 
             # Create HANDLES edge if we resolved the view
             if view_fqn:
-                edges.append(GraphEdge(
-                    source_fqn=endpoint_fqn,
-                    target_fqn=view_fqn,
-                    kind=EdgeKind.HANDLES,
-                    confidence=Confidence.HIGH,
-                    evidence="django-urls",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=endpoint_fqn,
+                        target_fqn=view_fqn,
+                        kind=EdgeKind.HANDLES,
+                        confidence=Confidence.HIGH,
+                        evidence="django-urls",
+                    )
+                )
                 # Assign Presentation layer to the view
                 layer_assignments[view_fqn] = "Presentation"
 
             # Create entry point
-            entry_points.append(EntryPoint(
-                fqn=endpoint_fqn,
-                kind="http_endpoint",
-                metadata={"path": full_path, "method": "ANY"},
-            ))
+            entry_points.append(
+                EntryPoint(
+                    fqn=endpoint_fqn,
+                    kind="http_endpoint",
+                    metadata={"path": full_path, "method": "ANY"},
+                )
+            )
 
     def _resolve_view_ref(
         self, graph: SymbolGraph, app_prefix: str, view_ref: str

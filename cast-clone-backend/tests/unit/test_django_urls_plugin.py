@@ -1,19 +1,19 @@
 """Tests for the Django URLs plugin -- path(), re_path(), include() resolution."""
 
-import pytest
 from pathlib import Path
 
-from app.models.enums import NodeKind, EdgeKind, Confidence
-from app.models.graph import GraphNode, GraphEdge, SymbolGraph
-from app.models.context import AnalysisContext, EntryPoint
-from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.base import PluginDetectionResult, PluginResult
-from app.stages.plugins.django.urls import DjangoURLsPlugin
+import pytest
 
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.django.urls import DjangoURLsPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_context_with_django() -> AnalysisContext:
     ctx = AnalysisContext(project_id="test")
@@ -38,55 +38,86 @@ def _add_module(graph: SymbolGraph, fqn: str, name: str) -> GraphNode:
 
 
 def _add_class(
-    graph: SymbolGraph, fqn: str, name: str, bases: list[str] | None = None,
+    graph: SymbolGraph,
+    fqn: str,
+    name: str,
+    bases: list[str] | None = None,
 ) -> GraphNode:
     node = GraphNode(
-        fqn=fqn, name=name, kind=NodeKind.CLASS, language="python",
+        fqn=fqn,
+        name=name,
+        kind=NodeKind.CLASS,
+        language="python",
         properties={"annotations": []},
     )
     graph.add_node(node)
-    for base in (bases or []):
-        graph.add_edge(GraphEdge(
-            source_fqn=fqn, target_fqn=base, kind=EdgeKind.INHERITS,
-            confidence=Confidence.LOW, evidence="tree-sitter",
-        ))
+    for base in bases or []:
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=fqn,
+                target_fqn=base,
+                kind=EdgeKind.INHERITS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
     return node
 
 
 def _add_function(
-    graph: SymbolGraph, parent_fqn: str, name: str,
+    graph: SymbolGraph,
+    parent_fqn: str,
+    name: str,
     annotations: list[str] | None = None,
 ) -> GraphNode:
     fqn = f"{parent_fqn}.{name}"
     node = GraphNode(
-        fqn=fqn, name=name, kind=NodeKind.FUNCTION, language="python",
+        fqn=fqn,
+        name=name,
+        kind=NodeKind.FUNCTION,
+        language="python",
         properties={"annotations": annotations or []},
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=parent_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=parent_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
 def _add_field(
-    graph: SymbolGraph, parent_fqn: str, name: str, value: str = "",
+    graph: SymbolGraph,
+    parent_fqn: str,
+    name: str,
+    value: str = "",
 ) -> GraphNode:
     fqn = f"{parent_fqn}.{name}"
     node = GraphNode(
-        fqn=fqn, name=name, kind=NodeKind.FIELD, language="python",
+        fqn=fqn,
+        name=name,
+        kind=NodeKind.FIELD,
+        language="python",
         properties={"value": value},
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=parent_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=parent_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
 # ---------------------------------------------------------------------------
 # Detection tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoURLsDetection:
     def test_detect_high_when_django_present(self):
@@ -107,6 +138,7 @@ class TestDjangoURLsDetection:
 # URL extraction tests
 # ---------------------------------------------------------------------------
 
+
 class TestDjangoURLExtraction:
     @pytest.mark.asyncio
     async def test_simple_path_creates_endpoint(self):
@@ -115,7 +147,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", views.user_list, name="user-list")]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -133,7 +167,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/<int:pk>/", views.user_detail)]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -151,7 +187,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", views.user_list)]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -168,7 +206,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", UserListView.as_view())]',
         )
         _add_class(ctx.graph, "myapp.views.UserListView", "UserListView")
@@ -186,14 +226,18 @@ class TestDjangoURLExtraction:
         # Root urls with include
         _add_module(ctx.graph, "myproject.urls", "urls")
         _add_field(
-            ctx.graph, "myproject.urls", "urlpatterns",
+            ctx.graph,
+            "myproject.urls",
+            "urlpatterns",
             value='[path("api/", include("myapp.urls"))]',
         )
 
         # App urls
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", views.user_list)]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -213,7 +257,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", views.user_list)]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -230,7 +276,9 @@ class TestDjangoURLExtraction:
         ctx = _make_context_with_django()
         _add_module(ctx.graph, "myapp.urls", "urls")
         _add_field(
-            ctx.graph, "myapp.urls", "urlpatterns",
+            ctx.graph,
+            "myapp.urls",
+            "urlpatterns",
             value='[path("users/", views.user_list)]',
         )
         _add_module(ctx.graph, "myapp.views", "views")
@@ -244,6 +292,7 @@ class TestDjangoURLExtraction:
 # ---------------------------------------------------------------------------
 # Plugin metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoURLsMetadata:
     def test_plugin_name(self):

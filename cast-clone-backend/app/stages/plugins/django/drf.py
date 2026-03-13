@@ -15,11 +15,12 @@ Produces:
 from __future__ import annotations
 
 import re
+
 import structlog
 
+from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode
-from app.models.context import AnalysisContext, EntryPoint
 from app.stages.plugins.base import (
     FrameworkPlugin,
     PluginDetectionResult,
@@ -141,19 +142,23 @@ class DjangoDRFPlugin(FrameworkPlugin):
             # Try serializer_class -> Meta.model fallback
             if model_fqn is None:
                 model_fqn = self._resolve_via_serializer(
-                    context, vs_fqn, class_name_to_fqn,
+                    context,
+                    vs_fqn,
+                    class_name_to_fqn,
                 )
 
             # Create MANAGES edge: ViewSet -> Model
             if model_fqn:
-                edges.append(GraphEdge(
-                    source_fqn=vs_fqn,
-                    target_fqn=model_fqn,
-                    kind=EdgeKind.MANAGES,
-                    confidence=Confidence.HIGH,
-                    evidence="django-drf",
-                    properties={"via": "queryset"},
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=vs_fqn,
+                        target_fqn=model_fqn,
+                        kind=EdgeKind.MANAGES,
+                        confidence=Confidence.HIGH,
+                        evidence="django-drf",
+                        properties={"via": "queryset"},
+                    )
+                )
 
                 # READS/WRITES edges to tables (if ORM plugin has run)
                 table_edges = self._find_table_edges(context, vs_fqn, model_fqn)
@@ -165,7 +170,11 @@ class DjangoDRFPlugin(FrameworkPlugin):
             actions = _VIEWSET_ACTIONS.get(viewset_type, [])
 
             for action_name, method, suffix in actions:
-                path = f"/{resource_name}/{suffix.lstrip('/')}" if suffix else f"/{resource_name}/"
+                path = (
+                    f"/{resource_name}/{suffix.lstrip('/')}"
+                    if suffix
+                    else f"/{resource_name}/"
+                )
                 ep_fqn = f"{method}:{path}"
                 ep_node = GraphNode(
                     fqn=ep_fqn,
@@ -182,19 +191,23 @@ class DjangoDRFPlugin(FrameworkPlugin):
                 nodes.append(ep_node)
 
                 # HANDLES edge: ViewSet -> Endpoint
-                edges.append(GraphEdge(
-                    source_fqn=vs_fqn,
-                    target_fqn=ep_fqn,
-                    kind=EdgeKind.HANDLES,
-                    confidence=Confidence.HIGH,
-                    evidence="django-drf",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=vs_fqn,
+                        target_fqn=ep_fqn,
+                        kind=EdgeKind.HANDLES,
+                        confidence=Confidence.HIGH,
+                        evidence="django-drf",
+                    )
+                )
 
-                entry_points.append(EntryPoint(
-                    fqn=ep_fqn,
-                    kind="http",
-                    metadata={"method": method, "path": path},
-                ))
+                entry_points.append(
+                    EntryPoint(
+                        fqn=ep_fqn,
+                        kind="http",
+                        metadata={"method": method, "path": path},
+                    )
+                )
 
         log.info(
             "django_drf_extract_complete",
@@ -226,7 +239,9 @@ class DjangoDRFPlugin(FrameworkPlugin):
         return viewset_fqns
 
     def _extract_queryset_model(
-        self, context: AnalysisContext, vs_fqn: str,
+        self,
+        context: AnalysisContext,
+        vs_fqn: str,
     ) -> str | None:
         """Extract model name from ViewSet's queryset field."""
         for edge in context.graph.get_edges_from(vs_fqn):
@@ -289,20 +304,24 @@ class DjangoDRFPlugin(FrameworkPlugin):
         for edge in context.graph.get_edges_from(model_fqn):
             if edge.kind == EdgeKind.MAPS_TO:
                 table_fqn = edge.target_fqn
-                edges.append(GraphEdge(
-                    source_fqn=vs_fqn,
-                    target_fqn=table_fqn,
-                    kind=EdgeKind.READS,
-                    confidence=Confidence.HIGH,
-                    evidence="django-drf",
-                ))
-                edges.append(GraphEdge(
-                    source_fqn=vs_fqn,
-                    target_fqn=table_fqn,
-                    kind=EdgeKind.WRITES,
-                    confidence=Confidence.HIGH,
-                    evidence="django-drf",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=vs_fqn,
+                        target_fqn=table_fqn,
+                        kind=EdgeKind.READS,
+                        confidence=Confidence.HIGH,
+                        evidence="django-drf",
+                    )
+                )
+                edges.append(
+                    GraphEdge(
+                        source_fqn=vs_fqn,
+                        target_fqn=table_fqn,
+                        kind=EdgeKind.WRITES,
+                        confidence=Confidence.HIGH,
+                        evidence="django-drf",
+                    )
+                )
         return edges
 
     def _classify_viewset(self, context: AnalysisContext, vs_fqn: str) -> str:

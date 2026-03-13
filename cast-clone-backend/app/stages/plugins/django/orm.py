@@ -15,12 +15,14 @@ Produces:
 from __future__ import annotations
 
 import re
-import structlog
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
+import structlog
+
+from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.models.context import AnalysisContext
 from app.stages.plugins.base import (
     FrameworkPlugin,
     PluginDetectionResult,
@@ -92,10 +94,7 @@ class DjangoORMPlugin(FrameworkPlugin):
 
         # Fallback: look for classes inheriting from models.Model
         for edge in context.graph.edges:
-            if (
-                edge.kind == EdgeKind.INHERITS
-                and "models.Model" in edge.target_fqn
-            ):
+            if edge.kind == EdgeKind.INHERITS and "models.Model" in edge.target_fqn:
                 return PluginDetectionResult(
                     confidence=Confidence.MEDIUM,
                     reason="Class inheriting from models.Model found in graph",
@@ -133,19 +132,25 @@ class DjangoORMPlugin(FrameworkPlugin):
                 fqn=table_fqn,
                 name=model.table_name,
                 kind=NodeKind.TABLE,
-                properties={"column_count": len([f for f in model.fields if not f.name.startswith("_")])},
+                properties={
+                    "column_count": len(
+                        [f for f in model.fields if not f.name.startswith("_")]
+                    )
+                },
             )
             nodes.append(table_node)
 
             # MAPS_TO edge: model class -> table
-            edges.append(GraphEdge(
-                source_fqn=model.fqn,
-                target_fqn=table_fqn,
-                kind=EdgeKind.MAPS_TO,
-                confidence=Confidence.HIGH,
-                evidence="django-orm",
-                properties={"orm": "django"},
-            ))
+            edges.append(
+                GraphEdge(
+                    source_fqn=model.fqn,
+                    target_fqn=table_fqn,
+                    kind=EdgeKind.MAPS_TO,
+                    confidence=Confidence.HIGH,
+                    evidence="django-orm",
+                    properties={"orm": "django"},
+                )
+            )
 
             # Layer assignment
             layer_assignments[model.fqn] = "Data Access"
@@ -159,8 +164,12 @@ class DjangoORMPlugin(FrameworkPlugin):
                 # ManyToManyField -> handled separately (junction table)
                 if field_info.is_m2m:
                     self._handle_m2m(
-                        field_info, model, model_by_name,
-                        table_fqn, nodes, edges,
+                        field_info,
+                        model,
+                        model_by_name,
+                        table_fqn,
+                        nodes,
+                        edges,
                     )
                     continue
 
@@ -184,13 +193,15 @@ class DjangoORMPlugin(FrameworkPlugin):
                 nodes.append(col_node)
 
                 # HAS_COLUMN edge
-                edges.append(GraphEdge(
-                    source_fqn=table_fqn,
-                    target_fqn=col_fqn,
-                    kind=EdgeKind.HAS_COLUMN,
-                    confidence=Confidence.HIGH,
-                    evidence="django-orm",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=table_fqn,
+                        target_fqn=col_fqn,
+                        kind=EdgeKind.HAS_COLUMN,
+                        confidence=Confidence.HIGH,
+                        evidence="django-orm",
+                    )
+                )
 
                 # REFERENCES edge for FK / O2O
                 if field_info.is_fk or field_info.is_o2o:
@@ -199,13 +210,15 @@ class DjangoORMPlugin(FrameworkPlugin):
                         target_table_fqn = f"table:{target_model.table_name}"
                         # Reference the PK of the target table (default: id)
                         target_pk = self._find_pk_column(target_model)
-                        edges.append(GraphEdge(
-                            source_fqn=col_fqn,
-                            target_fqn=f"{target_table_fqn}.{target_pk}",
-                            kind=EdgeKind.REFERENCES,
-                            confidence=Confidence.HIGH,
-                            evidence="django-orm",
-                        ))
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=col_fqn,
+                                target_fqn=f"{target_table_fqn}.{target_pk}",
+                                kind=EdgeKind.REFERENCES,
+                                confidence=Confidence.HIGH,
+                                evidence="django-orm",
+                            )
+                        )
 
         log.info(
             "django_orm_extract_complete",
@@ -273,24 +286,28 @@ class DjangoORMPlugin(FrameworkPlugin):
                 m2m_match = _M2M_TARGET_RE.match(value)
                 is_m2m = m2m_match is not None
 
-                model_info.fields.append(_FieldInfo(
-                    fqn=field_node.fqn,
-                    name=field_node.name,
-                    value=value,
-                    field_type=field_type,
-                    is_pk=is_pk,
-                    is_fk=is_fk,
-                    is_o2o=is_o2o,
-                    is_m2m=is_m2m,
-                    fk_target_name=fk_target if (is_fk or is_o2o) else (m2m_match.group(1) if m2m_match else ""),
-                ))
+                model_info.fields.append(
+                    _FieldInfo(
+                        fqn=field_node.fqn,
+                        name=field_node.name,
+                        value=value,
+                        field_type=field_type,
+                        is_pk=is_pk,
+                        is_fk=is_fk,
+                        is_o2o=is_o2o,
+                        is_m2m=is_m2m,
+                        fk_target_name=fk_target
+                        if (is_fk or is_o2o)
+                        else (m2m_match.group(1) if m2m_match else ""),
+                    )
+                )
 
             models[fqn] = model_info
 
         return models
 
     def _derive_table_name(self, graph: SymbolGraph, class_node: GraphNode) -> str:
-        """Derive Django table name: check _meta_db_table override, else {app}_{model_lower}."""
+        """Derive table name: _meta_db_table override or {app}_{model_lower}."""
         # Check for custom db_table via _meta_db_table field
         for edge in graph.get_edges_from(class_node.fqn):
             if edge.kind != EdgeKind.CONTAINS:
@@ -348,34 +365,60 @@ class DjangoORMPlugin(FrameworkPlugin):
         source_pk = self._find_pk_column(source_model)
         src_fk_col_name = f"{source_model.name.lower()}_id"
         src_fk_col_fqn = f"{junction_fqn}.{src_fk_col_name}"
-        nodes.append(GraphNode(
-            fqn=src_fk_col_fqn, name=src_fk_col_name, kind=NodeKind.COLUMN,
-            properties={"is_foreign_key": True},
-        ))
-        edges.append(GraphEdge(
-            source_fqn=junction_fqn, target_fqn=src_fk_col_fqn,
-            kind=EdgeKind.HAS_COLUMN, confidence=Confidence.HIGH, evidence="django-orm",
-        ))
-        edges.append(GraphEdge(
-            source_fqn=src_fk_col_fqn,
-            target_fqn=f"{source_table_fqn}.{source_pk}",
-            kind=EdgeKind.REFERENCES, confidence=Confidence.HIGH, evidence="django-orm",
-        ))
+        nodes.append(
+            GraphNode(
+                fqn=src_fk_col_fqn,
+                name=src_fk_col_name,
+                kind=NodeKind.COLUMN,
+                properties={"is_foreign_key": True},
+            )
+        )
+        edges.append(
+            GraphEdge(
+                source_fqn=junction_fqn,
+                target_fqn=src_fk_col_fqn,
+                kind=EdgeKind.HAS_COLUMN,
+                confidence=Confidence.HIGH,
+                evidence="django-orm",
+            )
+        )
+        edges.append(
+            GraphEdge(
+                source_fqn=src_fk_col_fqn,
+                target_fqn=f"{source_table_fqn}.{source_pk}",
+                kind=EdgeKind.REFERENCES,
+                confidence=Confidence.HIGH,
+                evidence="django-orm",
+            )
+        )
 
         # FK column -> target table
         target_pk = self._find_pk_column(target_model)
         tgt_fk_col_name = f"{target_model.name.lower()}_id"
         tgt_fk_col_fqn = f"{junction_fqn}.{tgt_fk_col_name}"
-        nodes.append(GraphNode(
-            fqn=tgt_fk_col_fqn, name=tgt_fk_col_name, kind=NodeKind.COLUMN,
-            properties={"is_foreign_key": True},
-        ))
-        edges.append(GraphEdge(
-            source_fqn=junction_fqn, target_fqn=tgt_fk_col_fqn,
-            kind=EdgeKind.HAS_COLUMN, confidence=Confidence.HIGH, evidence="django-orm",
-        ))
-        edges.append(GraphEdge(
-            source_fqn=tgt_fk_col_fqn,
-            target_fqn=f"table:{target_model.table_name}.{target_pk}",
-            kind=EdgeKind.REFERENCES, confidence=Confidence.HIGH, evidence="django-orm",
-        ))
+        nodes.append(
+            GraphNode(
+                fqn=tgt_fk_col_fqn,
+                name=tgt_fk_col_name,
+                kind=NodeKind.COLUMN,
+                properties={"is_foreign_key": True},
+            )
+        )
+        edges.append(
+            GraphEdge(
+                source_fqn=junction_fqn,
+                target_fqn=tgt_fk_col_fqn,
+                kind=EdgeKind.HAS_COLUMN,
+                confidence=Confidence.HIGH,
+                evidence="django-orm",
+            )
+        )
+        edges.append(
+            GraphEdge(
+                source_fqn=tgt_fk_col_fqn,
+                target_fqn=f"table:{target_model.table_name}.{target_pk}",
+                kind=EdgeKind.REFERENCES,
+                confidence=Confidence.HIGH,
+                evidence="django-orm",
+            )
+        )

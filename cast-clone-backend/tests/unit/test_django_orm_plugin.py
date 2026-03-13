@@ -1,65 +1,93 @@
 """Tests for the Django ORM plugin — Model-to-table, ForeignKey, ManyToManyField."""
 
-import pytest
 from pathlib import Path
 
-from app.models.enums import NodeKind, EdgeKind, Confidence
-from app.models.graph import GraphNode, GraphEdge, SymbolGraph
-from app.models.context import AnalysisContext
-from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.base import PluginDetectionResult, PluginResult
-from app.stages.plugins.django.orm import DjangoORMPlugin
+import pytest
 
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.django.orm import DjangoORMPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_context_with_django() -> AnalysisContext:
     ctx = AnalysisContext(project_id="test")
     ctx.manifest = ProjectManifest(
         root_path=Path("/tmp/test-project"),
         detected_frameworks=[
-            DetectedFramework(name="django", language="python",
-                              confidence=Confidence.HIGH, evidence=["Django detected"]),
+            DetectedFramework(
+                name="django",
+                language="python",
+                confidence=Confidence.HIGH,
+                evidence=["Django detected"],
+            ),
         ],
     )
     return ctx
 
 
 def _add_class(
-    graph: SymbolGraph, fqn: str, name: str, bases: list[str] | None = None,
+    graph: SymbolGraph,
+    fqn: str,
+    name: str,
+    bases: list[str] | None = None,
 ) -> GraphNode:
     node = GraphNode(
-        fqn=fqn, name=name, kind=NodeKind.CLASS, language="python",
+        fqn=fqn,
+        name=name,
+        kind=NodeKind.CLASS,
+        language="python",
         properties={"annotations": []},
     )
     graph.add_node(node)
-    for base in (bases or []):
-        graph.add_edge(GraphEdge(
-            source_fqn=fqn, target_fqn=base, kind=EdgeKind.INHERITS,
-            confidence=Confidence.LOW, evidence="tree-sitter",
-        ))
+    for base in bases or []:
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=fqn,
+                target_fqn=base,
+                kind=EdgeKind.INHERITS,
+                confidence=Confidence.LOW,
+                evidence="tree-sitter",
+            )
+        )
     return node
 
 
 def _add_field(
-    graph: SymbolGraph, class_fqn: str, name: str, value: str = "",
+    graph: SymbolGraph,
+    class_fqn: str,
+    name: str,
+    value: str = "",
 ) -> GraphNode:
     fqn = f"{class_fqn}.{name}"
     node = GraphNode(
-        fqn=fqn, name=name, kind=NodeKind.FIELD, language="python",
+        fqn=fqn,
+        name=name,
+        kind=NodeKind.FIELD,
+        language="python",
         properties={"value": value},
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=class_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=class_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
 def _add_django_model(
-    graph: SymbolGraph, fqn: str, name: str, fields: dict[str, str],
+    graph: SymbolGraph,
+    fqn: str,
+    name: str,
+    fields: dict[str, str],
     db_table: str | None = None,
 ) -> GraphNode:
     """Convenience: add a Django model class with fields."""
@@ -76,6 +104,7 @@ def _add_django_model(
 # Detection tests
 # ---------------------------------------------------------------------------
 
+
 class TestDjangoORMDetection:
     def test_detect_high_when_django_present(self):
         plugin = DjangoORMPlugin()
@@ -87,8 +116,9 @@ class TestDjangoORMDetection:
         plugin = DjangoORMPlugin()
         ctx = AnalysisContext(project_id="test")
         ctx.manifest = ProjectManifest(root_path=Path("/tmp"), detected_frameworks=[])
-        _add_class(ctx.graph, "myapp.models.User", "User",
-                   bases=["django.db.models.Model"])
+        _add_class(
+            ctx.graph, "myapp.models.User", "User", bases=["django.db.models.Model"]
+        )
         result = plugin.detect(ctx)
         assert result.confidence == Confidence.MEDIUM
 
@@ -104,17 +134,23 @@ class TestDjangoORMDetection:
 # Model-to-table mapping tests
 # ---------------------------------------------------------------------------
 
+
 class TestDjangoORMEntityMapping:
     @pytest.mark.asyncio
     async def test_model_creates_table_node(self):
         """Django model -> Table node with conventional name (app_model)."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-            "name": "models.CharField(max_length=100)",
-            "email": "models.EmailField(unique=True)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "name": "models.CharField(max_length=100)",
+                "email": "models.EmailField(unique=True)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -131,7 +167,9 @@ class TestDjangoORMEntityMapping:
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
         _add_django_model(
-            ctx.graph, "myapp.models.User", "User",
+            ctx.graph,
+            "myapp.models.User",
+            "User",
             {"id": "models.AutoField(primary_key=True)"},
             db_table="custom_users",
         )
@@ -146,10 +184,15 @@ class TestDjangoORMEntityMapping:
         """Model fields -> Column nodes + HAS_COLUMN edges."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-            "name": "models.CharField(max_length=100)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "name": "models.CharField(max_length=100)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
@@ -162,9 +205,14 @@ class TestDjangoORMEntityMapping:
         """primary_key=True -> Column with is_primary_key property."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
@@ -177,19 +225,30 @@ class TestDjangoORMEntityMapping:
 # Relationship tests
 # ---------------------------------------------------------------------------
 
+
 class TestDjangoORMRelationships:
     @pytest.mark.asyncio
     async def test_foreign_key_creates_references_edge(self):
         """ForeignKey(User) -> REFERENCES edge + implicit _id column."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-        })
-        _add_django_model(ctx.graph, "myapp.models.Post", "Post", {
-            "id": "models.AutoField(primary_key=True)",
-            "author": "models.ForeignKey(User, on_delete=models.CASCADE)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+            },
+        )
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.Post",
+            "Post",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "author": "models.ForeignKey(User, on_delete=models.CASCADE)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
@@ -202,14 +261,24 @@ class TestDjangoORMRelationships:
         """ManyToManyField -> junction table with FK edges."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.Tag", "Tag", {
-            "id": "models.AutoField(primary_key=True)",
-            "name": "models.CharField(max_length=50)",
-        })
-        _add_django_model(ctx.graph, "myapp.models.Post", "Post", {
-            "id": "models.AutoField(primary_key=True)",
-            "tags": "models.ManyToManyField(Tag)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.Tag",
+            "Tag",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "name": "models.CharField(max_length=50)",
+            },
+        )
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.Post",
+            "Post",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "tags": "models.ManyToManyField(Tag)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
@@ -222,13 +291,23 @@ class TestDjangoORMRelationships:
         """OneToOneField(User) -> REFERENCES edge (like FK but unique)."""
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-        })
-        _add_django_model(ctx.graph, "myapp.models.Profile", "Profile", {
-            "id": "models.AutoField(primary_key=True)",
-            "user": "models.OneToOneField(User, on_delete=models.CASCADE)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+            },
+        )
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.Profile",
+            "Profile",
+            {
+                "id": "models.AutoField(primary_key=True)",
+                "user": "models.OneToOneField(User, on_delete=models.CASCADE)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
@@ -239,14 +318,20 @@ class TestDjangoORMRelationships:
 # Layer classification tests
 # ---------------------------------------------------------------------------
 
+
 class TestDjangoORMLayerClassification:
     @pytest.mark.asyncio
     async def test_model_is_data_access(self):
         plugin = DjangoORMPlugin()
         ctx = _make_context_with_django()
-        _add_django_model(ctx.graph, "myapp.models.User", "User", {
-            "id": "models.AutoField(primary_key=True)",
-        })
+        _add_django_model(
+            ctx.graph,
+            "myapp.models.User",
+            "User",
+            {
+                "id": "models.AutoField(primary_key=True)",
+            },
+        )
 
         result = await plugin.extract(ctx)
         assert result.layer_assignments.get("myapp.models.User") == "Data Access"
@@ -255,6 +340,7 @@ class TestDjangoORMLayerClassification:
 # ---------------------------------------------------------------------------
 # Plugin metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoORMMetadata:
     def test_plugin_name(self):

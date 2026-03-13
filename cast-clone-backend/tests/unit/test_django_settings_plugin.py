@@ -1,19 +1,19 @@
-"""Tests for the Django Settings plugin — INSTALLED_APPS, DATABASES, MIDDLEWARE, ROOT_URLCONF."""
+"""Tests for Django Settings plugin — config extraction."""
 
-import pytest
 from pathlib import Path
 
-from app.models.enums import NodeKind, EdgeKind, Confidence
-from app.models.graph import GraphNode, GraphEdge, SymbolGraph
-from app.models.context import AnalysisContext
-from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.base import PluginDetectionResult, PluginResult
-from app.stages.plugins.django.settings import DjangoSettingsPlugin
+import pytest
 
+from app.models.context import AnalysisContext
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+from app.models.manifest import DetectedFramework, ProjectManifest
+from app.stages.plugins.django.settings import DjangoSettingsPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_context_with_django() -> AnalysisContext:
     ctx = AnalysisContext(project_id="test")
@@ -52,9 +52,13 @@ def _add_field(
         properties={"value": value},
     )
     graph.add_node(node)
-    graph.add_edge(GraphEdge(
-        source_fqn=parent_fqn, target_fqn=fqn, kind=EdgeKind.CONTAINS,
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=parent_fqn,
+            target_fqn=fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
     return node
 
 
@@ -62,26 +66,44 @@ def _make_settings_module(graph: SymbolGraph) -> None:
     """Create a typical Django settings module with common settings."""
     _add_module(graph, "myproject.settings", "settings")
     _add_field(
-        graph, "myproject.settings", "INSTALLED_APPS",
-        value='["django.contrib.admin", "django.contrib.auth", "myapp", "rest_framework"]',
+        graph,
+        "myproject.settings",
+        "INSTALLED_APPS",
+        value=(
+            '["django.contrib.admin", "django.contrib.auth",'
+            ' "myapp", "rest_framework"]'
+        ),
     )
     _add_field(
-        graph, "myproject.settings", "ROOT_URLCONF",
+        graph,
+        "myproject.settings",
+        "ROOT_URLCONF",
         value='"myproject.urls"',
     )
     _add_field(
-        graph, "myproject.settings", "DATABASES",
-        value='{"default": {"ENGINE": "django.db.backends.postgresql", "NAME": "mydb"}}',
+        graph,
+        "myproject.settings",
+        "DATABASES",
+        value=(
+            '{"default": {"ENGINE": '
+            '"django.db.backends.postgresql", "NAME": "mydb"}}'
+        ),
     )
     _add_field(
-        graph, "myproject.settings", "MIDDLEWARE",
-        value='["django.middleware.security.SecurityMiddleware", "django.contrib.sessions.middleware.SessionMiddleware"]',
+        graph,
+        "myproject.settings",
+        "MIDDLEWARE",
+        value=(
+            '["django.middleware.security.SecurityMiddleware",'
+            ' "django.contrib.sessions.middleware.SessionMiddleware"]'
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
 # Detection tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoSettingsDetection:
     def test_detect_high_when_django_in_frameworks(self):
@@ -111,6 +133,7 @@ class TestDjangoSettingsDetection:
 # ---------------------------------------------------------------------------
 # Settings extraction tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoSettingsExtraction:
     @pytest.mark.asyncio
@@ -187,12 +210,15 @@ class TestDjangoSettingsExtraction:
 
         result = await plugin.extract(ctx)
         contains_edges = [e for e in result.edges if e.kind == EdgeKind.CONTAINS]
-        assert len(contains_edges) >= 4  # INSTALLED_APPS, ROOT_URLCONF, DATABASES, MIDDLEWARE
+        assert (
+            len(contains_edges) >= 4
+        )  # INSTALLED_APPS, ROOT_URLCONF, DATABASES, MIDDLEWARE
 
 
 # ---------------------------------------------------------------------------
 # Plugin metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestDjangoSettingsMetadata:
     def test_plugin_name(self):

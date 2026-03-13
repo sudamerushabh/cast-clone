@@ -7,6 +7,10 @@ ORM mappings, endpoint routes), and produce new graph nodes and edges.
 from app.stages.plugins.aspnet.di import ASPNetDIPlugin
 from app.stages.plugins.aspnet.middleware import ASPNetMiddlewarePlugin
 from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+from app.stages.plugins.django.drf import DjangoDRFPlugin
+from app.stages.plugins.django.orm import DjangoORMPlugin
+from app.stages.plugins.django.settings import DjangoSettingsPlugin
+from app.stages.plugins.django.urls import DjangoURLsPlugin
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -35,6 +39,10 @@ global_registry.register(ASPNetDIPlugin)
 global_registry.register(ASPNetWebPlugin)
 global_registry.register(ASPNetMiddlewarePlugin)
 global_registry.register(EntityFrameworkPlugin)
+global_registry.register(DjangoSettingsPlugin)
+global_registry.register(DjangoURLsPlugin)
+global_registry.register(DjangoORMPlugin)
+global_registry.register(DjangoDRFPlugin)
 
 __all__ = [
     "FrameworkPlugin",

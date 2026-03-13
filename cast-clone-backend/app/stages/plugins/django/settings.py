@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import structlog
 
+from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
-from app.models.context import AnalysisContext
 from app.stages.plugins.base import (
     FrameworkPlugin,
-    LayerRules,
     PluginDetectionResult,
     PluginResult,
 )
@@ -29,10 +28,16 @@ from app.stages.plugins.base import (
 logger = structlog.get_logger()
 
 # Settings keys we care about
-_DJANGO_SETTINGS_KEYS = frozenset({
-    "INSTALLED_APPS", "ROOT_URLCONF", "DATABASES", "MIDDLEWARE",
-    "DEFAULT_AUTO_FIELD", "AUTH_USER_MODEL",
-})
+_DJANGO_SETTINGS_KEYS = frozenset(
+    {
+        "INSTALLED_APPS",
+        "ROOT_URLCONF",
+        "DATABASES",
+        "MIDDLEWARE",
+        "DEFAULT_AUTO_FIELD",
+        "AUTH_USER_MODEL",
+    }
+)
 
 
 class DjangoSettingsPlugin(FrameworkPlugin):
@@ -103,15 +108,20 @@ class DjangoSettingsPlugin(FrameworkPlugin):
                     },
                 )
                 nodes.append(entry)
-                edges.append(GraphEdge(
-                    source_fqn=config_file_fqn,
-                    target_fqn=entry_fqn,
-                    kind=EdgeKind.CONTAINS,
-                    confidence=Confidence.HIGH,
-                    evidence="django-settings",
-                ))
+                edges.append(
+                    GraphEdge(
+                        source_fqn=config_file_fqn,
+                        target_fqn=entry_fqn,
+                        kind=EdgeKind.CONTAINS,
+                        confidence=Confidence.HIGH,
+                        evidence="django-settings",
+                    )
+                )
 
-        log.info("django_settings_extract_complete", entries=len(nodes) - len(settings_modules))
+        log.info(
+            "django_settings_extract_complete",
+            entries=len(nodes) - len(settings_modules),
+        )
 
         return PluginResult(
             nodes=nodes,
