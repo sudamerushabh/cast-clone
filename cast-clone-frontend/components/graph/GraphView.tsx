@@ -255,7 +255,7 @@ export function GraphView({
   }, [viewMode, elements, performanceTier, layoutMode])
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full" onContextMenu={(e) => e.preventDefault()}>
       <CytoscapeComponent
         elements={CytoscapeComponent.normalizeElements(elements)}
         stylesheet={stylesheet}

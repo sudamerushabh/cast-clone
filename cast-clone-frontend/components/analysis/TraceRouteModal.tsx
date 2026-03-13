@@ -6,7 +6,6 @@ import { useEffect } from "react"
 import { GitBranch } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Dialog,
   DialogContent,
@@ -188,7 +187,7 @@ export function TraceRouteModal({
             {error}
           </div>
         ) : (
-          <ScrollArea className="flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="space-y-0 px-6 py-4">
               {/* Upstream callers */}
               <Section
@@ -231,7 +230,7 @@ export function TraceRouteModal({
                 emptyMessage="No callees found"
               />
             </div>
-          </ScrollArea>
+          </div>
         )}
       </DialogContent>
     </Dialog>

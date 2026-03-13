@@ -661,11 +661,11 @@ export default function GraphPage() {
         <>
           {/* Invisible backdrop to dismiss on outside click */}
           <div
-            className="fixed inset-0 z-40"
+            className="fixed inset-0 z-[10000]"
             onClick={handleContextMenuClose}
           />
           <div
-            className="fixed z-50 min-w-[160px] rounded-md border bg-background shadow-md"
+            className="fixed z-[10001] min-w-[160px] rounded-md border bg-background shadow-md"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <div className="py-1">
