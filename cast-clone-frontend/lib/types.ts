@@ -187,3 +187,135 @@ export interface CodeViewerResponse {
 
 export type ViewMode = "architecture" | "dependency" | "transaction";
 export type DrilldownLevel = "module" | "class" | "method";
+
+// ── Phase 3: Impact Analysis ────────────────────────────
+
+export interface AffectedNode {
+  fqn: string;
+  name: string;
+  type: string;
+  file: string | null;
+  depth: number;
+}
+
+export interface ImpactSummary {
+  total: number;
+  by_type: Record<string, number>;
+  by_depth: Record<string, number>;
+}
+
+export interface ImpactAnalysisResponse {
+  node: string;
+  direction: string;
+  max_depth: number;
+  summary: ImpactSummary;
+  affected: AffectedNode[];
+}
+
+// ── Phase 3: Path Finder ────────────────────────────────
+
+export interface PathNode {
+  fqn: string;
+  name: string;
+  type: string;
+}
+
+export interface PathEdge {
+  type: string;
+  source: string;
+  target: string;
+}
+
+export interface PathFinderResponse {
+  from_fqn: string;
+  to_fqn: string;
+  nodes: PathNode[];
+  edges: PathEdge[];
+  path_length: number;
+}
+
+// ── Phase 3: Communities ────────────────────────────────
+
+export interface CommunityInfo {
+  community_id: number;
+  size: number;
+  members: string[];
+}
+
+export interface CommunitiesResponse {
+  communities: CommunityInfo[];
+  total: number;
+  modularity: number | null;
+}
+
+// ── Phase 3: Circular Dependencies ──────────────────────
+
+export interface CircularDependency {
+  cycle: string[];
+  cycle_length: number;
+}
+
+export interface CircularDependenciesResponse {
+  cycles: CircularDependency[];
+  total: number;
+  level: string;
+}
+
+// ── Phase 3: Dead Code ──────────────────────────────────
+
+export interface DeadCodeCandidate {
+  fqn: string;
+  name: string;
+  path: string | null;
+  line: number | null;
+  loc: number | null;
+}
+
+export interface DeadCodeResponse {
+  candidates: DeadCodeCandidate[];
+  total: number;
+  type_filter: string;
+}
+
+// ── Phase 3: Metrics Dashboard ──────────────────────────
+
+export interface OverviewStats {
+  modules: number;
+  classes: number;
+  functions: number;
+  total_loc: number;
+}
+
+export interface RankedItem {
+  fqn: string;
+  name: string;
+  value: number;
+}
+
+export interface MetricsResponse {
+  overview: OverviewStats;
+  most_complex: RankedItem[];
+  highest_fan_in: RankedItem[];
+  highest_fan_out: RankedItem[];
+  community_count: number;
+  circular_dependency_count: number;
+  dead_code_count: number;
+}
+
+// ── Phase 3: Enhanced Node Details ──────────────────────
+
+export interface NodeDetailResponse {
+  fqn: string;
+  name: string;
+  type: string;
+  language: string | null;
+  path: string | null;
+  line: number | null;
+  loc: number | null;
+  complexity: number | null;
+  fan_in: number;
+  fan_out: number;
+  community_id: number | null;
+  callers: PathNode[];
+  callees: PathNode[];
+}
