@@ -221,6 +221,17 @@ export default function GraphPage() {
     setCodeViewerOpen(false)
   }, [])
 
+  const handleNavigateToNode = useCallback((fqn: string) => {
+    setCodeViewerOpen(false)
+    const cy = cyInstanceRef.current
+    if (!cy) return
+    const node = cy.getElementById(fqn)
+    if (node?.length) {
+      node.select()
+      cy.animate({ center: { eles: node }, duration: 300 })
+    }
+  }, [])
+
   // ─── Impact analysis handlers ───────────────────────────────────────────
   const handleShowImpact = useCallback(
     (fqn: string) => {
@@ -545,14 +556,7 @@ export default function GraphPage() {
             fqn: c.fqn,
             name: c.name,
           }))}
-          onNavigateToNode={(fqn) => {
-            setCodeViewerOpen(false)
-            const node = cyInstanceRef.current?.getElementById(fqn)
-            if (node?.length) {
-              node.select()
-              cyInstanceRef.current?.animate({ center: { eles: node }, duration: 300 })
-            }
-          }}
+          onNavigateToNode={handleNavigateToNode}
         />
       )}
     </div>

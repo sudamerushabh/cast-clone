@@ -53,8 +53,16 @@ export function CodeViewer({
   const [data, setData] = React.useState<CodeViewerResponse | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [editorReady, setEditorReady] = React.useState(false)
   const editorRef = React.useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const decorationsRef = React.useRef<string[]>([])
+
+  // Keep refs in sync with props to avoid stale closures in Monaco callbacks
+  const calleesRef = React.useRef(callees)
+  React.useEffect(() => { calleesRef.current = callees }, [callees])
+
+  const onNavigateRef = React.useRef(onNavigateToNode)
+  React.useEffect(() => { onNavigateRef.current = onNavigateToNode }, [onNavigateToNode])
 
   // Fetch code when props change
   React.useEffect(() => {
@@ -121,25 +129,37 @@ export function CodeViewer({
       }
 
       // Click handler for navigating to callees
+      // Uses refs to avoid stale closure — onMount fires once and never re-runs
       editor.onMouseDown((e) => {
         if (e.target.type === monacoInstance.editor.MouseTargetType.CONTENT_TEXT) {
           const position = e.target.position
-          if (!position || !callees?.length) return
+          if (!position || !calleesRef.current?.length) return
           const lineContent = editor.getModel()?.getLineContent(position.lineNumber) || ""
-          const clickedCallee = callees.find((callee) => lineContent.includes(callee.name))
+          const clickedCallee = calleesRef.current.find((callee) => lineContent.includes(callee.name))
           if (clickedCallee) {
-            onNavigateToNode?.(clickedCallee.fqn)
+            onNavigateRef.current?.(clickedCallee.fqn)
           }
         }
       })
+
+      setEditorReady(true)
     },
-    [data, callees, onNavigateToNode]
+    [data]
   )
 
-  // Apply decorations when callees change
+  // Apply decorations when callees change or editor becomes ready
   React.useEffect(() => {
     const editor = editorRef.current
-    if (!editor || !callees?.length) return
+    if (!editor) return
+
+    if (!callees?.length) {
+      // Clear any existing decorations when callees is empty
+      if (decorationsRef.current.length) {
+        decorationsRef.current = editor.deltaDecorations(decorationsRef.current, [])
+      }
+      return
+    }
+
     const model = editor.getModel()
     if (!model) return
 
@@ -159,7 +179,7 @@ export function CodeViewer({
       })
     })
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations)
-  }, [callees])
+  }, [callees, editorReady])
 
   // File name for display (last segment of path)
   const fileName = file.split("/").pop() ?? file
