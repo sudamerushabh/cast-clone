@@ -204,11 +204,18 @@ export default function GraphPage() {
   }, [viewMode, performanceTier])
 
   // Code viewer
-  const handleViewSource = useCallback((file: string, line: number) => {
-    setCodeViewerFile(file)
-    setCodeViewerLine(line)
-    setCodeViewerOpen(true)
-  }, [])
+  const handleViewSource = useCallback(
+    (file: string, line: number) => {
+      setCodeViewerFile(file)
+      setCodeViewerLine(line)
+      setCodeViewerOpen(true)
+      // Load callees for the currently selected node
+      if (selectedNode?.fqn) {
+        analysisData.loadNodeDetails(projectId, selectedNode.fqn as string)
+      }
+    },
+    [selectedNode, projectId, analysisData],
+  )
 
   const handleCloseCodeViewer = useCallback(() => {
     setCodeViewerOpen(false)
@@ -534,6 +541,18 @@ export default function GraphPage() {
           file={codeViewerFile}
           line={codeViewerLine}
           onClose={handleCloseCodeViewer}
+          callees={analysisData.nodeDetails?.callees?.map((c) => ({
+            fqn: c.fqn,
+            name: c.name,
+          }))}
+          onNavigateToNode={(fqn) => {
+            setCodeViewerOpen(false)
+            const node = cyInstanceRef.current?.getElementById(fqn)
+            if (node?.length) {
+              node.select()
+              cyInstanceRef.current?.animate({ center: { eles: node }, duration: 300 })
+            }
+          }}
         />
       )}
     </div>
