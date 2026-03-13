@@ -290,7 +290,7 @@ export async function getDeadCode(
 ): Promise<DeadCodeResponse> {
   const params = new URLSearchParams({
     type,
-    min_loc: String(minLoc),
+    minLoc: String(minLoc),
   });
   return apiFetch<DeadCodeResponse>(
     `/api/v1/analysis/${projectId}/dead-code?${params}`,

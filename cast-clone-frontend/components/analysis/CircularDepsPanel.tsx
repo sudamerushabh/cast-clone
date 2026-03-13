@@ -70,8 +70,8 @@ export function highlightCycle(
 }
 
 export function clearCycleHighlight(cy: cytoscape.Core): void {
-  cy.nodes().removeStyle()
-  cy.edges().removeStyle()
+  cy.nodes().removeStyle("opacity background-color border-color border-width")
+  cy.edges().removeStyle("opacity line-color width")
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────

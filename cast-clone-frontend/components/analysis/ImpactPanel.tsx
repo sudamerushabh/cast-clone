@@ -87,8 +87,8 @@ export function applyImpactOverlay(
 }
 
 export function clearImpactOverlay(cy: cytoscape.Core): void {
-  cy.nodes().removeStyle()
-  cy.edges().removeStyle()
+  cy.nodes().removeStyle("opacity background-color border-color border-width")
+  cy.edges().removeStyle("opacity line-color width")
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -108,6 +108,7 @@ interface ImpactPanelProps {
   direction: Direction
   onDirectionChange: (dir: Direction) => void
   onClose: () => void
+  onNodeClick?: (fqn: string) => void
 }
 
 export function ImpactPanel({
@@ -117,6 +118,7 @@ export function ImpactPanel({
   direction,
   onDirectionChange,
   onClose,
+  onNodeClick,
 }: ImpactPanelProps) {
   return (
     <div className="flex h-full flex-col">
@@ -233,22 +235,23 @@ export function ImpactPanel({
                 </h4>
                 <div className="space-y-1">
                   {data.affected.map((node) => (
-                    <div
+                    <button
                       key={node.fqn}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted cursor-pointer"
                       title={node.fqn}
+                      onClick={() => onNodeClick?.(node.fqn)}
                     >
                       <Badge className={`shrink-0 text-[10px] px-1.5 py-0 ${depthBadgeClass(node.depth)}`}>
                         {node.depth}
                       </Badge>
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 text-left">
                         <p className="truncate text-xs font-medium">{node.name}</p>
                         <p className="truncate text-[10px] text-muted-foreground">
                           {node.type}
                           {node.file ? ` - ${node.file}` : ""}
                         </p>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>

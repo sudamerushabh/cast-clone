@@ -287,14 +287,31 @@ export default function GraphPage() {
       clearCommunityColors(cy)
       setCommunityColorsEnabled(false)
     } else {
-      // Load communities if not yet loaded
       if (!analysisData.communities) {
         analysisData.loadCommunities(projectId)
       }
-      applyCommunityColors(cy)
       setCommunityColorsEnabled(true)
+      // Colors will be applied by the useEffect when data arrives
     }
-  }, [communityColorsEnabled, analysisData, projectId])
+  }, [communityColorsEnabled, projectId, analysisData])
+
+  // Apply community colors once data is loaded and toggle is enabled
+  useEffect(() => {
+    const cy = cyInstanceRef.current
+    if (!cy) return
+    if (communityColorsEnabled && analysisData.communities) {
+      // Write communityId to node data from API response
+      analysisData.communities.communities.forEach((comm) => {
+        comm.members.forEach((fqn) => {
+          const node = cy.getElementById(fqn)
+          if (node.length) {
+            node.data("communityId", comm.community_id)
+          }
+        })
+      })
+      applyCommunityColors(cy)
+    }
+  }, [communityColorsEnabled, analysisData.communities])
 
   // ─── Circular dependencies handlers ────────────────────────────────────
   const handleShowCircularDeps = useCallback(() => {
@@ -338,8 +355,17 @@ export default function GraphPage() {
   const handleDeadCodeNavigate = useCallback(
     (fqn: string) => {
       handleSearchNavigate(fqn)
+      // Also open code viewer if the candidate has path info
+      const candidate = analysisData.deadCode?.candidates.find(
+        (c) => c.fqn === fqn,
+      )
+      if (candidate?.path) {
+        setCodeViewerFile(candidate.path)
+        setCodeViewerLine(candidate.line ?? 1)
+        setCodeViewerOpen(true)
+      }
     },
-    [handleSearchNavigate],
+    [handleSearchNavigate, analysisData.deadCode],
   )
 
   const handleCloseDeadCode = useCallback(() => {
@@ -504,6 +530,7 @@ export default function GraphPage() {
               direction={impactDirection}
               onDirectionChange={handleImpactDirectionChange}
               onClose={handleCloseImpact}
+              onNodeClick={handleSearchNavigate}
             />
           ) : activeAnalysis === "path" ? (
             <PathFinderPanel
@@ -513,6 +540,7 @@ export default function GraphPage() {
               initialFromFqn={pathFromFqn}
               onFindPath={handleFindPath}
               onClose={handleClosePath}
+              onNodeClick={handleSearchNavigate}
             />
           ) : activeAnalysis === "circularDeps" ? (
             <CircularDepsPanel

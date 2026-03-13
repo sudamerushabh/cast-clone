@@ -59,8 +59,8 @@ export function applyPathOverlay(
 }
 
 export function clearPathOverlay(cy: cytoscape.Core): void {
-  cy.nodes().removeStyle()
-  cy.edges().removeStyle()
+  cy.nodes().removeStyle("opacity background-color border-color border-width")
+  cy.edges().removeStyle("opacity line-color width")
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -72,6 +72,7 @@ interface PathFinderPanelProps {
   initialFromFqn?: string
   onFindPath: (fromFqn: string, toFqn: string) => void
   onClose: () => void
+  onNodeClick?: (fqn: string) => void
 }
 
 export function PathFinderPanel({
@@ -81,6 +82,7 @@ export function PathFinderPanel({
   initialFromFqn,
   onFindPath,
   onClose,
+  onNodeClick,
 }: PathFinderPanelProps) {
   const [fromFqn, setFromFqn] = useState(initialFromFqn ?? "")
   const [toFqn, setToFqn] = useState("")
@@ -96,6 +98,11 @@ export function PathFinderPanel({
     if (fromFqn.trim() && toFqn.trim()) {
       onFindPath(fromFqn.trim(), toFqn.trim())
     }
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    handleFind()
   }
 
   return (
@@ -118,7 +125,7 @@ export function PathFinderPanel({
       </div>
 
       {/* Inputs */}
-      <div className="space-y-3 border-b px-4 py-3">
+      <form className="space-y-3 border-b px-4 py-3" onSubmit={handleSubmit}>
         <div>
           <Label htmlFor="path-from" className="text-xs">
             From (FQN)
@@ -144,15 +151,15 @@ export function PathFinderPanel({
           />
         </div>
         <Button
+          type="submit"
           size="sm"
           className="w-full"
-          onClick={handleFind}
           disabled={isLoading || !fromFqn.trim() || !toFqn.trim()}
         >
           <Search className="mr-1 size-3" />
           {isLoading ? "Searching..." : "Find Path"}
         </Button>
-      </div>
+      </form>
 
       {/* Results */}
       <ScrollArea className="flex-1">
@@ -183,9 +190,10 @@ export function PathFinderPanel({
                 {data.nodes.map((node, idx) => (
                   <React.Fragment key={node.fqn}>
                     {/* Node */}
-                    <div
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
+                    <button
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted cursor-pointer"
                       title={node.fqn}
+                      onClick={() => onNodeClick?.(node.fqn)}
                     >
                       <div
                         className="size-2.5 shrink-0 rounded-full"
@@ -196,13 +204,13 @@ export function PathFinderPanel({
                               : "#94a3b8",
                         }}
                       />
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 text-left">
                         <p className="truncate text-xs font-medium">{node.name}</p>
                         <p className="truncate text-[10px] text-muted-foreground">
                           {node.type}
                         </p>
                       </div>
-                    </div>
+                    </button>
 
                     {/* Edge label between nodes */}
                     {idx < data.edges.length ? (
