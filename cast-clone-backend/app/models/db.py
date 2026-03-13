@@ -257,3 +257,89 @@ class AnalysisRun(Base):
     commit_sha: Mapped[str | None] = mapped_column(String(40))
 
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
+
+
+class ProjectGitConfig(Base):
+    __tablename__ = "project_git_config"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    api_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    webhook_secret: Mapped[str] = mapped_column(String(255), nullable=False)
+    monitored_branches: Mapped[list | None] = mapped_column(
+        JSONB, default=lambda: ["main", "master", "develop"]
+    )
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    project: Mapped[Project] = relationship()
+
+
+class PrAnalysis(Base):
+    __tablename__ = "pr_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "pr_number", "commit_sha", name="uq_pr_project_commit"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    pr_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    pr_description: Mapped[str | None] = mapped_column(Text)
+    pr_author: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_branch: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_branch: Mapped[str] = mapped_column(String(200), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    pr_url: Mapped[str | None] = mapped_column(String(500))
+
+    # Analysis results
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending | analyzing | completed | failed | stale
+    risk_level: Mapped[str | None] = mapped_column(String(10))
+    changed_node_count: Mapped[int | None] = mapped_column(Integer)
+    blast_radius_total: Mapped[int | None] = mapped_column(Integer)
+    impact_summary: Mapped[dict | None] = mapped_column(JSONB)
+    drift_report: Mapped[dict | None] = mapped_column(JSONB)
+    ai_summary: Mapped[str | None] = mapped_column(Text)
+
+    # Diff metadata
+    files_changed: Mapped[int | None] = mapped_column(Integer)
+    additions: Mapped[int | None] = mapped_column(Integer)
+    deletions: Mapped[int | None] = mapped_column(Integer)
+
+    # Graph version tracking
+    graph_analysis_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=True
+    )
+
+    # Timing / cost
+    analysis_duration_ms: Mapped[int | None] = mapped_column(Integer)
+    ai_summary_tokens: Mapped[int | None] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    project: Mapped[Project] = relationship()
