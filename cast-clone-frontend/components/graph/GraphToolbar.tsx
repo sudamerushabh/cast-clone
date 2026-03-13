@@ -11,6 +11,7 @@ import {
   RefreshCw,
   RefreshCcw,
   Trash2,
+  Save,
 } from "lucide-react"
 
 import type cytoscape from "cytoscape"
@@ -39,6 +40,7 @@ interface GraphToolbarProps {
   onToggleCommunityColors?: () => void
   onShowCircularDeps?: () => void
   onShowDeadCode?: () => void
+  onSaveView?: () => void
 }
 
 const VIEW_TABS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
@@ -72,6 +74,7 @@ export function GraphToolbar({
   onToggleCommunityColors,
   onShowCircularDeps,
   onShowDeadCode,
+  onSaveView,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center justify-between border-b bg-background px-3 py-1.5">
@@ -133,6 +136,22 @@ export function GraphToolbar({
         </Button>
         <div className="mx-1 h-4 w-px bg-border" />
         <ExportButtons cy={cy} />
+
+        {onSaveView && (
+          <>
+            <div className="mx-1 h-4 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSaveView}
+              title="Save current view"
+              className="gap-1"
+            >
+              <Save className="h-4 w-4" />
+              <span className="hidden sm:inline text-xs">Save</span>
+            </Button>
+          </>
+        )}
 
         {/* Analysis tools separator + buttons */}
         <div className="mx-1 h-4 w-px bg-border" />

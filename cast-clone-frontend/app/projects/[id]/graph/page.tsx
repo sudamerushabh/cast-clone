@@ -28,6 +28,8 @@ import { useTransactions } from "@/hooks/useTransactions"
 import { useImpactAnalysis } from "@/hooks/useImpactAnalysis"
 import { usePathFinder } from "@/hooks/usePathFinder"
 import { useAnalysisData } from "@/hooks/useAnalysisData"
+import { useSavedViews } from "@/hooks/useSavedViews"
+import { SaveViewModal } from "@/components/views/SaveViewModal"
 import type { ViewMode } from "@/lib/types"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
@@ -116,6 +118,8 @@ export default function GraphPage() {
   const impact = useImpactAnalysis()
   const pathFinder = usePathFinder()
   const analysisData = useAnalysisData()
+  const { views: savedViews, loading: viewsLoading, loadViews, save: saveViewState, load: loadViewState, remove: removeView } = useSavedViews()
+  const [saveModalOpen, setSaveModalOpen] = useState(false)
 
   // Load modules on mount
   useEffect(() => {
@@ -123,6 +127,11 @@ export default function GraphPage() {
       loadModules(projectId)
     }
   }, [projectId, loadModules])
+
+  // Load saved views on mount
+  useEffect(() => {
+    if (projectId) loadViews(projectId)
+  }, [projectId, loadViews])
 
   // Load transactions when switching to transaction view
   useEffect(() => {
@@ -429,6 +438,43 @@ export default function GraphPage() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [contextMenu, handleContextMenuClose])
 
+  // ─── Saved views handlers ──────────────────────────────────────────────
+  const captureGraphState = useCallback((): Record<string, unknown> => {
+    const cy = cyInstanceRef.current
+    return {
+      viewType: viewMode,
+      drilldownPath: drilldownPath,
+      visibleNodeFqns: cy ? cy.nodes().map((n: cytoscape.NodeSingular) => n.data("fqn")).filter(Boolean) : [],
+      layout: { name: viewMode === "dependency" ? "fcose" : "dagre" },
+      zoom: cy?.zoom() ?? 1,
+      pan: cy?.pan() ?? { x: 0, y: 0 },
+      filters: {},
+    }
+  }, [viewMode, drilldownPath])
+
+  const handleSaveView = useCallback(
+    async (name: string, description?: string) => {
+      const state = captureGraphState()
+      await saveViewState(projectId, name, state, description)
+    },
+    [projectId, captureGraphState, saveViewState],
+  )
+
+  const handleLoadView = useCallback(
+    async (viewId: string) => {
+      const view = await loadViewState(viewId)
+      setViewMode(view.state.viewType)
+      const cy = cyInstanceRef.current
+      if (cy) {
+        setTimeout(() => {
+          cy.zoom(view.state.zoom)
+          cy.pan(view.state.pan)
+        }, 200)
+      }
+    },
+    [loadViewState],
+  )
+
   // ─── Apply overlays when data changes ─────────────────────────────────
   useEffect(() => {
     const cy = cyInstanceRef.current
@@ -478,6 +524,7 @@ export default function GraphPage() {
         onToggleCommunityColors={handleToggleCommunityColors}
         onShowCircularDeps={handleShowCircularDeps}
         onShowDeadCode={handleShowDeadCode}
+        onSaveView={() => setSaveModalOpen(true)}
       />
 
       {/* Sub-toolbar: filter toggle + transaction selector or breadcrumbs */}
@@ -654,6 +701,13 @@ export default function GraphPage() {
         onClose={() => setTraceRouteOpen(false)}
         node={traceRouteNode}
         projectId={projectId}
+      />
+
+      {/* Save View modal */}
+      <SaveViewModal
+        open={saveModalOpen}
+        onOpenChange={setSaveModalOpen}
+        onSave={handleSaveView}
       />
 
       {/* Right-click context menu — rendered via portal to escape Cytoscape's stacking context */}
