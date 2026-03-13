@@ -160,8 +160,12 @@ async def find_path(
     cypher = (
         f"MATCH path = shortestPath("
         f"(a {{fqn: $fromFqn}})-[*..{max_depth}]-(b {{fqn: $toFqn}}))"
-        " RETURN [n IN nodes(path) | {fqn: n.fqn, name: n.name, type: labels(n)[0]}] AS nodes,"
-        " [r IN relationships(path) | {type: type(r), source: startNode(r).fqn, target: endNode(r).fqn}] AS edges,"
+        " RETURN [n IN nodes(path) |"
+        " {fqn: n.fqn, name: n.name, type: labels(n)[0]}]"
+        " AS nodes,"
+        " [r IN relationships(path) |"
+        " {type: type(r), source: startNode(r).fqn,"
+        " target: endNode(r).fqn}] AS edges,"
         " length(path) AS pathLength"
     )
     records = await store.query(cypher, {"fromFqn": from_fqn, "toFqn": to_fqn})
@@ -200,8 +204,10 @@ async def list_communities(project_id: str) -> CommunitiesResponse:
     store = get_graph_store()
 
     cypher = (
-        "MATCH (c:Class) WHERE c.communityId IS NOT NULL AND c.app_name = $appName "
-        "WITH c.communityId AS communityId, collect(c.name) AS members, count(*) AS size "
+        "MATCH (c:Class) "
+        "WHERE c.communityId IS NOT NULL AND c.app_name = $appName "
+        "WITH c.communityId AS communityId, "
+        "collect(c.name) AS members, count(*) AS size "
         "RETURN communityId, size, members ORDER BY size DESC"
     )
     records = await store.query(cypher, {"appName": project_id})
