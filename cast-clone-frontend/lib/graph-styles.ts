@@ -204,6 +204,47 @@ export function buildStylesheet(
     }
   )
 
+  // Annotated nodes — blue border indicator
+  styles.push({
+    selector: "node.has-annotations",
+    style: {
+      "border-width": 2,
+      "border-color": "#3b82f6",
+      "border-style": "solid" as cytoscape.Css.LineStyle,
+    },
+  })
+
+  // Deprecated nodes — faded style
+  styles.push({
+    selector: "node.tag-deprecated",
+    style: {
+      opacity: 0.5,
+      "border-width": 2,
+      "border-color": "#EF4444",
+      "border-style": "dashed" as cytoscape.Css.LineStyle,
+    },
+  })
+
+  // Critical path nodes — emphasized
+  styles.push({
+    selector: "node.tag-critical-path",
+    style: {
+      "border-width": 3,
+      "border-color": "#7c3aed",
+      "border-style": "double" as cytoscape.Css.LineStyle,
+    },
+  })
+
+  // Security-sensitive nodes
+  styles.push({
+    selector: "node.tag-security-sensitive",
+    style: {
+      "border-width": 2,
+      "border-color": "#f97316",
+      "border-style": "dashed" as cytoscape.Css.LineStyle,
+    },
+  })
+
   return styles
 }
 

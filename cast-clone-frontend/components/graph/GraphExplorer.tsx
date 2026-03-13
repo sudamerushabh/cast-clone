@@ -28,6 +28,8 @@ import { useTransactions } from "@/hooks/useTransactions"
 import { useImpactAnalysis } from "@/hooks/useImpactAnalysis"
 import { usePathFinder } from "@/hooks/usePathFinder"
 import { useAnalysisData } from "@/hooks/useAnalysisData"
+import { useSavedViews } from "@/hooks/useSavedViews"
+import { SaveViewModal } from "@/components/views/SaveViewModal"
 import type { ViewMode, PathFinderResponse } from "@/lib/types"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
@@ -121,6 +123,8 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
   const impact = useImpactAnalysis()
   const pathFinder = usePathFinder()
   const analysisData = useAnalysisData()
+  const savedViews = useSavedViews()
+  const [showSaveViewModal, setShowSaveViewModal] = useState(false)
 
   // Load data based on view mode
   useEffect(() => {
@@ -523,6 +527,9 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
           onToggleCommunityColors={handleToggleCommunityColors}
           onShowCircularDeps={handleShowCircularDeps}
           onShowDeadCode={handleShowDeadCode}
+          projectId={projectId}
+          selectedNodeFqn={(selectedNode?.fqn as string) ?? undefined}
+          onSaveView={() => setShowSaveViewModal(true)}
         />
       </div>
 
@@ -721,6 +728,21 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
         </>,
         document.body
       )}
+
+      <SaveViewModal
+        open={showSaveViewModal}
+        onOpenChange={setShowSaveViewModal}
+        onSave={async (name, description) => {
+          const cy = cyInstanceRef.current
+          const state = {
+            viewType: viewMode,
+            zoom: cy?.zoom() ?? 1,
+            pan: cy?.pan() ?? { x: 0, y: 0 },
+            visibleNodes: cy?.nodes(":visible").map((n) => n.id()) ?? [],
+          }
+          await savedViews.save(projectId, name, state, description)
+        }}
+      />
     </div>
   )
 }

@@ -472,3 +472,148 @@ export interface EvolutionTimelineResponse {
   branch: string;
   snapshots: SnapshotPoint[];
 }
+
+// ── Phase 4: Auth & User Management ──
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface UserResponse {
+  id: string;
+  username: string;
+  email: string;
+  role: "admin" | "member";
+  is_active: boolean;
+  created_at: string;
+  last_login: string | null;
+}
+
+export interface SetupStatusResponse {
+  needs_setup: boolean;
+}
+
+export interface SetupRequest {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface UserCreateRequest {
+  username: string;
+  email: string;
+  password: string;
+  role?: "admin" | "member";
+}
+
+export interface UserUpdateRequest {
+  username?: string;
+  email?: string;
+  password?: string;
+  role?: "admin" | "member";
+  is_active?: boolean;
+}
+
+// ── Phase 4: Annotations & Tags ──
+
+export const PREDEFINED_TAGS = [
+  "deprecated",
+  "tech-debt",
+  "critical-path",
+  "security-sensitive",
+  "needs-review",
+] as const;
+
+export type TagName = (typeof PREDEFINED_TAGS)[number];
+
+export interface AnnotationAuthor {
+  id: string;
+  username: string;
+}
+
+export interface AnnotationResponse {
+  id: string;
+  project_id: string;
+  node_fqn: string;
+  content: string;
+  author: AnnotationAuthor;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TagResponse {
+  id: string;
+  project_id: string;
+  node_fqn: string;
+  tag_name: TagName;
+  author: AnnotationAuthor;
+  created_at: string;
+}
+
+// ── Phase 4: Export ──
+
+// Export endpoints return file downloads, no response types needed.
+
+// ── Phase 4: Activity Log ──
+
+export interface ActivityAuthor {
+  id: string;
+  username: string;
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  user: ActivityAuthor | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+// ── Phase 4: Saved Views ──
+
+export interface SavedViewState {
+  viewType: ViewMode;
+  selectedTransaction?: string;
+  visibleNodeFqns: string[];
+  drilldownPath: string[];
+  layout: { name: string; [key: string]: unknown };
+  zoom: number;
+  pan: { x: number; y: number };
+  filters: {
+    nodeTypes?: string[];
+    languages?: string[];
+  };
+  highlights?: {
+    impact?: { startNode: string; depth: number; direction: string };
+    path?: { from: string; to: string };
+  };
+}
+
+export interface SavedViewResponse {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  author: { id: string; username: string };
+  state: SavedViewState;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedViewListItem {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  author: { id: string; username: string };
+  created_at: string;
+  updated_at: string;
+}

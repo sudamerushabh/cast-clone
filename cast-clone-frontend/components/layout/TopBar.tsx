@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Moon, Network, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
+import { UserMenu } from "./UserMenu";
 
 /**
  * Build breadcrumbs from the current pathname.
@@ -85,6 +86,8 @@ export function TopBar() {
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      <UserMenu />
 
       {/* Theme toggle */}
       <Button

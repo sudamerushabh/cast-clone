@@ -7,14 +7,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    activity_router,
     analysis_router,
     analysis_views_router,
+    annotations_project_router,
+    annotations_router,
+    auth_router,
     connectors_router,
+    export_router,
     graph_router,
     graph_views_router,
     health_router,
     projects_router,
     repositories_router,
+    tags_project_router,
+    tags_router,
+    users_router,
+    views_project_router,
+    views_router,
     websocket_router,
 )
 from app.config import Settings
@@ -84,14 +94,24 @@ def create_app() -> FastAPI:
     )
 
     # Register routers
+    application.include_router(activity_router)
+    application.include_router(annotations_project_router)
+    application.include_router(annotations_router)
+    application.include_router(auth_router)
     application.include_router(health_router)
     application.include_router(projects_router)
     application.include_router(analysis_router)
     application.include_router(graph_router)
     application.include_router(connectors_router)
+    application.include_router(export_router)
     application.include_router(repositories_router)
     application.include_router(graph_views_router)
     application.include_router(analysis_views_router)
+    application.include_router(tags_project_router)
+    application.include_router(tags_router)
+    application.include_router(users_router)
+    application.include_router(views_project_router)
+    application.include_router(views_router)
     application.include_router(websocket_router)
 
     return application

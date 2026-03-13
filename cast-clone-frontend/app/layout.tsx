@@ -2,6 +2,7 @@ import { Geist_Mono, Inter } from "next/font/google";
 
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthProvider } from "@/lib/auth-context";
 import { GlobalShell } from "@/components/layout/GlobalShell";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,9 @@ export default function RootLayout({
     >
       <body>
         <ThemeProvider>
-          <GlobalShell>{children}</GlobalShell>
+          <AuthProvider>
+            <GlobalShell>{children}</GlobalShell>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

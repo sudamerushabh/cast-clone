@@ -10,6 +10,7 @@ import {
   Monitor,
   Bot,
   Users,
+  Activity,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ProjectContextNav } from "./ProjectContextNav";
@@ -99,6 +100,7 @@ export function ContextPanel() {
           { label: "System", href: "/settings/system", icon: Monitor },
           { label: "AI Configuration", href: "/settings/ai", icon: Bot },
           { label: "Team", href: "/settings/team", icon: Users },
+          { label: "Activity", href: "/settings/activity", icon: Activity },
         ]}
       />
     );

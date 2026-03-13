@@ -8,6 +8,7 @@ import {
   RefreshCw,
   RefreshCcw,
   Trash2,
+  Save,
 } from "lucide-react"
 
 import type cytoscape from "cytoscape"
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/tooltip"
 import { CommunityToggle } from "@/components/analysis/CommunityToggle"
 import { ExportButtons } from "./ExportButtons"
+import { ExportMenu } from "@/components/export/ExportMenu"
 
 interface GraphToolbarProps {
   onZoomIn: () => void
@@ -33,6 +35,9 @@ interface GraphToolbarProps {
   onToggleCommunityColors?: () => void
   onShowCircularDeps?: () => void
   onShowDeadCode?: () => void
+  onSaveView?: () => void
+  projectId?: string
+  selectedNodeFqn?: string
 }
 
 export function GraphToolbar({
@@ -46,6 +51,9 @@ export function GraphToolbar({
   onToggleCommunityColors,
   onShowCircularDeps,
   onShowDeadCode,
+  onSaveView,
+  projectId,
+  selectedNodeFqn,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center gap-0.5">
@@ -89,6 +97,25 @@ export function GraphToolbar({
         </Button>
         <div className="mx-1 h-4 w-px bg-border" />
         <ExportButtons cy={cy} />
+        {projectId && (
+          <ExportMenu projectId={projectId} selectedNodeFqn={selectedNodeFqn} />
+        )}
+
+        {onSaveView && (
+          <>
+            <div className="mx-1 h-4 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSaveView}
+              title="Save current view"
+              className="gap-1"
+            >
+              <Save className="h-4 w-4" />
+              <span className="hidden sm:inline text-xs">Save</span>
+            </Button>
+          </>
+        )}
 
         {/* Analysis tools separator + buttons */}
         <div className="mx-1 h-4 w-px bg-border" />

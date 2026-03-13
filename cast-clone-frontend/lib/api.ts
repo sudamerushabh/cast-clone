@@ -35,6 +35,17 @@ import type {
   RepositoryResponse,
   TransactionDetailResponse,
   TransactionListResponse,
+  LoginResponse,
+  SetupRequest,
+  SetupStatusResponse,
+  UserCreateRequest,
+  UserResponse,
+  UserUpdateRequest,
+  AnnotationResponse,
+  TagResponse,
+  SavedViewResponse,
+  SavedViewListItem,
+  ActivityLogEntry,
 } from "./types";
 
 const BASE_URL =
@@ -52,6 +63,13 @@ export class ApiError extends Error {
   }
 }
 
+// ─── Auth token helper ───────────────────────────────────────────────────────
+
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token");
+}
+
 // ─── Base fetch helper ──────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -64,6 +82,7 @@ async function apiFetch<T>(
   const res = await fetch(url, {
     headers: {
       ...(needsContentType ? { "Content-Type": "application/json" } : {}),
+      ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
       ...(callerHeaders as Record<string, string>),
     },
     ...restOptions,
@@ -419,4 +438,229 @@ export async function syncRepository(repoId: string): Promise<CloneStatusRespons
 
 export async function getEvolutionTimeline(repoId: string, branch: string): Promise<EvolutionTimelineResponse> {
   return apiFetch<EvolutionTimelineResponse>(`/api/v1/repositories/${repoId}/evolution?branch=${encodeURIComponent(branch)}`);
+}
+
+// ── Auth ──
+
+export async function login(
+  username: string,
+  password: string
+): Promise<LoginResponse> {
+  const resp = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username, password }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new ApiError(resp.status, body.detail || "Login failed");
+  }
+  return resp.json();
+}
+
+export async function getMe(): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/auth/me");
+}
+
+export async function getSetupStatus(): Promise<SetupStatusResponse> {
+  return apiFetch<SetupStatusResponse>("/api/v1/auth/setup-status");
+}
+
+export async function initialSetup(req: SetupRequest): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/auth/setup", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+// ── User Management (Admin) ──
+
+export async function listUsers(): Promise<UserResponse[]> {
+  return apiFetch<UserResponse[]>("/api/v1/users");
+}
+
+export async function createUser(req: UserCreateRequest): Promise<UserResponse> {
+  return apiFetch<UserResponse>("/api/v1/users", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function getUser(userId: string): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}`);
+}
+
+export async function updateUser(
+  userId: string,
+  req: UserUpdateRequest
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`/api/v1/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deactivateUser(userId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/users/${userId}`, { method: "DELETE" });
+}
+
+// ── Annotations ──
+
+export async function createAnnotation(
+  projectId: string,
+  nodeFqn: string,
+  content: string
+): Promise<AnnotationResponse> {
+  return apiFetch<AnnotationResponse>(
+    `/api/v1/projects/${projectId}/annotations`,
+    {
+      method: "POST",
+      body: JSON.stringify({ node_fqn: nodeFqn, content }),
+    }
+  );
+}
+
+export async function listAnnotations(
+  projectId: string,
+  nodeFqn: string
+): Promise<AnnotationResponse[]> {
+  return apiFetch<AnnotationResponse[]>(
+    `/api/v1/projects/${projectId}/annotations?node_fqn=${encodeURIComponent(nodeFqn)}`
+  );
+}
+
+export async function updateAnnotation(
+  annotationId: string,
+  content: string
+): Promise<AnnotationResponse> {
+  return apiFetch<AnnotationResponse>(`/api/v1/annotations/${annotationId}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteAnnotation(annotationId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/annotations/${annotationId}`, {
+    method: "DELETE",
+  });
+}
+
+// ── Tags ──
+
+export async function addTag(
+  projectId: string,
+  nodeFqn: string,
+  tagName: string
+): Promise<TagResponse> {
+  return apiFetch<TagResponse>(`/api/v1/projects/${projectId}/tags`, {
+    method: "POST",
+    body: JSON.stringify({ node_fqn: nodeFqn, tag_name: tagName }),
+  });
+}
+
+export async function listTags(
+  projectId: string,
+  params: { node_fqn?: string; tag_name?: string }
+): Promise<TagResponse[]> {
+  const searchParams = new URLSearchParams();
+  if (params.node_fqn) searchParams.set("node_fqn", params.node_fqn);
+  if (params.tag_name) searchParams.set("tag_name", params.tag_name);
+  return apiFetch<TagResponse[]>(
+    `/api/v1/projects/${projectId}/tags?${searchParams}`
+  );
+}
+
+export async function deleteTag(tagId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/tags/${tagId}`, { method: "DELETE" });
+}
+
+// ── Saved Views ──
+
+export async function saveView(
+  projectId: string,
+  name: string,
+  state: Record<string, unknown>,
+  description?: string
+): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(
+    `/api/v1/projects/${projectId}/views`,
+    {
+      method: "POST",
+      body: JSON.stringify({ name, description, state }),
+    }
+  );
+}
+
+export async function listViews(
+  projectId: string
+): Promise<SavedViewListItem[]> {
+  return apiFetch<SavedViewListItem[]>(
+    `/api/v1/projects/${projectId}/views`
+  );
+}
+
+export async function getView(viewId: string): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(`/api/v1/views/${viewId}`);
+}
+
+export async function updateView(
+  viewId: string,
+  data: { name?: string; description?: string; state?: Record<string, unknown> }
+): Promise<SavedViewResponse> {
+  return apiFetch<SavedViewResponse>(`/api/v1/views/${viewId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteView(viewId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/views/${viewId}`, { method: "DELETE" });
+}
+
+// ── Export ──
+
+export function getExportUrl(
+  projectId: string,
+  type: "nodes.csv" | "edges.csv" | "graph.json" | "impact.csv",
+  params?: Record<string, string>
+): string {
+  const searchParams = new URLSearchParams(params);
+  const token = getAuthToken();
+  if (token) searchParams.set("token", token);
+  return `${BASE_URL}/api/v1/export/${projectId}/${type}?${searchParams}`;
+}
+
+export function downloadExport(
+  projectId: string,
+  type: "nodes.csv" | "edges.csv" | "graph.json" | "impact.csv",
+  params?: Record<string, string>
+) {
+  const url = getExportUrl(projectId, type, params);
+  // Use fetch with auth header for download
+  const token = getAuthToken();
+  fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then((resp) => resp.blob())
+    .then((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${projectId}_${type}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+}
+
+// ── Activity Feed ──
+
+export async function getActivityFeed(params?: {
+  limit?: number;
+  user_id?: string;
+  action?: string;
+}): Promise<ActivityLogEntry[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.user_id) searchParams.set("user_id", params.user_id);
+  if (params?.action) searchParams.set("action", params.action);
+  return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
 }
