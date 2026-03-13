@@ -30,7 +30,7 @@ from app.schemas.repositories import (
     RepositoryResponse,
     SnapshotPoint,
 )
-from app.services.clone import clone_repo, pull_latest
+from app.services.clone import cleanup_repo_dirs, clone_branch_local, clone_repo, get_branch_clone_path, pull_latest
 from app.services.crypto import decrypt_token
 from app.services.git_providers import create_provider
 from app.services.postgres import get_session
@@ -96,7 +96,9 @@ async def _background_clone(
     assert _session_factory is not None, "PostgreSQL not initialized"
     async with _session_factory() as session:
         result = await session.execute(
-            select(Repository).where(Repository.id == repo_id)
+            select(Repository)
+            .options(selectinload(Repository.projects))
+            .where(Repository.id == repo_id)
         )
         repo = result.scalar_one_or_none()
         if repo is None:
@@ -110,6 +112,19 @@ async def _background_clone(
             repo.clone_status = "cloned"
             repo.local_path = target_dir
             repo.clone_error = None
+
+            # Create branch clones for each project
+            for project in repo.projects:
+                if project.branch:
+                    branch_dir = get_branch_clone_path(target_dir, project.branch)
+                    try:
+                        await clone_branch_local(target_dir, project.branch, branch_dir)
+                    except Exception as exc:
+                        await logger.awarning(
+                            "branch_clone_failed",
+                            branch=project.branch,
+                            error=str(exc),
+                        )
         except Exception as exc:
             repo.clone_status = "clone_failed"
             repo.clone_error = str(exc)
@@ -169,12 +184,13 @@ async def create_repository(
     session.add(repo)
     await session.flush()
 
-    # Create a Project for each requested branch
+    # Create a Project for each requested branch (each gets its own clone dir)
     target_dir = str(Path(settings.repo_storage_path) / repo_id)
     for branch in body.branches:
+        branch_source = get_branch_clone_path(target_dir, branch)
         project = Project(
             name=f"{remote_repo.full_name}:{branch}",
-            source_path=target_dir,
+            source_path=branch_source,
             status="created",
             repository_id=repo.id,
             branch=branch,
@@ -259,8 +275,15 @@ async def delete_repository(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    local_path = repo.local_path
     await session.delete(repo)
     await session.commit()
+
+    try:
+        await cleanup_repo_dirs(local_path)
+    except Exception:
+        logger.warning("repo_disk_cleanup_failed", repo_id=repo_id, local_path=local_path, exc_info=True)
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -356,9 +379,10 @@ async def add_branch(
                 detail=f"Branch {body.branch} already exists for this repository",
             )
 
+    branch_dir = get_branch_clone_path(repo.local_path, body.branch) if repo.local_path else ""
     project = Project(
         name=f"{repo.repo_full_name}:{body.branch}",
-        source_path=repo.local_path or "",
+        source_path=branch_dir,
         status="created",
         repository_id=repo.id,
         branch=body.branch,

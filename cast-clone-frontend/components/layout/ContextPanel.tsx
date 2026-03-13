@@ -119,6 +119,23 @@ export function ContextPanel() {
     );
   }
 
+  // Repository pull-requests section (no branch context needed)
+  const repoPrMatch = pathname.match(/^\/repositories\/([^/]+)\/pull-requests/);
+  if (repoPrMatch) {
+    const repoId = repoPrMatch[1];
+    return (
+      <SectionNav
+        title="Repositories"
+        pathname={pathname}
+        items={[
+          { label: "All Repositories", href: "/repositories", icon: FolderGit2 },
+          { label: "Repository", href: `/repositories/${repoId}`, icon: GitBranch },
+          { label: "Pull Requests", href: `/repositories/${repoId}/pull-requests`, icon: Activity },
+        ]}
+      />
+    );
+  }
+
   // Repositories section
   if (pathname.startsWith("/repositories")) {
     return (

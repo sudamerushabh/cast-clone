@@ -171,7 +171,7 @@ class TestRunPrAnalysis:
 class TestStaleDetection:
     @pytest.mark.asyncio
     async def test_mark_stale(self, mock_session):
-        """mark_analyses_stale updates all completed analyses for a project."""
-        await mark_analyses_stale(mock_session, "proj-1")
+        """mark_analyses_stale updates all completed analyses for a repository."""
+        await mark_analyses_stale(mock_session, "repo-1")
         mock_session.execute.assert_called_once()
         mock_session.commit.assert_called_once()

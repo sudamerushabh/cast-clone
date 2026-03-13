@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.git import create_platform_client
-from app.models.db import PrAnalysis, Project, Repository, ProjectGitConfig
+from app.models.db import PrAnalysis, Repository, RepositoryGitConfig
 from app.schemas.webhooks import WebhookResponse
 from app.services.crypto import decrypt_token
 from app.services.neo4j import Neo4jGraphStore, get_driver
@@ -24,13 +24,13 @@ router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 
 
 @router.post(
-    "/{platform}/{project_id}",
+    "/{platform}/{repo_id}",
     status_code=202,
     response_model=WebhookResponse,
 )
 async def receive_webhook(
     platform: Literal["github", "gitlab", "bitbucket", "gitea"],
-    project_id: str,
+    repo_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
@@ -40,20 +40,20 @@ async def receive_webhook(
     This endpoint is unauthenticated (no JWT) and is instead protected
     by signature verification using the shared webhook secret.
     """
-    log = logger.bind(platform=platform, project_id=project_id)
+    log = logger.bind(platform=platform, repo_id=repo_id)
 
     # 1. Look up git config
     result = await session.execute(
-        select(ProjectGitConfig).where(
-            ProjectGitConfig.project_id == project_id,
-            ProjectGitConfig.platform == platform,
-            ProjectGitConfig.is_active.is_(True),
+        select(RepositoryGitConfig).where(
+            RepositoryGitConfig.repository_id == repo_id,
+            RepositoryGitConfig.platform == platform,
+            RepositoryGitConfig.is_active.is_(True),
         )
     )
     config = result.scalar_one_or_none()
     if config is None:
         await log.awarn("webhook_config_not_found")
-        raise HTTPException(status_code=404, detail="Git config not found for project")
+        raise HTTPException(status_code=404, detail="Git config not found for repository")
 
     # 2. Read raw body and headers
     body = await request.body()
@@ -93,7 +93,7 @@ async def receive_webhook(
 
     # 6. Create PrAnalysis record
     pr_analysis = PrAnalysis(
-        project_id=project_id,
+        repository_id=repo_id,
         platform=platform,
         pr_number=event.pr_number,
         pr_title=event.pr_title,
@@ -120,7 +120,7 @@ async def receive_webhook(
     background_tasks.add_task(
         _run_analysis_background,
         pr_analysis_id=pr_analysis.id,
-        project_id=project_id,
+        repo_id=repo_id,
         api_token_encrypted=config.api_token_encrypted,
         platform=platform,
         secret_key=settings.secret_key,
@@ -135,16 +135,28 @@ async def receive_webhook(
 
 async def _run_analysis_background(
     pr_analysis_id: str,
-    project_id: str,
+    repo_id: str,
     api_token_encrypted: str,
     platform: str,
     secret_key: str,
 ) -> None:
-    """Background task wrapper for PR analysis."""
+    """Background task wrapper for PR analysis.
+
+    Flow:
+    1. Load repo and PR record
+    2. Ensure projects exist for both source and target branches
+    3. Pull latest code for both branches
+    4. Run full code analysis on both branches (if needed)
+    5. Run PR-specific impact analysis against target branch graph
+    """
+    from app.orchestrator.pipeline import run_analysis_pipeline
     from app.pr_analysis.analyzer import run_pr_analysis
+    from app.services.branch_manager import BranchManager
+    from app.services.clone import get_current_commit
     from app.services.postgres import get_background_session
 
     async with get_background_session() as session:
+        # Load PR record
         result = await session.execute(
             select(PrAnalysis).where(PrAnalysis.id == pr_analysis_id)
         )
@@ -153,19 +165,72 @@ async def _run_analysis_background(
             logger.error("pr_analysis_not_found", id=pr_analysis_id)
             return
 
-        # Resolve repo_path from Project -> Repository -> local_path
-        repo_path = ""
-        proj_result = await session.execute(
-            select(Project).where(Project.id == project_id)
+        # Load repository
+        repo_result = await session.execute(
+            select(Repository).where(Repository.id == repo_id)
         )
-        project = proj_result.scalar_one_or_none()
-        if project and project.repository_id:
-            repo_result = await session.execute(
-                select(Repository).where(Repository.id == project.repository_id)
-            )
-            repo = repo_result.scalar_one_or_none()
-            if repo and repo.local_path:
-                repo_path = repo.local_path
+        repo = repo_result.scalar_one_or_none()
+        if not repo or not repo.local_path:
+            logger.error("repository_not_found_or_not_cloned", id=repo_id)
+            pr_record.status = "failed"
+            await session.commit()
+            return
+
+        # Fetch all remote refs so local branch clones can find any branch
+        try:
+            from app.services.clone import fetch_all_refs
+            await fetch_all_refs(repo.local_path)
+        except Exception as exc:
+            logger.warning("main_repo_fetch_failed", error=str(exc))
+
+        mgr = BranchManager(session)
+
+        # Ensure both branch projects exist and are cloned
+        target_branch = pr_record.target_branch
+        source_branch = pr_record.source_branch
+
+        try:
+            target_project = await mgr.ensure_branch_project(repo, target_branch)
+            source_project = await mgr.ensure_branch_project(repo, source_branch)
+            await session.commit()
+        except Exception as exc:
+            logger.error("branch_setup_failed", error=str(exc), exc_info=True)
+            pr_record.status = "failed"
+            await session.commit()
+            return
+
+        # Analyze target branch first (PR impact analysis needs this graph)
+        if await mgr.needs_analysis(target_project):
+            try:
+                await run_analysis_pipeline(target_project.id)
+                commit = await get_current_commit(target_project.source_path)
+                if commit:
+                    target_project.last_analyzed_commit = commit
+                await session.commit()
+            except Exception as exc:
+                logger.error(
+                    "target_branch_analysis_failed",
+                    branch=target_branch, error=str(exc), exc_info=True,
+                )
+                # Continue anyway — PR analysis can still try with existing graph
+
+        # Analyze source branch
+        if await mgr.needs_analysis(source_project):
+            try:
+                await run_analysis_pipeline(source_project.id)
+                commit = await get_current_commit(source_project.source_path)
+                if commit:
+                    source_project.last_analyzed_commit = commit
+                await session.commit()
+            except Exception as exc:
+                logger.warning(
+                    "source_branch_analysis_failed",
+                    branch=source_branch, error=str(exc), exc_info=True,
+                )
+
+        # Now run the PR-specific analysis (diff, impact, drift, AI)
+        # Uses target branch graph for impact analysis
+        app_name = f"{repo_id}:{target_branch}"
 
         store = Neo4jGraphStore(get_driver())
         api_token = decrypt_token(api_token_encrypted, secret_key)
@@ -175,6 +240,6 @@ async def _run_analysis_background(
             session=session,
             store=store,
             api_token=api_token,
-            repo_path=repo_path,
-            app_name=project_id,
+            repo_path=target_project.source_path,
+            app_name=app_name,
         )

@@ -16,10 +16,13 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   items: PrAnalysis[];
-  projectId: string;
+  projectId?: string;
+  /** Base path for detail links, e.g. "/repositories/abc" */
+  basePath?: string;
 }
 
-export function PrListTable({ items, projectId }: Props) {
+export function PrListTable({ items, projectId, basePath }: Props) {
+  const linkBase = basePath ?? `/projects/${projectId}`;
   if (items.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -61,7 +64,7 @@ export function PrListTable({ items, projectId }: Props) {
             <tr key={pr.id} className="hover:bg-gray-50">
               <td className="px-4 py-3">
                 <Link
-                  href={`/projects/${projectId}/pull-requests/${pr.id}`}
+                  href={`${linkBase}/pull-requests/${pr.id}`}
                   className="text-blue-600 hover:text-blue-800 font-medium"
                 >
                   #{pr.pr_number}

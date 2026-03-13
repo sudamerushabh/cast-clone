@@ -62,7 +62,7 @@ Add to `lib/types.ts`:
 
 export interface PrAnalysis {
   id: string;
-  project_id: string;
+  repository_id: string;
   platform: string;
   pr_number: number;
   pr_title: string;
@@ -129,7 +129,7 @@ export interface PrDriftDetail {
 
 export interface GitConfig {
   id: string;
-  project_id: string;
+  repository_id: string;
   platform: string;
   repo_url: string;
   monitored_branches: string[];
@@ -166,7 +166,7 @@ export async function fetchPrAnalyses(
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
   const qs = searchParams.toString();
-  const url = `${API_BASE}/projects/${projectId}/pull-requests${qs ? `?${qs}` : ""}`;
+  const url = `${API_BASE}/repositories/${projectId}/pull-requests${qs ? `?${qs}` : ""}`;
   const resp = await fetch(url, { headers: authHeaders() });
   if (!resp.ok) throw new Error("Failed to fetch PR analyses");
   return resp.json();
@@ -177,7 +177,7 @@ export async function fetchPrAnalysis(
   analysisId: string
 ): Promise<PrAnalysis> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/pull-requests/${analysisId}`,
+    `${API_BASE}/repositories/${projectId}/pull-requests/${analysisId}`,
     { headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to fetch PR analysis");
@@ -189,7 +189,7 @@ export async function fetchPrImpact(
   analysisId: string
 ): Promise<PrImpactDetail> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/pull-requests/${analysisId}/impact`,
+    `${API_BASE}/repositories/${projectId}/pull-requests/${analysisId}/impact`,
     { headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to fetch PR impact");
@@ -201,7 +201,7 @@ export async function fetchPrDrift(
   analysisId: string
 ): Promise<PrDriftDetail> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/pull-requests/${analysisId}/drift`,
+    `${API_BASE}/repositories/${projectId}/pull-requests/${analysisId}/drift`,
     { headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to fetch PR drift");
@@ -213,7 +213,7 @@ export async function reanalyzePr(
   analysisId: string
 ): Promise<void> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/pull-requests/${analysisId}/reanalyze`,
+    `${API_BASE}/repositories/${projectId}/pull-requests/${analysisId}/reanalyze`,
     { method: "POST", headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to queue re-analysis");
@@ -222,7 +222,7 @@ export async function reanalyzePr(
 // Git Config
 export async function fetchGitConfig(projectId: string): Promise<GitConfig | null> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/git-config`,
+    `${API_BASE}/repositories/${projectId}/git-config`,
     { headers: authHeaders() }
   );
   if (resp.status === 404) return null;
@@ -234,7 +234,7 @@ export async function createGitConfig(
   projectId: string,
   body: { platform: string; repo_url: string; api_token: string; monitored_branches?: string[] }
 ): Promise<GitConfigCreateResponse> {
-  const resp = await fetch(`${API_BASE}/projects/${projectId}/git-config`, {
+  const resp = await fetch(`${API_BASE}/repositories/${projectId}/git-config`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -244,7 +244,7 @@ export async function createGitConfig(
 }
 
 export async function deleteGitConfig(projectId: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/projects/${projectId}/git-config`, {
+  const resp = await fetch(`${API_BASE}/repositories/${projectId}/git-config`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -253,7 +253,7 @@ export async function deleteGitConfig(projectId: string): Promise<void> {
 
 export async function fetchWebhookUrl(projectId: string): Promise<WebhookUrlInfo> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/git-config/webhook-url`,
+    `${API_BASE}/repositories/${projectId}/git-config/webhook-url`,
     { headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to fetch webhook URL");
@@ -262,7 +262,7 @@ export async function fetchWebhookUrl(projectId: string): Promise<WebhookUrlInfo
 
 export async function testGitConnectivity(projectId: string): Promise<{ status: string; username?: string; message?: string }> {
   const resp = await fetch(
-    `${API_BASE}/projects/${projectId}/git-config/test`,
+    `${API_BASE}/repositories/${projectId}/git-config/test`,
     { method: "POST", headers: authHeaders() }
   );
   if (!resp.ok) throw new Error("Failed to test connectivity");

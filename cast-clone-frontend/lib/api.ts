@@ -672,10 +672,10 @@ export async function getActivityFeed(params?: {
   return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
 }
 
-// ── Phase 5a: PR Analysis API ──
+// ── Phase 5a: PR Analysis API (repository-level) ──
 
-export async function fetchPrAnalyses(
-  projectId: string,
+export async function fetchRepoPrAnalyses(
+  repoId: string,
   params?: { status?: string; risk?: string; limit?: number; offset?: number },
 ): Promise<PrAnalysisList> {
   const searchParams = new URLSearchParams();
@@ -685,55 +685,55 @@ export async function fetchPrAnalyses(
   if (params?.offset) searchParams.set("offset", String(params.offset));
   const qs = searchParams.toString();
   return apiFetch<PrAnalysisList>(
-    `/api/v1/projects/${projectId}/pull-requests${qs ? `?${qs}` : ""}`,
+    `/api/v1/repositories/${repoId}/pull-requests${qs ? `?${qs}` : ""}`,
   );
 }
 
-export async function fetchPrAnalysis(
-  projectId: string,
+export async function fetchRepoPrAnalysis(
+  repoId: string,
   analysisId: string,
 ): Promise<PrAnalysis> {
   return apiFetch<PrAnalysis>(
-    `/api/v1/projects/${projectId}/pull-requests/${analysisId}`,
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}`,
   );
 }
 
-export async function fetchPrImpact(
-  projectId: string,
+export async function fetchRepoPrImpact(
+  repoId: string,
   analysisId: string,
 ): Promise<PrImpactDetail> {
   return apiFetch<PrImpactDetail>(
-    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/impact`,
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/impact`,
   );
 }
 
-export async function fetchPrDrift(
-  projectId: string,
+export async function fetchRepoPrDrift(
+  repoId: string,
   analysisId: string,
 ): Promise<PrDriftDetail> {
   return apiFetch<PrDriftDetail>(
-    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/drift`,
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/drift`,
   );
 }
 
-export async function reanalyzePr(
-  projectId: string,
+export async function reanalyzeRepoPr(
+  repoId: string,
   analysisId: string,
 ): Promise<void> {
   return apiFetch<void>(
-    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/reanalyze`,
+    `/api/v1/repositories/${repoId}/pull-requests/${analysisId}/reanalyze`,
     { method: "POST" },
   );
 }
 
-// ── Git Config ──
+// ── Git Config (repository-level) ──
 
 export async function fetchGitConfig(
-  projectId: string,
+  repoId: string,
 ): Promise<GitConfig | null> {
   try {
     return await apiFetch<GitConfig>(
-      `/api/v1/projects/${projectId}/git-config`,
+      `/api/v1/repositories/${repoId}/git-config`,
     );
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
@@ -742,7 +742,7 @@ export async function fetchGitConfig(
 }
 
 export async function createGitConfig(
-  projectId: string,
+  repoId: string,
   body: {
     platform: string;
     repo_url: string;
@@ -751,30 +751,30 @@ export async function createGitConfig(
   },
 ): Promise<GitConfigCreateResponse> {
   return apiFetch<GitConfigCreateResponse>(
-    `/api/v1/projects/${projectId}/git-config`,
+    `/api/v1/repositories/${repoId}/git-config`,
     { method: "POST", body: JSON.stringify(body) },
   );
 }
 
-export async function deleteGitConfig(projectId: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/projects/${projectId}/git-config`, {
+export async function deleteGitConfig(repoId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${repoId}/git-config`, {
     method: "DELETE",
   });
 }
 
 export async function fetchWebhookUrl(
-  projectId: string,
+  repoId: string,
 ): Promise<WebhookUrlInfo> {
   return apiFetch<WebhookUrlInfo>(
-    `/api/v1/projects/${projectId}/git-config/webhook-url`,
+    `/api/v1/repositories/${repoId}/git-config/webhook-url`,
   );
 }
 
 export async function testGitConnectivity(
-  projectId: string,
+  repoId: string,
 ): Promise<{ status: string; username?: string; message?: string }> {
   return apiFetch<{ status: string; username?: string; message?: string }>(
-    `/api/v1/projects/${projectId}/git-config/test`,
+    `/api/v1/repositories/${repoId}/git-config/test`,
     { method: "POST" },
   );
 }

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  fetchPrAnalyses,
-  fetchPrAnalysis,
-  fetchPrImpact,
-  fetchPrDrift,
+  fetchRepoPrAnalyses,
+  fetchRepoPrAnalysis,
+  fetchRepoPrImpact,
+  fetchRepoPrDrift,
 } from "@/lib/api";
 import type {
   PrAnalysis,
@@ -14,8 +14,8 @@ import type {
   PrDriftDetail,
 } from "@/lib/types";
 
-export function usePrAnalyses(
-  projectId: string,
+export function useRepoPrAnalyses(
+  repoId: string,
   filters?: { status?: string; risk?: string },
 ) {
   const [data, setData] = useState<PrAnalysisList | null>(null);
@@ -25,7 +25,7 @@ export function usePrAnalyses(
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await fetchPrAnalyses(projectId, filters);
+      const result = await fetchRepoPrAnalyses(repoId, filters);
       setData(result);
       setError(null);
     } catch (e) {
@@ -33,7 +33,7 @@ export function usePrAnalyses(
     } finally {
       setLoading(false);
     }
-  }, [projectId, filters?.status, filters?.risk]);
+  }, [repoId, filters?.status, filters?.risk]);
 
   useEffect(() => {
     refresh();
@@ -42,7 +42,7 @@ export function usePrAnalyses(
   return { data, loading, error, refresh };
 }
 
-export function usePrDetail(projectId: string, analysisId: string) {
+export function useRepoPrDetail(repoId: string, analysisId: string) {
   const [analysis, setAnalysis] = useState<PrAnalysis | null>(null);
   const [impact, setImpact] = useState<PrImpactDetail | null>(null);
   const [drift, setDrift] = useState<PrDriftDetail | null>(null);
@@ -53,9 +53,9 @@ export function usePrDetail(projectId: string, analysisId: string) {
       setLoading(true);
       try {
         const [a, i, d] = await Promise.all([
-          fetchPrAnalysis(projectId, analysisId),
-          fetchPrImpact(projectId, analysisId).catch(() => null),
-          fetchPrDrift(projectId, analysisId).catch(() => null),
+          fetchRepoPrAnalysis(repoId, analysisId),
+          fetchRepoPrImpact(repoId, analysisId).catch(() => null),
+          fetchRepoPrDrift(repoId, analysisId).catch(() => null),
         ]);
         setAnalysis(a);
         setImpact(i);
@@ -65,7 +65,7 @@ export function usePrDetail(projectId: string, analysisId: string) {
       }
     }
     load();
-  }, [projectId, analysisId]);
+  }, [repoId, analysisId]);
 
   return { analysis, impact, drift, loading };
 }

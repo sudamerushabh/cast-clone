@@ -284,7 +284,7 @@ M8 wires M2-M7 together. M9 exposes API. M10 builds UI.
 
 | Milestone | File | Description | Depends On |
 |-----------|------|-------------|------------|
-| **M1** | `2026-03-13-phase5a-m1-foundation.md` | ProjectGitConfig + PrAnalysis ORM models, anthropic_api_key config, Pydantic schemas (webhooks, pull_requests, git_config), PR analysis pipeline dataclasses (PullRequestEvent, PRDiff, FileDiff, DiffHunk, AggregatedImpact, DriftReport) | — |
+| **M1** | `2026-03-13-phase5a-m1-foundation.md` | RepositoryGitConfig + PrAnalysis ORM models, anthropic_api_key config, Pydantic schemas (webhooks, pull_requests, git_config), PR analysis pipeline dataclasses (PullRequestEvent, PRDiff, FileDiff, DiffHunk, AggregatedImpact, DriftReport) | — |
 | **M2** | `2026-03-13-phase5a-m2-git-platform-clients.md` | GitPlatformClient ABC, unified diff parser, GitHub/GitLab/Bitbucket/Gitea webhook parsing + signature verification + diff fetching, platform client factory | M1 |
 | **M3** | `2026-03-13-phase5a-m3-webhook-receivers-git-config-api.md` | Webhook receiver endpoints (unauthenticated, signature-verified), git config CRUD (admin-only), webhook URL generation, connectivity test, router registration | M1, M2 |
 | **M4** | `2026-03-13-phase5a-m4-diff-to-graph-mapper.md` | DiffMapper: Neo4j path+line range queries, handles modified/added/deleted/renamed files, Neo4j path indexes | M1 |

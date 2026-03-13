@@ -51,7 +51,7 @@ class PrAnalysisResponse(BaseModel):
     """Full PR analysis record."""
 
     id: str
-    project_id: str
+    repository_id: str
     platform: str
     pr_number: int
     pr_title: str

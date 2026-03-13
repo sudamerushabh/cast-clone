@@ -58,7 +58,7 @@ async def client(mock_session, admin_user):
 def _make_pr_analysis() -> MagicMock:
     pr = MagicMock(spec=PrAnalysis)
     pr.id = "pr-1"
-    pr.project_id = "proj-1"
+    pr.repository_id = "repo-1"
     pr.platform = "github"
     pr.pr_number = 42
     pr.pr_title = "Fix bug"
@@ -96,7 +96,7 @@ class TestListPrAnalyses:
         mock_count.scalar.return_value = 1
         mock_session.execute.side_effect = [mock_count, mock_result]
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
@@ -112,7 +112,7 @@ class TestListPrAnalyses:
         mock_session.execute.side_effect = [mock_count, mock_result]
 
         resp = await client.get(
-            "/api/v1/projects/proj-1/pull-requests?status=failed"
+            "/api/v1/repositories/repo-1/pull-requests?status=failed"
         )
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
@@ -126,7 +126,7 @@ class TestGetPrAnalysis:
         mock_result.scalar_one_or_none.return_value = pr
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/pull-requests/pr-1")
+        resp = await client.get("/api/v1/repositories/repo-1/pull-requests/pr-1")
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "pr-1"
@@ -139,7 +139,7 @@ class TestGetPrAnalysis:
         mock_session.execute.return_value = mock_result
 
         resp = await client.get(
-            "/api/v1/projects/proj-1/pull-requests/nonexistent"
+            "/api/v1/repositories/repo-1/pull-requests/nonexistent"
         )
         assert resp.status_code == 404
 
@@ -171,7 +171,7 @@ class TestGetPrImpact:
         mock_session.execute.return_value = mock_result
 
         resp = await client.get(
-            "/api/v1/projects/proj-1/pull-requests/pr-1/impact"
+            "/api/v1/repositories/repo-1/pull-requests/pr-1/impact"
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -193,7 +193,7 @@ class TestGetPrDrift:
         mock_session.execute.return_value = mock_result
 
         resp = await client.get(
-            "/api/v1/projects/proj-1/pull-requests/pr-1/drift"
+            "/api/v1/repositories/repo-1/pull-requests/pr-1/drift"
         )
         assert resp.status_code == 200
         assert resp.json()["has_drift"] is False
@@ -218,6 +218,6 @@ class TestReanalyze:
 
         with patch("app.api.webhooks._run_analysis_background", new_callable=AsyncMock):
             resp = await client.post(
-                "/api/v1/projects/proj-1/pull-requests/pr-1/reanalyze"
+                "/api/v1/repositories/repo-1/pull-requests/pr-1/reanalyze"
             )
         assert resp.status_code == 202

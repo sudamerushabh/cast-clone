@@ -254,21 +254,21 @@ def _create_drift_detector(store: GraphStore, app_name: str) -> DriftDetector:
 
 
 async def mark_analyses_stale(
-    session: AsyncSession, project_id: str
+    session: AsyncSession, repository_id: str
 ) -> None:
-    """Mark all completed PR analyses for a project as stale.
+    """Mark all completed PR analyses for a repository as stale.
 
-    Called after a full project re-analysis to indicate the graph has changed.
+    Called after a full re-analysis to indicate the graph has changed.
     """
     from app.models.db import PrAnalysis
 
     await session.execute(
         update(PrAnalysis)
         .where(
-            PrAnalysis.project_id == project_id,
+            PrAnalysis.repository_id == repository_id,
             PrAnalysis.status == "completed",
         )
         .values(status="stale")
     )
     await session.commit()
-    logger.info("pr_analyses_marked_stale", project_id=project_id)
+    logger.info("pr_analyses_marked_stale", repository_id=repository_id)

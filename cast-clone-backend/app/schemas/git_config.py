@@ -32,7 +32,7 @@ class GitConfigResponse(BaseModel):
     """Response schema for git configuration (excludes api_token)."""
 
     id: str
-    project_id: str
+    repository_id: str
     platform: str
     repo_url: str
     monitored_branches: list[str]

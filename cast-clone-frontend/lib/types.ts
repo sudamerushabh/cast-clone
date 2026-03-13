@@ -582,7 +582,7 @@ export interface ActivityLogEntry {
 
 export interface PrAnalysis {
   id: string;
-  project_id: string;
+  repository_id: string;
   platform: string;
   pr_number: number;
   pr_title: string;
@@ -650,7 +650,7 @@ export interface PrDriftDetail {
 
 export interface GitConfig {
   id: string;
-  project_id: string;
+  repository_id: string;
   platform: string;
   repo_url: string;
   monitored_branches: string[];

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
 from app.main import create_app
-from app.models.db import ProjectGitConfig, User
+from app.models.db import RepositoryGitConfig, User
 from app.services.postgres import get_session
 
 
@@ -20,11 +20,11 @@ from app.services.postgres import get_session
 # ---------------------------------------------------------------------------
 
 
-def _make_config(**overrides) -> ProjectGitConfig:
+def _make_config(**overrides) -> RepositoryGitConfig:
     now = datetime.now(timezone.utc)
     defaults = dict(
         id=str(uuid4()),
-        project_id=str(uuid4()),
+        repository_id=str(uuid4()),
         platform="github",
         repo_url="https://github.com/owner/repo",
         api_token_encrypted="encrypted_token",
@@ -35,13 +35,13 @@ def _make_config(**overrides) -> ProjectGitConfig:
         updated_at=now,
     )
     defaults.update(overrides)
-    config = MagicMock(spec=ProjectGitConfig)
+    config = MagicMock(spec=RepositoryGitConfig)
     for k, v in defaults.items():
         setattr(config, k, v)
     return config
 
 
-def _mock_session(config: ProjectGitConfig | None = None):
+def _mock_session(config: RepositoryGitConfig | None = None):
     session = AsyncMock()
     scalar_result = MagicMock()
     scalar_result.scalar_one_or_none.return_value = config
@@ -86,14 +86,14 @@ class TestCreateGitConfig:
     @patch("app.api.git_config.encrypt_token", return_value="encrypted_value")
     def test_create_config_success(self, mock_encrypt):
         """Creating a git config should return 201 with webhook info."""
-        project_id = str(uuid4())
+        repo_id = str(uuid4())
         session = _mock_session(None)  # No existing config
 
         app = _setup_app(session)
         client = TestClient(app, raise_server_exceptions=False)
 
         resp = client.post(
-            f"/api/v1/projects/{project_id}/git-config",
+            f"/api/v1/repositories/{repo_id}/git-config",
             json={
                 "platform": "github",
                 "repo_url": "https://github.com/owner/repo",
@@ -110,14 +110,14 @@ class TestCreateGitConfig:
 
     def test_create_config_invalid_platform_returns_422(self):
         """An invalid platform should return 422."""
-        project_id = str(uuid4())
+        repo_id = str(uuid4())
         session = _mock_session(None)
 
         app = _setup_app(session)
         client = TestClient(app, raise_server_exceptions=False)
 
         resp = client.post(
-            f"/api/v1/projects/{project_id}/git-config",
+            f"/api/v1/repositories/{repo_id}/git-config",
             json={
                 "platform": "invalid_platform",
                 "repo_url": "https://example.com/repo",
@@ -131,13 +131,13 @@ class TestGetGitConfig:
     def test_get_config_success(self):
         """Getting an existing config should return 200."""
         config = _make_config()
-        project_id = config.project_id
+        repo_id = config.repository_id
         session = _mock_session(config)
 
         app = _setup_app(session)
         client = TestClient(app, raise_server_exceptions=False)
 
-        resp = client.get(f"/api/v1/projects/{project_id}/git-config")
+        resp = client.get(f"/api/v1/repositories/{repo_id}/git-config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == config.id
@@ -148,13 +148,13 @@ class TestGetGitConfig:
 
     def test_get_config_not_found(self):
         """Getting a missing config should return 404."""
-        project_id = str(uuid4())
+        repo_id = str(uuid4())
         session = _mock_session(None)
 
         app = _setup_app(session)
         client = TestClient(app, raise_server_exceptions=False)
 
-        resp = client.get(f"/api/v1/projects/{project_id}/git-config")
+        resp = client.get(f"/api/v1/repositories/{repo_id}/git-config")
         assert resp.status_code == 404
 
 
@@ -162,11 +162,11 @@ class TestDeleteGitConfig:
     def test_delete_config_success(self):
         """Deleting an existing config should return 204."""
         config = _make_config()
-        project_id = config.project_id
+        repo_id = config.repository_id
         session = _mock_session(config)
 
         app = _setup_app(session)
         client = TestClient(app, raise_server_exceptions=False)
 
-        resp = client.delete(f"/api/v1/projects/{project_id}/git-config")
+        resp = client.delete(f"/api/v1/repositories/{repo_id}/git-config")
         assert resp.status_code == 204

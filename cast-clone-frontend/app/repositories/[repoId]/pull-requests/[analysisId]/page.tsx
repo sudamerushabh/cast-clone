@@ -2,8 +2,8 @@
 
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { usePrDetail } from "@/hooks/usePullRequests";
-import { reanalyzePr } from "@/lib/api";
+import { useRepoPrDetail } from "@/hooks/usePullRequests";
+import { reanalyzeRepoPr } from "@/lib/api";
 import { PrRiskBadge } from "@/components/pull-requests/PrRiskBadge";
 import { PrStatusBadge } from "@/components/pull-requests/PrStatusBadge";
 import { PrSummaryCard } from "@/components/pull-requests/PrSummaryCard";
@@ -12,14 +12,14 @@ import { PrChangedNodesTable } from "@/components/pull-requests/PrChangedNodesTa
 import { PrCrossTechPanel } from "@/components/pull-requests/PrCrossTechPanel";
 import { PrDriftAlerts } from "@/components/pull-requests/PrDriftAlerts";
 
-export default function PrDetailPage() {
+export default function RepoPrDetailPage() {
   const params = useParams();
-  const projectId = params.id as string;
+  const repoId = params.repoId as string;
   const analysisId = params.analysisId as string;
   const router = useRouter();
 
-  const { analysis, impact, drift, loading } = usePrDetail(
-    projectId,
+  const { analysis, impact, drift, loading } = useRepoPrDetail(
+    repoId,
     analysisId,
   );
 
@@ -32,7 +32,7 @@ export default function PrDetailPage() {
   }
 
   const handleReanalyze = async () => {
-    await reanalyzePr(projectId, analysisId);
+    await reanalyzeRepoPr(repoId, analysisId);
     router.refresh();
   };
 
@@ -41,14 +41,14 @@ export default function PrDetailPage() {
       {/* Header */}
       <div className="mb-6">
         <Link
-          href={`/projects/${projectId}/pull-requests`}
+          href={`/repositories/${repoId}/pull-requests`}
           className="text-sm text-blue-600 hover:text-blue-800 mb-2 inline-block"
         >
           &larr; Back to PR list
         </Link>
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               #{analysis.pr_number}: {analysis.pr_title}
             </h1>
             <p className="text-sm text-gray-500 mt-1">
@@ -110,10 +110,7 @@ export default function PrDetailPage() {
 
       {/* Changed nodes */}
       {impact && (
-        <PrChangedNodesTable
-          nodes={impact.changed_nodes}
-          projectId={projectId}
-        />
+        <PrChangedNodesTable nodes={impact.changed_nodes} />
       )}
 
       {/* Cross-tech impacts */}

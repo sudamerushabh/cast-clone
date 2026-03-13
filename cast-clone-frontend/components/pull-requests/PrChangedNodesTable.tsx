@@ -9,7 +9,6 @@ interface ChangedNode {
 
 interface Props {
   nodes: ChangedNode[];
-  projectId: string;
 }
 
 const TYPE_COLORS: Record<string, string> = {

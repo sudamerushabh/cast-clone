@@ -142,21 +142,21 @@ class GitPlatformClient(ABC):
 ### Webhook Receiver Endpoints
 
 ```
-POST /api/v1/webhooks/github/{project_id}      → GitHub webhook receiver
-POST /api/v1/webhooks/gitlab/{project_id}       → GitLab webhook receiver
-POST /api/v1/webhooks/bitbucket/{project_id}    → Bitbucket webhook receiver
+POST /api/v1/webhooks/github/{repo_id}      → GitHub webhook receiver
+POST /api/v1/webhooks/gitlab/{repo_id}       → GitLab webhook receiver
+POST /api/v1/webhooks/bitbucket/{repo_id}    → Bitbucket webhook receiver
 ```
 
-These endpoints are **unauthenticated** (webhooks can't carry JWT tokens) but protected by webhook signature verification. The `project_id` in the URL maps the incoming event to a CodeLens project.
+These endpoints are **unauthenticated** (webhooks can't carry JWT tokens) but protected by webhook signature verification. The `repo_id` in the URL maps the incoming event to a CodeLens repository.
 
 ### Project Git Configuration
 
-Stored in the existing `projects` table or a new `project_git_config` table:
+Stored in the existing `projects` table or a new `repository_git_config` table:
 
 ```sql
-CREATE TABLE project_git_config (
+CREATE TABLE repository_git_config (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     platform VARCHAR(20) NOT NULL,          -- 'github', 'gitlab', 'bitbucket'
     repo_url VARCHAR(500) NOT NULL,         -- 'https://github.com/org/repo'
     api_token_encrypted TEXT NOT NULL,       -- Encrypted PAT or app token
@@ -165,7 +165,7 @@ CREATE TABLE project_git_config (
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now(),
-    UNIQUE(project_id)
+    UNIQUE(repository_id)
 );
 ```
 
@@ -538,7 +538,7 @@ Cache AI summaries in PostgreSQL. Invalidate when the PR is updated (new commits
 ```sql
 CREATE TABLE pr_analyses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
 
     -- PR metadata (from webhook)
     platform VARCHAR(20) NOT NULL,
@@ -575,12 +575,12 @@ CREATE TABLE pr_analyses (
     updated_at TIMESTAMP DEFAULT now(),
 
     -- Unique constraint: one analysis per PR per commit
-    UNIQUE(project_id, pr_number, commit_sha)
+    UNIQUE(repository_id, pr_number, commit_sha)
 );
 
-CREATE INDEX idx_pr_project ON pr_analyses(project_id, created_at DESC);
-CREATE INDEX idx_pr_status ON pr_analyses(project_id, status);
-CREATE INDEX idx_pr_risk ON pr_analyses(project_id, risk_level);
+CREATE INDEX idx_pr_project ON pr_analyses(repository_id, created_at DESC);
+CREATE INDEX idx_pr_status ON pr_analyses(repository_id, status);
+CREATE INDEX idx_pr_risk ON pr_analyses(repository_id, risk_level);
 ```
 
 ### Activity Log Entries
@@ -597,41 +597,41 @@ New action types for the existing `activity_log` table:
 
 ```
 # Webhook receivers (unauthenticated, signature-verified)
-POST /api/v1/webhooks/github/{project_id}
-POST /api/v1/webhooks/gitlab/{project_id}
-POST /api/v1/webhooks/bitbucket/{project_id}
+POST /api/v1/webhooks/github/{repo_id}
+POST /api/v1/webhooks/gitlab/{repo_id}
+POST /api/v1/webhooks/bitbucket/{repo_id}
 
 # PR Analysis (authenticated, JWT required)
-GET  /api/v1/projects/{project_id}/pull-requests
+GET  /api/v1/repositories/{repo_id}/pull-requests
      ?status=completed&risk=High&limit=20&offset=0
      → Paginated list of PR analyses
 
-GET  /api/v1/projects/{project_id}/pull-requests/{pr_analysis_id}
+GET  /api/v1/repositories/{repo_id}/pull-requests/{pr_analysis_id}
      → Full PR analysis detail (impact, drift, AI summary)
 
-GET  /api/v1/projects/{project_id}/pull-requests/{pr_analysis_id}/impact
+GET  /api/v1/repositories/{repo_id}/pull-requests/{pr_analysis_id}/impact
      → Detailed impact data (changed nodes, blast radius, cross-tech)
 
-GET  /api/v1/projects/{project_id}/pull-requests/{pr_analysis_id}/drift
+GET  /api/v1/repositories/{repo_id}/pull-requests/{pr_analysis_id}/drift
      → Drift report for this PR
 
-POST /api/v1/projects/{project_id}/pull-requests/{pr_analysis_id}/reanalyze
+POST /api/v1/repositories/{repo_id}/pull-requests/{pr_analysis_id}/reanalyze
      → Re-run analysis (e.g., after a new full project analysis)
 
 # Git integration configuration (admin only)
-POST /api/v1/projects/{project_id}/git-config
+POST /api/v1/repositories/{repo_id}/git-config
      → Configure Git platform, repo URL, token, webhook secret
-GET  /api/v1/projects/{project_id}/git-config
+GET  /api/v1/repositories/{repo_id}/git-config
      → Get current config (token masked)
-PUT  /api/v1/projects/{project_id}/git-config
+PUT  /api/v1/repositories/{repo_id}/git-config
      → Update config
-DELETE /api/v1/projects/{project_id}/git-config
+DELETE /api/v1/repositories/{repo_id}/git-config
      → Remove Git integration
 
 # Webhook management
-GET  /api/v1/projects/{project_id}/git-config/webhook-url
+GET  /api/v1/repositories/{repo_id}/git-config/webhook-url
      → Get the webhook URL + secret for copy-paste setup
-POST /api/v1/projects/{project_id}/git-config/test
+POST /api/v1/repositories/{repo_id}/git-config/test
      → Test the API token connectivity (verify we can reach the repo)
 ```
 
@@ -648,7 +648,7 @@ Signature verification
     ↓
 Parse & normalize to PullRequestEvent
     ↓
-Look up project by project_id in URL
+Look up repository by repo_id in URL
     ↓
 Check: is this a PR event for a monitored branch? If not, ignore.
     ↓
@@ -711,7 +711,7 @@ cast-clone-backend/
 │   │   ├── drift_detector.py        # CREATE — Circular dep + module dep drift checks
 │   │   └── ai_summary.py            # CREATE — Claude Sonnet summary generation
 │   └── models/
-│       └── db.py                    # MODIFY — Add PrAnalysis, ProjectGitConfig models
+│       └── db.py                    # MODIFY — Add PrAnalysis, RepositoryGitConfig models
 ├── tests/
 │   └── unit/
 │       ├── test_webhook_parsing.py  # CREATE — Per-platform webhook parsing tests
@@ -865,7 +865,7 @@ TOKEN_ENCRYPTION_KEY=...     # Generated by setup script, Fernet key
 - [ ] Git connectivity test endpoint
 
 ### Database
-- [ ] `project_git_config` table + model
+- [ ] `repository_git_config` table + model
 - [ ] `pr_analyses` table + model
 - [ ] Neo4j path indexes for efficient diff mapping
 - [ ] Activity log integration

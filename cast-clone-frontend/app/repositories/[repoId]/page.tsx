@@ -2,11 +2,13 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { GitBranch, RefreshCw } from "lucide-react";
+import { GitBranch, GitPullRequest, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getRepository, syncRepository } from "@/lib/api";
+import { useRepoPrAnalyses } from "@/hooks/usePullRequests";
+import { PrListTable } from "@/components/pull-requests/PrListTable";
 import type { RepositoryResponse } from "@/lib/types";
 
 export default function RepoDetailPage() {
@@ -14,6 +16,8 @@ export default function RepoDetailPage() {
   const repoId = params.repoId as string;
   const [repo, setRepo] = React.useState<RepositoryResponse | null>(null);
   const [syncing, setSyncing] = React.useState(false);
+
+  const { data: prData, loading: prLoading } = useRepoPrAnalyses(repoId);
 
   React.useEffect(() => { getRepository(repoId).then(setRepo); }, [repoId]);
 
@@ -45,8 +49,9 @@ export default function RepoDetailPage() {
         </Button>
       </div>
 
+      {/* Branches */}
       <h2 className="mb-3 text-lg font-semibold">Branches</h2>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 mb-8">
         {repo.projects.map((p) => (
           <Card key={p.id}>
             <CardHeader className="pb-2">
@@ -70,6 +75,28 @@ export default function RepoDetailPage() {
           </Card>
         ))}
       </div>
+
+      {/* Pull Requests */}
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <GitPullRequest className="size-5" />
+          Pull Requests
+        </h2>
+        {prData && prData.total > 0 && (
+          <Link
+            href={`/repositories/${repoId}/pull-requests`}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            View all ({prData.total})
+          </Link>
+        )}
+      </div>
+      {prLoading && (
+        <p className="text-sm text-muted-foreground py-4">Loading pull requests...</p>
+      )}
+      {prData && (
+        <PrListTable items={prData.items} basePath={`/repositories/${repoId}`} />
+      )}
     </div>
   );
 }

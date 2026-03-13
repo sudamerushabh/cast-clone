@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.config import Settings
-from app.models.db import PrAnalysis, ProjectGitConfig
+from app.models.db import PrAnalysis, RepositoryGitConfig
 from app.schemas.git_config import (
     GitConfigCreate,
     GitConfigResponse,
@@ -53,15 +53,15 @@ class TestPhase5aBedrock:
 # --- Task 3: DB Models ---
 
 
-class TestProjectGitConfigModel:
+class TestRepositoryGitConfigModel:
     def test_tablename(self) -> None:
-        assert ProjectGitConfig.__tablename__ == "project_git_config"
+        assert RepositoryGitConfig.__tablename__ == "repository_git_config"
 
     def test_columns_exist(self) -> None:
-        cols = {c.name for c in ProjectGitConfig.__table__.columns}
+        cols = {c.name for c in RepositoryGitConfig.__table__.columns}
         expected = {
             "id",
-            "project_id",
+            "repository_id",
             "platform",
             "repo_url",
             "api_token_encrypted",
@@ -73,8 +73,8 @@ class TestProjectGitConfigModel:
         }
         assert expected.issubset(cols)
 
-    def test_project_id_unique(self) -> None:
-        col = ProjectGitConfig.__table__.c.project_id
+    def test_repository_id_unique(self) -> None:
+        col = RepositoryGitConfig.__table__.c.repository_id
         assert col.unique is True
 
 
@@ -88,13 +88,13 @@ class TestPrAnalysisModel:
             for c in PrAnalysis.__table__.constraints
             if hasattr(c, "name") and c.name
         ]
-        assert "uq_pr_project_commit" in constraint_names
+        assert "uq_pr_repo_commit" in constraint_names
 
     def test_columns_exist(self) -> None:
         cols = {c.name for c in PrAnalysis.__table__.columns}
         expected = {
             "id",
-            "project_id",
+            "repository_id",
             "platform",
             "pr_number",
             "pr_title",
@@ -193,7 +193,7 @@ class TestGitConfigResponse:
         now = datetime.now(tz=timezone.utc)
         resp = GitConfigResponse(
             id="abc",
-            project_id="proj1",
+            repository_id="repo1",
             platform="github",
             repo_url="https://github.com/org/repo",
             monitored_branches=["main"],
@@ -271,7 +271,7 @@ class TestPrAnalysisResponse:
         now = datetime.now(tz=timezone.utc)
         resp = PrAnalysisResponse(
             id="id1",
-            project_id="proj1",
+            repository_id="repo1",
             platform="github",
             pr_number=42,
             pr_title="Fix bug",

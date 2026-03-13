@@ -215,6 +215,7 @@ class Project(Base):
         ForeignKey("repositories.id", ondelete="CASCADE"), nullable=True
     )
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_analyzed_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -259,14 +260,14 @@ class AnalysisRun(Base):
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
 
 
-class ProjectGitConfig(Base):
-    __tablename__ = "project_git_config"
+class RepositoryGitConfig(Base):
+    __tablename__ = "repository_git_config"
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -283,22 +284,26 @@ class ProjectGitConfig(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    project: Mapped[Project] = relationship()
+    repository: Mapped[Repository] = relationship()
+
+
+# Keep old name as alias for backwards compat in imports
+ProjectGitConfig = RepositoryGitConfig
 
 
 class PrAnalysis(Base):
     __tablename__ = "pr_analyses"
     __table_args__ = (
         UniqueConstraint(
-            "project_id", "pr_number", "commit_sha", name="uq_pr_project_commit"
+            "repository_id", "pr_number", "commit_sha", name="uq_pr_repo_commit"
         ),
     )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
     )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    repository_id: Mapped[str] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
     )
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
     pr_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -331,4 +336,4 @@ class PrAnalysis(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    project: Mapped[Project] = relationship()
+    repository: Mapped[Repository] = relationship()

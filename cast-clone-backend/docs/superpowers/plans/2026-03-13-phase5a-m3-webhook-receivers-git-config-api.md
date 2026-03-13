@@ -50,7 +50,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
-from app.models.db import ProjectGitConfig, PrAnalysis, Project
+from app.models.db import RepositoryGitConfig, PrAnalysis, Project
 from app.services.postgres import get_session
 
 
@@ -76,9 +76,9 @@ async def client(mock_session):
     app.dependency_overrides.clear()
 
 
-def _make_git_config(project_id: str = "proj-1") -> ProjectGitConfig:
-    cfg = MagicMock(spec=ProjectGitConfig)
-    cfg.project_id = project_id
+def _make_git_config(repo_id: str = "repo-1") -> RepositoryGitConfig:
+    cfg = MagicMock(spec=RepositoryGitConfig)
+    cfg.repository_id = repo_id
     cfg.platform = "github"
     cfg.webhook_secret = "test-secret"
     cfg.api_token_encrypted = "encrypted"
@@ -113,7 +113,7 @@ class TestWebhookEndpoints:
 
         with patch("app.api.webhooks.BackgroundTasks") as mock_bg:
             resp = await client.post(
-                "/api/v1/webhooks/github/proj-1",
+                "/api/v1/webhooks/github/repo-1",
                 content=body,
                 headers={
                     "x-github-event": "pull_request",
@@ -133,7 +133,7 @@ class TestWebhookEndpoints:
         mock_session.execute.return_value = mock_result
 
         resp = await client.post(
-            "/api/v1/webhooks/github/proj-1",
+            "/api/v1/webhooks/github/repo-1",
             content=b'{"action":"opened"}',
             headers={
                 "x-github-event": "pull_request",
@@ -168,7 +168,7 @@ class TestWebhookEndpoints:
         sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
 
         resp = await client.post(
-            "/api/v1/webhooks/github/proj-1",
+            "/api/v1/webhooks/github/repo-1",
             content=body,
             headers={
                 "x-github-event": "push",
@@ -206,7 +206,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.git import create_platform_client
-from app.models.db import PrAnalysis, ProjectGitConfig
+from app.models.db import PrAnalysis, RepositoryGitConfig
 from app.schemas.webhooks import WebhookResponse
 from app.services.postgres import get_session
 
@@ -218,13 +218,13 @@ Platform = Literal["github", "gitlab", "bitbucket", "gitea"]
 
 
 @router.post(
-    "/{platform}/{project_id}",
+    "/{platform}/{repo_id}",
     response_model=WebhookResponse,
     status_code=202,
 )
 async def receive_webhook(
     platform: Platform,
-    project_id: str,
+    repo_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
@@ -232,15 +232,15 @@ async def receive_webhook(
     """Receive and process a Git platform webhook."""
     # 1. Look up git config for this project
     result = await session.execute(
-        select(ProjectGitConfig).where(
-            ProjectGitConfig.project_id == project_id,
-            ProjectGitConfig.platform == platform,
-            ProjectGitConfig.is_active.is_(True),
+        select(RepositoryGitConfig).where(
+            RepositoryGitConfig.repository_id == repo_id,
+            RepositoryGitConfig.platform == platform,
+            RepositoryGitConfig.is_active.is_(True),
         )
     )
     config = result.scalar_one_or_none()
     if not config:
-        raise HTTPException(status_code=404, detail="No active git config for this project")
+        raise HTTPException(status_code=404, detail="No active git config for this repository")
 
     # 2. Read raw body and headers
     body = await request.body()
@@ -272,7 +272,7 @@ async def receive_webhook(
 
     # 6. Create pr_analyses record
     pr_record = PrAnalysis(
-        project_id=project_id,
+        repository_id=repo_id,
         platform=platform,
         pr_number=event.pr_number,
         pr_title=event.pr_title,
@@ -292,7 +292,7 @@ async def receive_webhook(
     logger.info(
         "webhook_received",
         platform=platform,
-        project_id=project_id,
+        repo_id=repo_id,
         pr_number=event.pr_number,
         analysis_id=pr_record.id,
     )
@@ -351,7 +351,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.config import Settings, get_settings
 from app.main import app
-from app.models.db import ProjectGitConfig, User
+from app.models.db import RepositoryGitConfig, User
 from app.api.dependencies import get_current_user
 from app.services.postgres import get_session
 
@@ -406,7 +406,7 @@ class TestCreateGitConfig:
         mock_session.execute.return_value = mock_result
 
         resp = await client.post(
-            "/api/v1/projects/proj-1/git-config",
+            "/api/v1/repositories/repo-1/git-config",
             json={
                 "platform": "github",
                 "repo_url": "https://github.com/org/repo",
@@ -424,7 +424,7 @@ class TestCreateGitConfig:
     @pytest.mark.asyncio
     async def test_create_rejects_invalid_platform(self, client, mock_session):
         resp = await client.post(
-            "/api/v1/projects/proj-1/git-config",
+            "/api/v1/repositories/repo-1/git-config",
             json={
                 "platform": "svn",
                 "repo_url": "https://example.com",
@@ -437,9 +437,9 @@ class TestCreateGitConfig:
 class TestGetGitConfig:
     @pytest.mark.asyncio
     async def test_get_config(self, client, mock_session):
-        config = MagicMock(spec=ProjectGitConfig)
+        config = MagicMock(spec=RepositoryGitConfig)
         config.id = "cfg-1"
-        config.project_id = "proj-1"
+        config.repository_id = "repo-1"
         config.platform = "github"
         config.repo_url = "https://github.com/org/repo"
         config.monitored_branches = ["main"]
@@ -452,7 +452,7 @@ class TestGetGitConfig:
         mock_result.scalar_one_or_none.return_value = config
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/git-config")
+        resp = await client.get("/api/v1/repositories/repo-1/git-config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["platform"] == "github"
@@ -463,20 +463,20 @@ class TestGetGitConfig:
         mock_result.scalar_one_or_none.return_value = None
         mock_session.execute.return_value = mock_result
 
-        resp = await client.get("/api/v1/projects/proj-1/git-config")
+        resp = await client.get("/api/v1/repositories/repo-1/git-config")
         assert resp.status_code == 404
 
 
 class TestDeleteGitConfig:
     @pytest.mark.asyncio
     async def test_delete_config(self, client, mock_session):
-        config = MagicMock(spec=ProjectGitConfig)
+        config = MagicMock(spec=RepositoryGitConfig)
         config.id = "cfg-1"
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = config
         mock_session.execute.return_value = mock_result
 
-        resp = await client.delete("/api/v1/projects/proj-1/git-config")
+        resp = await client.delete("/api/v1/repositories/repo-1/git-config")
         assert resp.status_code == 204
 ```
 
@@ -501,7 +501,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_admin
 from app.config import Settings, get_settings
-from app.models.db import ProjectGitConfig, User
+from app.models.db import RepositoryGitConfig, User
 from app.schemas.git_config import (
     GitConfigCreate,
     GitConfigResponse,
@@ -514,16 +514,16 @@ from app.services.postgres import get_session
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(
-    prefix="/api/v1/projects/{project_id}/git-config",
+    prefix="/api/v1/repositories/{repo_id}/git-config",
     tags=["git-config"],
 )
 
 
 async def _get_config_or_404(
-    project_id: str, session: AsyncSession
-) -> ProjectGitConfig:
+    repo_id: str, session: AsyncSession
+) -> RepositoryGitConfig:
     result = await session.execute(
-        select(ProjectGitConfig).where(ProjectGitConfig.project_id == project_id)
+        select(RepositoryGitConfig).where(RepositoryGitConfig.repository_id == repo_id)
     )
     config = result.scalar_one_or_none()
     if not config:
@@ -533,23 +533,23 @@ async def _get_config_or_404(
 
 @router.post("", status_code=201)
 async def create_git_config(
-    project_id: str,
+    repo_id: str,
     body: GitConfigCreate,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     _user: User = Depends(require_admin),
 ) -> dict:
-    """Configure Git integration for a project."""
+    """Configure Git integration for a repository."""
     # Check for existing config
     result = await session.execute(
-        select(ProjectGitConfig).where(ProjectGitConfig.project_id == project_id)
+        select(RepositoryGitConfig).where(RepositoryGitConfig.repository_id == repo_id)
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Git config already exists for this project")
+        raise HTTPException(status_code=409, detail="Git config already exists for this repository")
 
     webhook_secret = secrets.token_urlsafe(32)
-    config = ProjectGitConfig(
-        project_id=project_id,
+    config = RepositoryGitConfig(
+        repository_id=repo_id,
         platform=body.platform,
         repo_url=body.repo_url,
         api_token_encrypted=encrypt_token(body.api_token, settings.secret_key),
@@ -562,12 +562,12 @@ async def create_git_config(
 
     return {
         "id": config.id,
-        "project_id": config.project_id,
+        "repository_id": config.repository_id,
         "platform": config.platform,
         "repo_url": config.repo_url,
         "monitored_branches": config.monitored_branches,
         "is_active": config.is_active,
-        "webhook_url": f"/api/v1/webhooks/{config.platform}/{project_id}",
+        "webhook_url": f"/api/v1/webhooks/{config.platform}/{repo_id}",
         "webhook_secret": webhook_secret,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
@@ -576,25 +576,25 @@ async def create_git_config(
 
 @router.get("", response_model=GitConfigResponse)
 async def get_git_config(
-    project_id: str,
+    repo_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(require_admin),
 ) -> GitConfigResponse:
-    """Get current git config for a project (token masked)."""
-    config = await _get_config_or_404(project_id, session)
+    """Get current git config for a repository (token masked)."""
+    config = await _get_config_or_404(repo_id, session)
     return GitConfigResponse.model_validate(config)
 
 
 @router.put("", response_model=GitConfigResponse)
 async def update_git_config(
-    project_id: str,
+    repo_id: str,
     body: GitConfigUpdate,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     _user: User = Depends(require_admin),
 ) -> GitConfigResponse:
-    """Update git config for a project."""
-    config = await _get_config_or_404(project_id, session)
+    """Update git config for a repository."""
+    config = await _get_config_or_404(repo_id, session)
 
     if body.repo_url is not None:
         config.repo_url = body.repo_url
@@ -612,12 +612,12 @@ async def update_git_config(
 
 @router.delete("", status_code=204)
 async def delete_git_config(
-    project_id: str,
+    repo_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(require_admin),
 ) -> Response:
-    """Remove Git integration for a project."""
-    config = await _get_config_or_404(project_id, session)
+    """Remove Git integration for a repository."""
+    config = await _get_config_or_404(repo_id, session)
     await session.delete(config)
     await session.commit()
     return Response(status_code=204)
@@ -625,27 +625,27 @@ async def delete_git_config(
 
 @router.get("/webhook-url", response_model=WebhookUrlResponse)
 async def get_webhook_url(
-    project_id: str,
+    repo_id: str,
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(require_admin),
 ) -> WebhookUrlResponse:
     """Get the webhook URL and secret for copy-paste setup."""
-    config = await _get_config_or_404(project_id, session)
+    config = await _get_config_or_404(repo_id, session)
     return WebhookUrlResponse(
-        webhook_url=f"/api/v1/webhooks/{config.platform}/{project_id}",
+        webhook_url=f"/api/v1/webhooks/{config.platform}/{repo_id}",
         webhook_secret=config.webhook_secret,
     )
 
 
 @router.post("/test")
 async def test_git_connectivity(
-    project_id: str,
+    repo_id: str,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     _user: User = Depends(require_admin),
 ) -> dict:
     """Test that the stored API token can reach the Git platform."""
-    config = await _get_config_or_404(project_id, session)
+    config = await _get_config_or_404(repo_id, session)
 
     from app.services.crypto import decrypt_token
     from app.services.git_providers import create_provider
@@ -692,7 +692,7 @@ git commit -m "feat(phase5a): add git config CRUD + webhook URL endpoints"
 
 ## Success Criteria
 
-- [ ] `POST /api/v1/webhooks/{platform}/{project_id}` receives webhooks, verifies signature, creates `PrAnalysis` record
+- [ ] `POST /api/v1/webhooks/{platform}/{repo_id}` receives webhooks, verifies signature, creates `PrAnalysis` record
 - [ ] Webhook returns 403 on invalid signature, 404 on missing config, 200 on ignored events, 202 on accepted
 - [ ] Git config CRUD works: create (201), get (200), update (200), delete (204)
 - [ ] `GET /webhook-url` returns the URL and secret for copy-paste
