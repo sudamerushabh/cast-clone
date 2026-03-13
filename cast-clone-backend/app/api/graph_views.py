@@ -389,7 +389,7 @@ async def get_transaction(
     # Get edges between the included nodes
     edge_records = await store.query(
         "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f1) "
-        "MATCH (f1)-[r:CALLS]->(f2) "
+        "MATCH (f1)-[r:CALLS|WRITES|READS]->(f2) "
         "WHERE (t)-[:INCLUDES]->(f2) "
         "RETURN f1.fqn AS source_fqn, f2.fqn AS target_fqn, "
         "type(r) AS kind, r.confidence AS confidence, r.evidence AS evidence",
