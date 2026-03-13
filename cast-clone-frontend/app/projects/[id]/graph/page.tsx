@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useCallback, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { useParams } from "next/navigation"
 import type cytoscape from "cytoscape"
 import { Activity, Filter, GitBranch, RefreshCw, Route } from "lucide-react"
@@ -655,8 +656,8 @@ export default function GraphPage() {
         projectId={projectId}
       />
 
-      {/* Right-click context menu */}
-      {contextMenu && (
+      {/* Right-click context menu — rendered via portal to escape Cytoscape's stacking context */}
+      {contextMenu && typeof document !== "undefined" && createPortal(
         <>
           {/* Invisible backdrop to dismiss on outside click */}
           <div
@@ -697,7 +698,8 @@ export default function GraphPage() {
               </button>
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   )
