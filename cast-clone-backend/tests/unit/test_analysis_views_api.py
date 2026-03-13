@@ -29,8 +29,14 @@ def mock_graph_store():
 class TestImpactAnalysis:
     def test_downstream_impact_returns_affected_nodes(self, client, mock_graph_store):
         mock_graph_store.query.return_value = [
-            {"fqn": "com.app.Repo.save", "name": "save", "type": "Function", "file": "Repo.java", "depth": 1},
-            {"fqn": "com.app.users", "name": "users", "type": "Table", "file": None, "depth": 2},
+            {
+                "fqn": "com.app.Repo.save", "name": "save",
+                "type": "Function", "file": "Repo.java", "depth": 1,
+            },
+            {
+                "fqn": "com.app.users", "name": "users",
+                "type": "Table", "file": None, "depth": 2,
+            },
         ]
         resp = client.get(
             "/api/v1/analysis/test-project/impact/com.app.Service.create",
@@ -47,7 +53,10 @@ class TestImpactAnalysis:
 
     def test_upstream_impact(self, client, mock_graph_store):
         mock_graph_store.query.return_value = [
-            {"fqn": "com.app.Controller.handle", "name": "handle", "type": "Function", "file": "Controller.java", "depth": 1},
+            {
+                "fqn": "com.app.Controller.handle", "name": "handle",
+                "type": "Function", "file": "Controller.java", "depth": 1,
+            },
         ]
         resp = client.get(
             "/api/v1/analysis/test-project/impact/com.app.Service.create",
@@ -169,7 +178,10 @@ class TestCircularDependencies:
 class TestDeadCode:
     def test_dead_functions(self, client, mock_graph_store):
         mock_graph_store.query.return_value = [
-            {"fqn": "com.app.Util.unused", "name": "unused", "path": "Util.java", "line": 42, "loc": 15},
+            {
+                "fqn": "com.app.Util.unused", "name": "unused",
+                "path": "Util.java", "line": 42, "loc": 15,
+            },
         ]
         resp = client.get(
             "/api/v1/analysis/test-project/dead-code",
