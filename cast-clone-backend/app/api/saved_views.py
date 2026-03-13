@@ -16,6 +16,7 @@ from app.schemas.saved_views import (
     SavedViewResponse,
     SavedViewUpdate,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 logger = structlog.get_logger()
@@ -52,6 +53,13 @@ async def save_view(
     view = result.scalar_one()
 
     logger.info("view_saved", view_id=view.id, name=req.name)
+    await log_activity(
+        session,
+        "view.saved",
+        user_id=user.id,
+        resource_type="view",
+        resource_id=view.id,
+    )
     return SavedViewResponse.model_validate(view, from_attributes=True)
 
 
@@ -149,3 +157,10 @@ async def delete_view(
     await session.commit()
 
     logger.info("view_deleted", view_id=view_id)
+    await log_activity(
+        session,
+        "view.deleted",
+        user_id=user.id,
+        resource_type="view",
+        resource_id=view_id,
+    )

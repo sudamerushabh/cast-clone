@@ -19,6 +19,7 @@ from app.schemas.auth import (
     SetupStatusResponse,
     UserResponse,
 )
+from app.services.activity import log_activity
 from app.services.auth import create_access_token, hash_password, verify_password
 from app.services.postgres import get_session
 
@@ -56,6 +57,13 @@ async def login(
 
     token = create_access_token(user.id, settings.secret_key)
     logger.info("login_success", user_id=user.id, username=user.username)
+    await log_activity(
+        session,
+        "user.login",
+        user_id=user.id,
+        resource_type="user",
+        resource_id=user.id,
+    )
     return LoginResponse(access_token=token)
 
 
@@ -98,4 +106,11 @@ async def initial_setup(
     await session.refresh(user)
 
     logger.info("initial_setup_complete", user_id=user.id, username=user.username)
+    await log_activity(
+        session,
+        "user.created",
+        user_id=user.id,
+        resource_type="user",
+        resource_id=user.id,
+    )
     return UserResponse.model_validate(user, from_attributes=True)

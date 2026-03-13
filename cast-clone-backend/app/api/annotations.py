@@ -15,6 +15,7 @@ from app.schemas.annotations import (
     AnnotationResponse,
     AnnotationUpdate,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 logger = structlog.get_logger()
@@ -58,6 +59,13 @@ async def create_annotation(
         annotation_id=annotation.id,
         project_id=project_id,
         node_fqn=req.node_fqn,
+    )
+    await log_activity(
+        session,
+        "annotation.created",
+        user_id=user.id,
+        resource_type="annotation",
+        resource_id=annotation.id,
     )
     return AnnotationResponse.model_validate(annotation, from_attributes=True)
 
@@ -133,3 +141,10 @@ async def delete_annotation(
     await session.commit()
 
     logger.info("annotation_deleted", annotation_id=annotation_id)
+    await log_activity(
+        session,
+        "annotation.deleted",
+        user_id=user.id,
+        resource_type="annotation",
+        resource_id=annotation_id,
+    )
