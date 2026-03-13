@@ -72,7 +72,26 @@ class TestGdsCommunityDetection:
         mock_graph.drop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skips_if_no_class_nodes_in_neo4j(self):
+    async def test_skips_if_node_count_is_zero(self):
+        """nodeCount == 0 in projection stats triggers early return without running Louvain."""
+        mock_driver = AsyncMock()
+        mock_gds = MagicMock()
+        mock_graph = MagicMock()
+        mock_gds.graph.project.return_value = (mock_graph, {"nodeCount": 0})
+        mock_graph.drop = MagicMock()
+        ctx = _make_context()
+
+        with patch("app.stages.gds_enricher._create_gds_client", return_value=mock_gds):
+            result = await run_gds_community_detection(ctx, mock_driver)
+
+        assert result["communityCount"] == 0
+        assert ctx.community_count == 0
+        mock_gds.louvain.write.assert_not_called()
+        mock_graph.drop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_if_projection_raises_no_nodes(self):
+        """Exception from gds.graph.project is handled gracefully (e.g. no matching labels)."""
         mock_driver = AsyncMock()
         mock_gds = MagicMock()
         mock_gds.graph.project.side_effect = Exception("No nodes found with the specified labels")
@@ -82,3 +101,4 @@ class TestGdsCommunityDetection:
             result = await run_gds_community_detection(ctx, mock_driver)
 
         assert result["communityCount"] == 0
+        assert len(ctx.warnings) == 1

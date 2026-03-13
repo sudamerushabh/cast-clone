@@ -1,4 +1,4 @@
-"""Analysis pipeline orchestrator — runs 9 stages sequentially.
+"""Analysis pipeline orchestrator — runs 10 stages sequentially.
 
 Each stage function delegates to the real implementation from app.stages.*.
 Services (GraphStore) are injected via PipelineServices.
@@ -112,7 +112,7 @@ async def _stage_linking(context: AnalysisContext, services: PipelineServices) -
 async def _stage_enrichment(
     context: AnalysisContext, services: PipelineServices
 ) -> None:
-    """Stage 7: Compute metrics and run community detection."""
+    """Stage 7: Compute metrics and aggregations."""
     from app.stages.enricher import enrich_graph
 
     await enrich_graph(context)
@@ -198,7 +198,7 @@ async def run_analysis_pipeline(
     run_id: str | None = None,
     services: PipelineServices | None = None,
 ) -> None:
-    """Run the full 9-stage analysis pipeline.
+    """Run the full 10-stage analysis pipeline.
 
     Called as a FastAPI BackgroundTask. Loads the project from DB,
     runs each stage sequentially, updates status, and reports progress

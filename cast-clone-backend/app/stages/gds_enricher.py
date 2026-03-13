@@ -75,7 +75,7 @@ async def run_gds_community_detection(
             },
         )
 
-        node_count = stats.get("nodeCount", 0) if isinstance(stats, dict) else 0
+        node_count = int(stats.get("nodeCount", 0)) if stats is not None else 0
         if node_count == 0:
             context.community_count = 0
             return result
@@ -83,11 +83,9 @@ async def run_gds_community_detection(
         louvain_result = await asyncio.to_thread(
             gds.louvain.write, graph_proj, writeProperty="communityId"
         )
-        if not isinstance(louvain_result, dict):
-            louvain_result = dict(louvain_result)
 
-        community_count = louvain_result.get("communityCount", 0)
-        modularity = louvain_result.get("modularity", 0.0)
+        community_count = int(louvain_result.get("communityCount", 0))
+        modularity = float(louvain_result.get("modularity", 0.0))
 
         result = {
             "communityCount": community_count,
