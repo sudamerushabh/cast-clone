@@ -6,9 +6,11 @@ import { usePathname } from "next/navigation";
 import {
   FolderOpen,
   GitGraph,
+  GitPullRequest,
   LayoutDashboard,
   Route,
   Search,
+  Settings,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -51,6 +53,16 @@ export function Sidebar({ projectId }: SidebarProps) {
       label: "Search",
       href: `/projects/${projectId}/search`,
       icon: Search,
+    },
+    {
+      label: "Pull Requests",
+      href: `/projects/${projectId}/pull-requests`,
+      icon: GitPullRequest,
+    },
+    {
+      label: "Git Integration",
+      href: `/projects/${projectId}/settings/git-integration`,
+      icon: Settings,
     },
   ];
 

@@ -90,6 +90,12 @@ class Neo4jGraphStore(GraphStore):
             "CREATE INDEX IF NOT EXISTS FOR (n:Transaction) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Class) ON (n.language)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Function) ON (n.language)",
+            # Phase 5a: path indexes for diff-to-graph mapping
+            "CREATE INDEX IF NOT EXISTS FOR (n:Class) ON (n.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Function) ON (n.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Interface) ON (n.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Field) ON (n.path)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:APIEndpoint) ON (n.path)",
         ]
         async with self._driver.session(database=self._database) as session:
             for stmt in index_statements:

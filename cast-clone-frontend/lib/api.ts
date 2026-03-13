@@ -17,6 +17,8 @@ import type {
   CreateRepositoryRequest,
   DeadCodeResponse,
   EvolutionTimelineResponse,
+  GitConfig,
+  GitConfigCreateResponse,
   GraphEdgeListResponse,
   GraphNodeListResponse,
   GraphSearchResponse,
@@ -27,6 +29,10 @@ import type {
   NodeDetailResponse,
   NodeWithNeighborsResponse,
   PathFinderResponse,
+  PrAnalysis,
+  PrAnalysisList,
+  PrDriftDetail,
+  PrImpactDetail,
   ProjectListResponse,
   ProjectResponse,
   RemoteRepoListResponse,
@@ -46,6 +52,7 @@ import type {
   SavedViewResponse,
   SavedViewListItem,
   ActivityLogEntry,
+  WebhookUrlInfo,
 } from "./types";
 
 const BASE_URL =
@@ -663,4 +670,111 @@ export async function getActivityFeed(params?: {
   if (params?.user_id) searchParams.set("user_id", params.user_id);
   if (params?.action) searchParams.set("action", params.action);
   return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
+}
+
+// ── Phase 5a: PR Analysis API ──
+
+export async function fetchPrAnalyses(
+  projectId: string,
+  params?: { status?: string; risk?: string; limit?: number; offset?: number },
+): Promise<PrAnalysisList> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set("status", params.status);
+  if (params?.risk) searchParams.set("risk", params.risk);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const qs = searchParams.toString();
+  return apiFetch<PrAnalysisList>(
+    `/api/v1/projects/${projectId}/pull-requests${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function fetchPrAnalysis(
+  projectId: string,
+  analysisId: string,
+): Promise<PrAnalysis> {
+  return apiFetch<PrAnalysis>(
+    `/api/v1/projects/${projectId}/pull-requests/${analysisId}`,
+  );
+}
+
+export async function fetchPrImpact(
+  projectId: string,
+  analysisId: string,
+): Promise<PrImpactDetail> {
+  return apiFetch<PrImpactDetail>(
+    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/impact`,
+  );
+}
+
+export async function fetchPrDrift(
+  projectId: string,
+  analysisId: string,
+): Promise<PrDriftDetail> {
+  return apiFetch<PrDriftDetail>(
+    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/drift`,
+  );
+}
+
+export async function reanalyzePr(
+  projectId: string,
+  analysisId: string,
+): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/projects/${projectId}/pull-requests/${analysisId}/reanalyze`,
+    { method: "POST" },
+  );
+}
+
+// ── Git Config ──
+
+export async function fetchGitConfig(
+  projectId: string,
+): Promise<GitConfig | null> {
+  try {
+    return await apiFetch<GitConfig>(
+      `/api/v1/projects/${projectId}/git-config`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function createGitConfig(
+  projectId: string,
+  body: {
+    platform: string;
+    repo_url: string;
+    api_token: string;
+    monitored_branches?: string[];
+  },
+): Promise<GitConfigCreateResponse> {
+  return apiFetch<GitConfigCreateResponse>(
+    `/api/v1/projects/${projectId}/git-config`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export async function deleteGitConfig(projectId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/projects/${projectId}/git-config`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchWebhookUrl(
+  projectId: string,
+): Promise<WebhookUrlInfo> {
+  return apiFetch<WebhookUrlInfo>(
+    `/api/v1/projects/${projectId}/git-config/webhook-url`,
+  );
+}
+
+export async function testGitConnectivity(
+  projectId: string,
+): Promise<{ status: string; username?: string; message?: string }> {
+  return apiFetch<{ status: string; username?: string; message?: string }>(
+    `/api/v1/projects/${projectId}/git-config/test`,
+    { method: "POST" },
+  );
 }

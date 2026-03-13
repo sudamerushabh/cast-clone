@@ -578,6 +578,97 @@ export interface ActivityLogEntry {
   created_at: string;
 }
 
+// ── Phase 5a: PR Analysis Types ──
+
+export interface PrAnalysis {
+  id: string;
+  project_id: string;
+  platform: string;
+  pr_number: number;
+  pr_title: string;
+  pr_description?: string;
+  pr_author: string;
+  source_branch: string;
+  target_branch: string;
+  commit_sha: string;
+  pr_url?: string;
+  status: "pending" | "analyzing" | "completed" | "failed" | "stale";
+  risk_level?: "High" | "Medium" | "Low";
+  changed_node_count?: number;
+  blast_radius_total?: number;
+  files_changed?: number;
+  additions?: number;
+  deletions?: number;
+  ai_summary?: string;
+  ai_summary_tokens?: number;
+  analysis_duration_ms?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrAnalysisList {
+  items: PrAnalysis[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PrImpactDetail {
+  pr_analysis_id: string;
+  total_blast_radius: number;
+  by_type: Record<string, number>;
+  by_depth: Record<string, number>;
+  by_layer: Record<string, number>;
+  changed_nodes: Array<{
+    fqn: string;
+    name: string;
+    type: string;
+    change_type: string;
+  }>;
+  downstream_count: number;
+  upstream_count: number;
+  cross_tech: Array<{
+    kind: string;
+    name: string;
+    detail: string;
+  }>;
+  transactions_affected: string[];
+  new_files: string[];
+  non_graph_files: string[];
+}
+
+export interface PrDriftDetail {
+  pr_analysis_id: string;
+  has_drift: boolean;
+  potential_new_module_deps: Array<{
+    from_module: string;
+    to_module: string;
+  }>;
+  circular_deps_affected: string[][];
+  new_files_outside_modules: string[];
+}
+
+export interface GitConfig {
+  id: string;
+  project_id: string;
+  platform: string;
+  repo_url: string;
+  monitored_branches: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitConfigCreateResponse extends GitConfig {
+  webhook_url: string;
+  webhook_secret: string;
+}
+
+export interface WebhookUrlInfo {
+  webhook_url: string;
+  webhook_secret: string;
+}
+
 // ── Phase 4: Saved Views ──
 
 export interface SavedViewState {

@@ -15,16 +15,19 @@ from app.api import (
     auth_router,
     connectors_router,
     export_router,
+    git_config_router,
     graph_router,
     graph_views_router,
     health_router,
     projects_router,
+    pull_requests_router,
     repositories_router,
     tags_project_router,
     tags_router,
     users_router,
     views_project_router,
     views_router,
+    webhooks_router,
     websocket_router,
 )
 from app.config import Settings
@@ -112,6 +115,9 @@ def create_app() -> FastAPI:
     application.include_router(users_router)
     application.include_router(views_project_router)
     application.include_router(views_router)
+    application.include_router(pull_requests_router)
+    application.include_router(webhooks_router)
+    application.include_router(git_config_router)
     application.include_router(websocket_router)
 
     return application
