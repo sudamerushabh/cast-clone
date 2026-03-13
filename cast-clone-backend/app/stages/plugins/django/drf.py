@@ -161,20 +161,23 @@ class DjangoDRFPlugin(FrameworkPlugin):
                 )
 
                 # READS/WRITES edges to tables (if ORM plugin has run)
-                table_edges = self._find_table_edges(context, vs_fqn, model_fqn)
+                viewset_type = self._classify_viewset(context, vs_fqn)
+                table_edges = self._find_table_edges(
+                    context, vs_fqn, model_fqn, viewset_type
+                )
                 edges.extend(table_edges)
-
-            # Generate CRUD endpoint nodes
-            viewset_type = self._classify_viewset(context, vs_fqn)
+            else:
+                viewset_type = self._classify_viewset(context, vs_fqn)
             resource_name = self._derive_resource_name(model_name or vs_node.name)
             actions = _VIEWSET_ACTIONS.get(viewset_type, [])
 
             for action_name, method, suffix in actions:
-                path = (
+                raw = (
                     f"/{resource_name}/{suffix.lstrip('/')}"
                     if suffix
                     else f"/{resource_name}/"
                 )
+                path = raw if raw.endswith("/") else raw + "/"
                 ep_fqn = f"{method}:{path}"
                 ep_node = GraphNode(
                     fqn=ep_fqn,
@@ -204,7 +207,7 @@ class DjangoDRFPlugin(FrameworkPlugin):
                 entry_points.append(
                     EntryPoint(
                         fqn=ep_fqn,
-                        kind="http",
+                        kind="http_endpoint",
                         metadata={"method": method, "path": path},
                     )
                 )
@@ -298,8 +301,14 @@ class DjangoDRFPlugin(FrameworkPlugin):
         context: AnalysisContext,
         vs_fqn: str,
         model_fqn: str,
+        viewset_type: str,
     ) -> list[GraphEdge]:
-        """Find MAPS_TO edges from model to table and create READS/WRITES."""
+        """Find MAPS_TO edges from model to table and create READS/WRITES.
+
+        Only emits WRITES edges for viewset types that support write
+        operations (e.g. ModelViewSet). ReadOnlyModelViewSet only gets READS.
+        """
+        read_only = viewset_type == "ReadOnlyModelViewSet"
         edges: list[GraphEdge] = []
         for edge in context.graph.get_edges_from(model_fqn):
             if edge.kind == EdgeKind.MAPS_TO:
@@ -313,21 +322,22 @@ class DjangoDRFPlugin(FrameworkPlugin):
                         evidence="django-drf",
                     )
                 )
-                edges.append(
-                    GraphEdge(
-                        source_fqn=vs_fqn,
-                        target_fqn=table_fqn,
-                        kind=EdgeKind.WRITES,
-                        confidence=Confidence.HIGH,
-                        evidence="django-drf",
+                if not read_only:
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=vs_fqn,
+                            target_fqn=table_fqn,
+                            kind=EdgeKind.WRITES,
+                            confidence=Confidence.HIGH,
+                            evidence="django-drf",
+                        )
                     )
-                )
         return edges
 
     def _classify_viewset(self, context: AnalysisContext, vs_fqn: str) -> str:
         """Determine the ViewSet type (ModelViewSet, ReadOnlyModelViewSet, etc.)."""
-        for edge in context.graph.edges:
-            if edge.kind == EdgeKind.INHERITS and edge.source_fqn == vs_fqn:
+        for edge in context.graph.get_edges_from(vs_fqn):
+            if edge.kind == EdgeKind.INHERITS:
                 target = edge.target_fqn
                 if "ReadOnlyModelViewSet" in target:
                     return "ReadOnlyModelViewSet"

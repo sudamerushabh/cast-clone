@@ -127,9 +127,9 @@ class DjangoURLsPlugin(FrameworkPlugin):
             if node.kind != NodeKind.FIELD or node.name != "urlpatterns":
                 continue
             value = node.properties.get("value", "")
-            # Find parent module via CONTAINS edge
-            for edge in graph.edges:
-                if edge.target_fqn == node.fqn and edge.kind == EdgeKind.CONTAINS:
+            # Find parent module via CONTAINS edge (indexed lookup)
+            for edge in graph.get_edges_to(node.fqn):
+                if edge.kind == EdgeKind.CONTAINS:
                     parent = graph.nodes.get(edge.source_fqn)
                     if parent and parent.kind == NodeKind.MODULE:
                         result[edge.source_fqn] = value
@@ -196,8 +196,8 @@ class DjangoURLsPlugin(FrameworkPlugin):
             # Resolve view reference to a graph node
             view_fqn = self._resolve_view_ref(graph, app_prefix, view_ref)
 
-            # Create endpoint FQN
-            endpoint_fqn = f"endpoint:{module_fqn}:{url_pattern or '/'}"
+            # Create endpoint FQN using METHOD:path convention
+            endpoint_fqn = f"ANY:{full_path}"
 
             endpoint_node = GraphNode(
                 fqn=endpoint_fqn,

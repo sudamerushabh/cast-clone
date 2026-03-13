@@ -141,9 +141,9 @@ class DjangoSettingsPlugin(FrameworkPlugin):
         for node in graph.nodes.values():
             if node.kind != NodeKind.FIELD or node.name != "INSTALLED_APPS":
                 continue
-            # Find parent module via CONTAINS edge
-            for edge in graph.edges:
-                if edge.target_fqn == node.fqn and edge.kind == EdgeKind.CONTAINS:
+            # Find parent module via CONTAINS edge (indexed lookup)
+            for edge in graph.get_edges_to(node.fqn):
+                if edge.kind == EdgeKind.CONTAINS:
                     parent = graph.nodes.get(edge.source_fqn)
                     if parent and parent.kind == NodeKind.MODULE:
                         modules.add(edge.source_fqn)
@@ -155,8 +155,8 @@ class DjangoSettingsPlugin(FrameworkPlugin):
     ) -> list[tuple[str, GraphNode]]:
         """Get Django settings fields from a module."""
         fields: list[tuple[str, GraphNode]] = []
-        for edge in graph.edges:
-            if edge.source_fqn != module_fqn or edge.kind != EdgeKind.CONTAINS:
+        for edge in graph.get_edges_from(module_fqn):
+            if edge.kind != EdgeKind.CONTAINS:
                 continue
             field_node = graph.nodes.get(edge.target_fqn)
             if (

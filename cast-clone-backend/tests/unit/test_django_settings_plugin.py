@@ -70,8 +70,7 @@ def _make_settings_module(graph: SymbolGraph) -> None:
         "myproject.settings",
         "INSTALLED_APPS",
         value=(
-            '["django.contrib.admin", "django.contrib.auth",'
-            ' "myapp", "rest_framework"]'
+            '["django.contrib.admin", "django.contrib.auth", "myapp", "rest_framework"]'
         ),
     )
     _add_field(
@@ -85,8 +84,7 @@ def _make_settings_module(graph: SymbolGraph) -> None:
         "myproject.settings",
         "DATABASES",
         value=(
-            '{"default": {"ENGINE": '
-            '"django.db.backends.postgresql", "NAME": "mydb"}}'
+            '{"default": {"ENGINE": "django.db.backends.postgresql", "NAME": "mydb"}}'
         ),
     )
     _add_field(

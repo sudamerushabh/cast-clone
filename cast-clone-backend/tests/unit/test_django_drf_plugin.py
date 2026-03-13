@@ -164,7 +164,7 @@ class TestDRFViewSetChain:
 
     @pytest.mark.asyncio
     async def test_viewset_reads_writes_table(self):
-        """ViewSet -> READS/WRITES edges to table (if ORM ran)."""
+        """ModelViewSet -> both READS and WRITES edges to table."""
         plugin = DjangoDRFPlugin()
         ctx = _make_context_with_drf()
 
@@ -200,10 +200,53 @@ class TestDRFViewSetChain:
         )
 
         result = await plugin.extract(ctx)
-        rw_edges = [
-            e for e in result.edges if e.kind in (EdgeKind.READS, EdgeKind.WRITES)
-        ]
-        assert len(rw_edges) >= 1
+        reads_edges = [e for e in result.edges if e.kind == EdgeKind.READS]
+        writes_edges = [e for e in result.edges if e.kind == EdgeKind.WRITES]
+        assert len(reads_edges) == 1
+        assert len(writes_edges) == 1
+
+    @pytest.mark.asyncio
+    async def test_readonly_viewset_no_writes(self):
+        """ReadOnlyModelViewSet -> only READS edges, no WRITES."""
+        plugin = DjangoDRFPlugin()
+        ctx = _make_context_with_drf()
+
+        # Simulate ORM plugin output: model + table
+        _add_class(
+            ctx.graph, "myapp.models.User", "User", bases=["django.db.models.Model"]
+        )
+        table_node = GraphNode(
+            fqn="table:myapp_user",
+            name="myapp_user",
+            kind=NodeKind.TABLE,
+        )
+        ctx.graph.add_node(table_node)
+        ctx.graph.add_edge(
+            GraphEdge(
+                source_fqn="myapp.models.User",
+                target_fqn="table:myapp_user",
+                kind=EdgeKind.MAPS_TO,
+                confidence=Confidence.HIGH,
+                evidence="django-orm",
+            )
+        )
+
+        # ReadOnlyModelViewSet
+        _add_class(
+            ctx.graph,
+            "myapp.views.UserViewSet",
+            "UserViewSet",
+            bases=["rest_framework.viewsets.ReadOnlyModelViewSet"],
+        )
+        _add_field(
+            ctx.graph, "myapp.views.UserViewSet", "queryset", value="User.objects.all()"
+        )
+
+        result = await plugin.extract(ctx)
+        reads_edges = [e for e in result.edges if e.kind == EdgeKind.READS]
+        writes_edges = [e for e in result.edges if e.kind == EdgeKind.WRITES]
+        assert len(reads_edges) == 1
+        assert len(writes_edges) == 0
 
     @pytest.mark.asyncio
     async def test_viewset_creates_crud_endpoints(self):
