@@ -84,7 +84,13 @@ class ChatToolContext:
     graph_store: GraphStore       # Neo4j query interface
     app_name: str                 # Application name in Neo4j
     project_id: str               # For PostgreSQL lookups
+    repo_path: str | None = None  # Cloned repo path (for get_source_code file reads)
+    db_session: AsyncSession | None = None  # For PostgreSQL writes (annotations, summaries)
 ```
+
+**Note on `repo_path`:** The `get_source_code` tool reads file content from the cloned repository on disk (path stored in Neo4j node metadata). If the project has a cloned repo (`Repository.local_path`), the tool reads from it with path traversal guards (same as Phase 5a's `_read_file`). If no repo is cloned, the tool returns node metadata only (FQN, path, line range) without source content.
+
+**Note on `add_annotation`:** This tool requires PostgreSQL write access (not just Neo4j reads). The `db_session` field enables this. The tool is included in both chat and MCP tool sets.
 
 **Tool definitions for Claude API:** Separate file `app/ai/tool_definitions.py` with the `tools` array in Anthropic API format (name, description, input_schema). Same definitions will be reused by MCP in M4.
 
@@ -95,10 +101,13 @@ class ChatToolContext:
 A Claude Sonnet agent with extended thinking that iterates tool calls until it has enough context to answer the user's question.
 
 **Agent configuration:**
-- Model: `claude-sonnet-4-20250514` (configurable via `app/config.py`)
-- Extended thinking: enabled
+- Model: configurable via `app/config.py` (uses same model config pattern as Phase 5a — supports both direct Anthropic API and AWS Bedrock model IDs)
+- Extended thinking: enabled, `budget_tokens: 2048` (thinking tokens are separate from response tokens)
 - Tool budget: max 15 tool calls per conversation turn, 2-minute timeout
-- Max tokens: 4096 for response
+- Max tokens: 4096 for response (excluding thinking budget)
+- Concurrency guard: max 1 active chat stream per user (asyncio semaphore keyed by user_id) — prevents abuse without full rate limiting
+
+**Anthropic client setup:** Use `anthropic.AsyncAnthropic()` consistently (async-by-default convention). The model ID and any AWS Bedrock configuration are read from `app/config.py`, matching the pattern established in Phase 5a's supervisor.
 
 **Page context injection:**
 
@@ -183,10 +192,18 @@ async def chat_stream(
 
 **Location:** `app/api/chat.py`
 
+**Authentication:** JWT required (same auth middleware as all other project endpoints). The chat endpoint triggers billable Anthropic API calls — unauthenticated access would burn through the API budget.
+
+**SSE connection lifecycle:**
+- If the client disconnects mid-stream, the backend detects the broken connection and cancels the in-flight Anthropic API call (via `asyncio.Task.cancel()`)
+- No `Last-Event-ID` reconnection support — client re-sends the conversation history on reconnect
+- Maximum connection duration: bounded by the 2-minute agent timeout
+
 ```
 POST /api/v1/projects/{project_id}/chat
 Content-Type: application/json
 Accept: text/event-stream
+Authorization: Bearer <jwt_token>
 
 Request body:
 {
@@ -238,10 +255,11 @@ app/schemas/
 
 ```python
 # app/config.py
-chat_model: str = "claude-sonnet-4-20250514"
+chat_model: str = "us.anthropic.claude-sonnet-4-6"  # Matches Phase 5a Bedrock pattern
 chat_max_tool_calls: int = 15
 chat_timeout_seconds: int = 120
 chat_max_response_tokens: int = 4096
+chat_thinking_budget_tokens: int = 2048
 ```
 
 ### DB Changes (M1)
@@ -307,6 +325,8 @@ CREATE TABLE ai_summaries (
 
 **Staleness on re-analysis:** When a new `AnalysisRun` completes for a project, all summaries for that project become potentially stale. The lazy hash-check approach handles this — no need for bulk invalidation.
 
+**Concurrent generation:** If two users request the same summary simultaneously when cache is stale, both will generate. Use PostgreSQL `INSERT ... ON CONFLICT (project_id, node_fqn) DO UPDATE` (upsert) so the second write overwrites cleanly instead of failing on the unique constraint.
+
 ### Chat Agent Integration
 
 The `get_or_generate_summary` tool is added to the shared tool layer so the chat agent can use it:
@@ -353,7 +373,9 @@ app/schemas/
 
 ### Chat Panel
 
-A slide-out drawer from the right side, triggered by a floating button (bottom-right) or keyboard shortcut. Persists across page navigation within a project (React state in project layout component).
+A slide-out drawer from the right side, triggered by a floating button (bottom-right) or keyboard shortcut. Persists across page navigation within a project.
+
+**State persistence:** Chat state (messages, toggle setting) lives in a React context provider wrapping the project layout (`app/projects/[id]/layout.tsx`). This survives Next.js App Router page navigations within the project. The context-aware toggle setting is also persisted to `localStorage` so it survives page refreshes.
 
 ### Chat Header
 
@@ -444,6 +466,10 @@ async def impact_analysis(node_fqn: str, depth: int = 5) -> dict:
 
 **Tools exposed:** Same set as the chat agent — `list_applications`, `application_stats`, `get_architecture`, `search_objects`, `object_details`, `impact_analysis`, `find_path`, `list_transactions`, `transaction_graph`, `get_source_code`, `add_annotation`.
 
+**Multi-project context:** Unlike the chat endpoint (which receives `project_id` per request), the MCP server must handle project-agnostic tools (e.g., `list_applications` has no `app_name`). The `ChatToolContext` is constructed per-tool-call: tools that take an `app_name` parameter build context on the fly; project-agnostic tools use `GraphStore` directly without `app_name`. The MCP server initializes a single `GraphStore` instance at startup (same connection pool pattern as the main API).
+
+**Deployment note:** The MCP container shares the same database (PostgreSQL + Neo4j) as the main API. It reads from tables managed by Alembic migrations run in the API container — no separate migration runner needed. The MCP container must start after the API has run migrations (handled by `depends_on` + health checks).
+
 ### API Key Authentication
 
 **Database table:**
@@ -462,8 +488,9 @@ CREATE TABLE api_keys (
 
 **Auth middleware** (`app/mcp/auth.py`):
 - Checks `Authorization: Bearer <key>` header on every MCP request
-- Compares bcrypt hash of provided key against stored `key_hash`
-- Updates `last_used_at` on successful auth
+- Uses SHA-256 for key hashing (not bcrypt — API keys are randomly generated with high entropy, so brute-force resistance is less critical than for user passwords; bcrypt at ~100ms/hash would add unacceptable latency for rapid MCP tool calls)
+- In-memory cache of verified key hashes with 5-minute TTL to avoid repeated DB lookups during agent sessions
+- Batches `last_used_at` updates (update at most once per minute per key, not on every request)
 - Returns 401 if invalid/inactive
 
 **Key management endpoints:**
@@ -622,6 +649,39 @@ ANTHROPIC_API_KEY=sk-ant-...
 # New for M4
 MCP_API_KEY=...                  # Default API key for MCP (optional, can create via UI)
 ```
+
+---
+
+## Testing Strategy
+
+Each milestone includes tests following the project convention (`pytest` + `pytest-asyncio`):
+
+**M1 — Shared Tool Layer + Chat Backend:**
+- Unit tests for each shared tool function (mock `GraphStore`, verify Cypher queries and result shaping)
+- Unit test for system prompt construction (with/without page context)
+- Integration test for the chat agent loop (mock Anthropic API, verify tool dispatch and SSE event sequence)
+- Test concurrency guard (second concurrent request from same user is rejected)
+
+**M2 — Summaries:**
+- Unit tests for summary generation (mock Anthropic API)
+- Unit tests for cache hit/miss/stale logic (mock DB + Neo4j)
+- Test upsert behavior on concurrent generation
+
+**M3 — Frontend:**
+- Component tests for ChatMessage, ThinkingBlock, ToolCallCard rendering
+- Hook test for useChat SSE consumption (mock EventSource)
+- Hook test for usePageContext route parsing
+
+**M4 — MCP Server:**
+- Integration test for MCP tool registration (verify all tools are exposed)
+- Unit tests for API key auth middleware (valid key, invalid key, inactive key, cached key)
+- Unit tests for key management endpoints (create, list, revoke)
+
+**M5 — Cost Tracking:**
+- Unit tests for usage logging (verify token counts are recorded)
+- Unit tests for usage stats aggregation endpoint
+
+**Alembic migrations:** M2 and M4 each produce independent migration files to avoid conflicts when developed in parallel.
 
 ---
 
