@@ -15,8 +15,12 @@ import { Breadcrumbs } from "@/components/graph/Breadcrumbs"
 import { TransactionSelector } from "@/components/graph/TransactionSelector"
 import { SearchDialog } from "@/components/search/SearchDialog"
 import { CodeViewer } from "@/components/code/CodeViewer"
+import { ImpactPanel, applyImpactOverlay, clearImpactOverlay } from "@/components/analysis/ImpactPanel"
+import { PathFinderPanel, applyPathOverlay, clearPathOverlay } from "@/components/analysis/PathFinderPanel"
 import { useGraph } from "@/hooks/useGraph"
 import { useTransactions } from "@/hooks/useTransactions"
+import { useImpactAnalysis } from "@/hooks/useImpactAnalysis"
+import { usePathFinder } from "@/hooks/usePathFinder"
 import type { ViewMode } from "@/lib/types"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
@@ -83,8 +87,14 @@ export default function GraphPage() {
   const [codeViewerOpen, setCodeViewerOpen] = useState(false)
   const [codeViewerFile, setCodeViewerFile] = useState<string>("")
   const [codeViewerLine, setCodeViewerLine] = useState<number>(1)
+  const [activeAnalysis, setActiveAnalysis] = useState<"impact" | "path" | null>(null)
+  const [impactDirection, setImpactDirection] = useState<"downstream" | "upstream" | "both">("downstream")
+  const [pathFromFqn, setPathFromFqn] = useState<string>("")
 
   const cyInstanceRef = useRef<cytoscape.Core | null>(null)
+
+  const impact = useImpactAnalysis()
+  const pathFinder = usePathFinder()
 
   // Load modules on mount
   useEffect(() => {
@@ -195,6 +205,72 @@ export default function GraphPage() {
   const handleCloseCodeViewer = useCallback(() => {
     setCodeViewerOpen(false)
   }, [])
+
+  // ─── Impact analysis handlers ───────────────────────────────────────────
+  const handleShowImpact = useCallback(
+    (fqn: string) => {
+      setActiveAnalysis("impact")
+      impact.analyze(projectId, fqn, impactDirection)
+    },
+    [projectId, impactDirection, impact],
+  )
+
+  const handleImpactDirectionChange = useCallback(
+    (dir: "downstream" | "upstream" | "both") => {
+      setImpactDirection(dir)
+      if (impact.data) {
+        impact.analyze(projectId, impact.data.node, dir)
+      }
+    },
+    [projectId, impact],
+  )
+
+  const handleCloseImpact = useCallback(() => {
+    setActiveAnalysis(null)
+    impact.clear()
+    const cy = cyInstanceRef.current
+    if (cy) clearImpactOverlay(cy)
+  }, [impact])
+
+  // ─── Path finder handlers ─────────────────────────────────────────────
+  const handleStartPathFrom = useCallback((fqn: string) => {
+    setActiveAnalysis("path")
+    setPathFromFqn(fqn)
+  }, [])
+
+  const handleFindPath = useCallback(
+    (fromFqn: string, toFqn: string) => {
+      pathFinder.findPath(projectId, fromFqn, toFqn)
+    },
+    [projectId, pathFinder],
+  )
+
+  const handleClosePath = useCallback(() => {
+    setActiveAnalysis(null)
+    setPathFromFqn("")
+    pathFinder.clear()
+    const cy = cyInstanceRef.current
+    if (cy) clearPathOverlay(cy)
+  }, [pathFinder])
+
+  // ─── Apply overlays when data changes ─────────────────────────────────
+  useEffect(() => {
+    const cy = cyInstanceRef.current
+    if (!cy) return
+    if (activeAnalysis === "impact" && impact.data) {
+      clearImpactOverlay(cy)
+      applyImpactOverlay(cy, impact.data.affected, impact.data.node)
+    }
+  }, [activeAnalysis, impact.data])
+
+  useEffect(() => {
+    const cy = cyInstanceRef.current
+    if (!cy) return
+    if (activeAnalysis === "path" && pathFinder.data) {
+      clearPathOverlay(cy)
+      applyPathOverlay(cy, pathFinder.data)
+    }
+  }, [activeAnalysis, pathFinder.data])
 
   // Retry handler — respects current view mode
   const handleRetry = useCallback(() => {
@@ -321,13 +397,35 @@ export default function GraphPage() {
           ) : null}
         </div>
 
-        {/* Right: Node properties panel */}
+        {/* Right: Analysis / Node properties panel */}
         <div className="w-72 shrink-0 overflow-y-auto border-l bg-background">
-          <NodeProperties
-            node={selectedNode}
-            onClose={() => setSelectedNode(null)}
-            onViewSource={handleViewSource}
-          />
+          {activeAnalysis === "impact" ? (
+            <ImpactPanel
+              data={impact.data}
+              isLoading={impact.isLoading}
+              error={impact.error}
+              direction={impactDirection}
+              onDirectionChange={handleImpactDirectionChange}
+              onClose={handleCloseImpact}
+            />
+          ) : activeAnalysis === "path" ? (
+            <PathFinderPanel
+              data={pathFinder.data}
+              isLoading={pathFinder.isLoading}
+              error={pathFinder.error}
+              initialFromFqn={pathFromFqn}
+              onFindPath={handleFindPath}
+              onClose={handleClosePath}
+            />
+          ) : (
+            <NodeProperties
+              node={selectedNode}
+              onClose={() => setSelectedNode(null)}
+              onViewSource={handleViewSource}
+              onShowImpact={handleShowImpact}
+              onStartPathFrom={handleStartPathFrom}
+            />
+          )}
         </div>
       </div>
 
