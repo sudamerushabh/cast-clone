@@ -53,6 +53,16 @@ class SpringWebPlugin(FrameworkPlugin):
                         confidence=Confidence.HIGH,
                         reason=f"Framework '{fw.name}' detected in manifest",
                     )
+
+        # Fallback: look for @Controller or @RestController annotations in graph
+        for node in context.graph.nodes.values():
+            annotations = node.properties.get("annotations", [])
+            if _CONTROLLER_ANNOTATIONS & set(annotations):
+                return PluginDetectionResult(
+                    confidence=Confidence.MEDIUM,
+                    reason="Spring controller annotations found in graph",
+                )
+
         return PluginDetectionResult.not_detected()
 
     async def extract(self, context: AnalysisContext) -> PluginResult:

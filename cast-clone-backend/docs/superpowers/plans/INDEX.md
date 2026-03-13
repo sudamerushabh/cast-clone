@@ -117,3 +117,44 @@ M6e Task 1: Django Settings (~1 day) — simple config extraction
 M6f Task 3: Django ORM (~2 days) — similar to SQLAlchemy
 M6f Task 2: Django URLs (~2 days) — include() recursion
 M6f Task 4: Django DRF (~3 days) — most complex, multi-level indirection
+
+---
+
+# Phase 3 — Impact Analysis & Smart Features
+
+Spec: `cast-clone-backend/docs/03-PHASE-3-IMPACT-ANALYSIS.md`
+
+## Execution Order
+
+```
+M1 (GDS + Enricher) ──────────────────────────────┐
+                                                    │
+M2 (Backend Analysis APIs) ────────────────────────┤
+                                                    ├──> M4 (Impact + Path Finder UI)
+M3 (Frontend Foundation: types + API + hooks) ─────┤
+                                                    ├──> M5 (Community + CircDeps + Dead Code)
+                                                    │         └──> M7 (Enhanced Code Viewer)
+                                                    └──> M6 (Metrics Dashboard)
+```
+
+M1, M2, and M3 are independent and can run in parallel.
+M4 and M5 require M2 + M3. M6 requires M3. M7 requires M4/M5.
+
+## Plan Files
+
+| Milestone | File | Description | Depends On |
+|-----------|------|-------------|------------|
+| **M1** | `2026-03-13-phase3-m1-gds-enricher.md` | Add `graphdatascience` dep, GDS Louvain community detection as Stage 10 (post Neo4j write), remove BFS from enricher | — |
+| **M2** | `2026-03-13-phase3-m2-analysis-api.md` | 7 new API endpoints: impact analysis, path finder, communities, circular deps, dead code, metrics, node details — all Cypher-backed | — |
+| **M3** | `2026-03-13-phase3-m3-frontend-foundation.md` | TypeScript types for all Phase 3 responses, 7 API client functions, 3 hooks (useImpactAnalysis, usePathFinder, useAnalysisData) | — |
+| **M4** | `2026-03-13-phase3-m4-impact-pathfinder.md` | ImpactPanel (color by depth, dim unaffected, summary), PathFinderPanel (select 2 nodes, highlight path), "Show Impact" button in NodeProperties, Cytoscape overlays | M2, M3 |
+| **M5** | `2026-03-13-phase3-m5-community-circulardeps-deadcode.md` | CommunityToggle (palette coloring), CircularDepsPanel (cycle list + highlight), DeadCodePanel (sortable table), toolbar integration | M2, M3 |
+| **M6** | `2026-03-13-phase3-m6-metrics-dashboard.md` | New `/projects/[id]/metrics` page: MetricCard (summary stats), TopTenTable (complexity, fan-in, fan-out), click-to-navigate | M2, M3 |
+| **M7** | `2026-03-13-phase3-m7-enhanced-code-viewer.md` | Monaco Editor clickable references — function calls/class references navigate to graph nodes via deltaDecorations | M4, M5 |
+
+## Totals
+
+- **7 plans**, ~35 tasks
+- Backend: ~3 new files, ~3 modified
+- Frontend: ~12 new files, ~5 modified
+- Backend tasks follow TDD; frontend verified via typecheck + manual testing

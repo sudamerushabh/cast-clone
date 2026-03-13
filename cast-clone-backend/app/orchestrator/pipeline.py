@@ -148,8 +148,8 @@ PIPELINE_STAGES: list[PipelineStage] = [
     PipelineStage("plugins", "Running framework plugins..."),
     PipelineStage("linking", "Linking cross-technology dependencies..."),
     PipelineStage("enrichment", "Computing metrics and communities..."),
-    PipelineStage("writing", "Writing to database...", critical=True),
     PipelineStage("transactions", "Discovering transaction flows..."),
+    PipelineStage("writing", "Writing to database...", critical=True),
 ]
 
 _STAGE_FUNCS: dict[str, StageFunc] = {

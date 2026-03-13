@@ -4,6 +4,9 @@ Finds interfaces extending JpaRepository/CrudRepository, resolves the managed
 entity type from generics, parses derived query method names (findByEmailAndStatus)
 into column references, and parses @Query annotation SQL.
 
+Also creates stub FUNCTION nodes for inherited JPA CRUD methods (save, findById, etc.)
+with READS/WRITES edges marked query_type="JPA_INHERITED" to indicate implicit access.
+
 Produces:
 - Edges: (:Interface)-[:MANAGES]->(:Class {entity})
          (:Function)-[:READS {columns}]->(:Table)
@@ -271,7 +274,9 @@ class SpringDataPlugin(FrameworkPlugin):
             if not table_fqn:
                 warnings.append(f"No table mapping found for entity '{entity_name}' in repo '{node.fqn}'")
             else:
-                # Add READS/WRITES edges from JPA stubs to the managed table
+                # Add READS/WRITES edges from JPA stubs to the managed table.
+                # These edges are marked query_type="JPA_INHERITED" because they represent
+                # implicit method calls from the service layer that don't appear in source.
                 for method_name in _JPA_INHERITED_METHODS:
                     stub_fqn = f"{node.fqn}.{method_name}"
                     if method_name in _JPA_WRITE_METHODS:
@@ -281,6 +286,7 @@ class SpringDataPlugin(FrameworkPlugin):
                             kind=EdgeKind.WRITES,
                             confidence=Confidence.HIGH,
                             evidence="spring-data",
+                            # Marks this as an implicit JPA method, not a custom query.
                             properties={"query_type": "JPA_INHERITED"},
                         ))
                     elif method_name in _JPA_READ_METHODS:
@@ -290,6 +296,7 @@ class SpringDataPlugin(FrameworkPlugin):
                             kind=EdgeKind.READS,
                             confidence=Confidence.HIGH,
                             evidence="spring-data",
+                            # Marks this as an implicit JPA method, not a custom query.
                             properties={"query_type": "JPA_INHERITED"},
                         ))
 

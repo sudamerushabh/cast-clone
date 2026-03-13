@@ -17,6 +17,7 @@ const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
     rankDir: "TB",
     nodeSep: 50,
     rankSep: 80,
+    fit: false,
     animate: true,
     animationDuration: 300,
   } as cytoscape.LayoutOptions,
@@ -28,12 +29,14 @@ const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
     animationDuration: 500,
     nodeRepulsion: 4500,
     idealEdgeLength: 100,
+    fit: false,
   } as cytoscape.LayoutOptions,
   transaction: {
     name: "dagre",
     rankDir: "LR",
     nodeSep: 30,
     rankSep: 60,
+    fit: false,
     animate: true,
     animationDuration: 300,
   } as cytoscape.LayoutOptions,
@@ -62,6 +65,9 @@ export function GraphView({
 }: GraphViewProps) {
   const cyRef = useRef<cytoscape.Core | null>(null)
   const prevElementIdsRef = useRef<Set<string>>(new Set())
+  // Snapshot parent node positions BEFORE React re-render adds unpositioned children
+  const parentPositionsRef = useRef<Map<string, { x: number; y: number; w: number; h: number }>>(new Map())
+  const dblTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const stylesheet = colorBy === "layer" ? layerStylesheet : defaultStylesheet
 
@@ -78,11 +84,7 @@ export function GraphView({
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ;(cy as Record<string, any>).expandCollapse({
-          layoutBy: {
-            name: "dagre",
-            animate: performanceTier === "full",
-            animationDuration: 300,
-          },
+          layoutBy: null, // Disable automatic full-graph re-layout on expand/collapse
           fisheye: false,
           animate: performanceTier === "full",
           animationDuration: 300,
@@ -93,19 +95,39 @@ export function GraphView({
         // expand-collapse may fail if no compound nodes exist
       }
 
-      // Click → select node
+      // Debounced click → select node (delayed to avoid firing before dbltap)
       cy.on("tap", "node", (event) => {
         const node = event.target
         if (onNodeSelect) {
-          onNodeSelect(node.data())
+          if (dblTapTimerRef.current) clearTimeout(dblTapTimerRef.current)
+          dblTapTimerRef.current = setTimeout(() => {
+            dblTapTimerRef.current = null
+            onNodeSelect(node.data())
+          }, 250)
         }
       })
 
-      // Double-click → drill down
+      // Double-click → drill down (snapshot parent position first)
       cy.on("dbltap", "node", (event) => {
+        // Cancel the pending single-tap select
+        if (dblTapTimerRef.current) {
+          clearTimeout(dblTapTimerRef.current)
+          dblTapTimerRef.current = null
+        }
+
         const node = event.target
         const data = node.data()
         if (data.drillable && onNodeDrillDown) {
+          // Snapshot this node's position & size BEFORE new children are added
+          // (compound parent bbox will shift once unpositioned children appear)
+          const pos = node.position()
+          const bb = node.boundingBox()
+          parentPositionsRef.current.set(data.id, {
+            x: pos.x,
+            y: pos.y,
+            w: Math.max(bb.w, 200),
+            h: Math.max(bb.h, 200),
+          })
           onNodeDrillDown(data.id, data.label, data.drillLevel)
         }
       })
@@ -148,7 +170,7 @@ export function GraphView({
       try {
         if (layoutMode === "drill" && prevElementIdsRef.current.size > 0 && !viewModeChanged) {
           // Drill-down: find new nodes and their parent, then layout
-          // only within the parent's bounding box
+          // only within the parent's SAVED bounding box (not the corrupted one)
           const newIds = [...currentIds].filter(
             (id) => !prevElementIdsRef.current.has(id)
           )
@@ -161,28 +183,38 @@ export function GraphView({
               const parentNode = parentId ? cy.getElementById(parentId) : null
 
               if (parentNode && parentNode.length > 0) {
-                // Get parent's current bounding box to constrain children
-                const parentBB = parentNode.boundingBox()
+                // Use the SAVED position from before children were added
+                // (the live bounding box is corrupted by unpositioned children at 0,0)
+                const saved = parentPositionsRef.current.get(parentId)
+                const cx = saved ? saved.x : parentNode.position().x
+                const cy_ = saved ? saved.y : parentNode.position().y
+                const w = saved ? saved.w : 200
+                const h = saved ? saved.h : 200
 
-                // Layout new nodes using a grid inside the parent's area
+                // Layout new nodes using a grid centered on the parent's original position
                 newNodes
                   .layout({
                     name: "grid",
                     boundingBox: {
-                      x1: parentBB.x1,
-                      y1: parentBB.y1,
-                      x2: Math.max(parentBB.x2, parentBB.x1 + 200),
-                      y2: Math.max(parentBB.y2, parentBB.y1 + 200),
+                      x1: cx - w / 2,
+                      y1: cy_ - h / 2,
+                      x2: cx + w / 2,
+                      y2: cy_ + h / 2,
                     },
+                    fit: false,
                     animate: false,
                     condense: true,
                     avoidOverlap: true,
                   } as cytoscape.LayoutOptions)
                   .run()
 
-                // Smoothly center on the expanded parent
+                // Clean up saved position
+                if (saved) parentPositionsRef.current.delete(parentId)
+
+                // Smoothly center on the expanded parent (keep current zoom)
                 cy.animate({
                   center: { eles: parentNode },
+                  zoom: cy.zoom(),
                   duration: 300,
                 })
               } else {
@@ -192,8 +224,12 @@ export function GraphView({
             }
           }
         } else {
-          // Full layout: reposition everything
-          cy.layout(layoutConfig).run()
+          // Full layout: reposition everything, then fit to viewport
+          const layout = cy.layout(layoutConfig)
+          layout.on("layoutstop", () => {
+            cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 })
+          })
+          layout.run()
         }
       } catch {
         // Layout algorithm may fail with 0 nodes

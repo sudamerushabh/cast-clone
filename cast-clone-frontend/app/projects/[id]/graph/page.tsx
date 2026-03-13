@@ -25,6 +25,7 @@ const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
     rankDir: "TB",
     nodeSep: 50,
     rankSep: 80,
+    fit: true,
     animate: true,
   } as cytoscape.LayoutOptions,
   dependency: {
@@ -35,12 +36,14 @@ const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
     animationDuration: 500,
     nodeRepulsion: 4500,
     idealEdgeLength: 100,
+    fit: true,
   } as cytoscape.LayoutOptions,
   transaction: {
     name: "dagre",
     rankDir: "LR",
     nodeSep: 30,
     rankSep: 60,
+    fit: true,
     animate: true,
   } as cytoscape.LayoutOptions,
 }
@@ -302,6 +305,7 @@ export default function GraphPage() {
               viewMode={viewMode}
               performanceTier={performanceTier}
               layoutMode={isTransactionView ? "full" : layoutMode}
+              colorBy="kind"
               onNodeSelect={handleNodeSelect}
               onNodeDrillDown={handleNodeDrillDown}
               onCyInit={handleCyInit}
@@ -322,7 +326,7 @@ export default function GraphPage() {
         </div>
 
         {/* Right: Node properties panel */}
-        <div className="w-72 shrink-0 overflow-y-auto border-l bg-background">
+        <div className="w-72 shrink-0 overflow-x-hidden overflow-y-auto border-l bg-background">
           <NodeProperties
             node={selectedNode}
             onClose={() => setSelectedNode(null)}

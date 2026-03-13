@@ -105,12 +105,17 @@ class Neo4jGraphStore(GraphStore):
             batch = nodes[i : i + batch_size]
             records = []
             for node in batch:
+                # Neo4j node properties must be primitives or arrays — skip dicts
+                # (e.g. annotation_args is used in-memory by plugins, not stored)
+                serializable_props = {
+                    k: v for k, v in node.properties.items() if not isinstance(v, dict)
+                }
                 props: dict[str, Any] = {
                     "fqn": node.fqn,
                     "name": node.name,
                     "kind": node.kind.value,
                     "app_name": app_name,
-                    **node.properties,
+                    **serializable_props,
                 }
                 for key, val in [
                     ("language", node.language),

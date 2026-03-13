@@ -67,6 +67,54 @@ def _get_annotations(node: Node) -> list[str]:
     return annotations
 
 
+def _extract_first_string_arg(args_node: Node) -> str | None:
+    """Return the first string value from an annotation_argument_list.
+
+    Handles:
+    - @Annotation("value")          → bare string literal
+    - @Annotation(value = "value")  → element_value_pair with key 'value'
+    - @Annotation(path = "value")   → element_value_pair with key 'path'
+    """
+    for child in args_node.children:
+        if child.type == "string_literal":
+            text = _node_text(child)
+            if text.startswith('"') and text.endswith('"'):
+                return text[1:-1]
+        elif child.type == "element_value_pair":
+            key_node = child.child_by_field_name("key")
+            val_node = child.child_by_field_name("value")
+            if key_node and val_node and _node_text(key_node) in ("value", "path"):
+                val_text = _node_text(val_node)
+                if val_text.startswith('"') and val_text.endswith('"'):
+                    return val_text[1:-1]
+    return None
+
+
+def _get_annotation_args(node: Node) -> dict[str, str]:
+    """Extract first string argument for each annotation on a declaration node.
+
+    Returns a dict mapping annotation name -> first string argument.
+    Example: @RequestMapping("/api") -> {"RequestMapping": "/api"}
+    Marker annotations (@Override) are omitted (no arguments).
+    """
+    args: dict[str, str] = {}
+    for child in node.children:
+        if child.type == "modifiers":
+            for mod_child in child.children:
+                if mod_child.type == "annotation":
+                    name_node = mod_child.child_by_field_name("name")
+                    if name_node is None:
+                        continue
+                    ann_name = _node_text(name_node)
+                    args_node = mod_child.child_by_field_name("arguments")
+                    if args_node is None:
+                        continue
+                    value = _extract_first_string_arg(args_node)
+                    if value is not None:
+                        args[ann_name] = value
+    return args
+
+
 def _visibility_from_modifiers(modifiers: list[str]) -> str:
     """Determine visibility from modifier keywords."""
     if "public" in modifiers:
@@ -401,6 +449,7 @@ class JavaExtractor:
             name = _node_text(name_node)
             modifiers = _get_modifiers(class_node)
             annotations = _get_annotations(class_node)
+            annotation_args = _get_annotation_args(class_node)
 
             properties: dict[str, Any] = {
                 "visibility": _visibility_from_modifiers(modifiers),
@@ -408,6 +457,8 @@ class JavaExtractor:
             }
             if annotations:
                 properties["annotations"] = annotations
+            if annotation_args:
+                properties["annotation_args"] = annotation_args
 
             nodes.append(
                 GraphNode(
@@ -534,6 +585,7 @@ class JavaExtractor:
 
             modifiers = _get_modifiers(method_node)
             annotations = _get_annotations(method_node)
+            annotation_args = _get_annotation_args(method_node)
 
             # Return type
             type_node = method_node.child_by_field_name("type")
@@ -554,6 +606,8 @@ class JavaExtractor:
             }
             if annotations:
                 properties["annotations"] = annotations
+            if annotation_args:
+                properties["annotation_args"] = annotation_args
 
             nodes.append(
                 GraphNode(
