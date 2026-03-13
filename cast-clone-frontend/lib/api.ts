@@ -44,6 +44,7 @@ import type {
   TagResponse,
   SavedViewResponse,
   SavedViewListItem,
+  ActivityLogEntry,
 } from "./types";
 
 const BASE_URL =
@@ -603,4 +604,52 @@ export async function updateView(
 
 export async function deleteView(viewId: string): Promise<void> {
   await apiFetch<void>(`/api/v1/views/${viewId}`, { method: "DELETE" });
+}
+
+// ── Export ──
+
+export function getExportUrl(
+  projectId: string,
+  type: "nodes.csv" | "edges.csv" | "graph.json" | "impact.csv",
+  params?: Record<string, string>
+): string {
+  const searchParams = new URLSearchParams(params);
+  const token = getAuthToken();
+  if (token) searchParams.set("token", token);
+  return `${BASE_URL}/api/v1/export/${projectId}/${type}?${searchParams}`;
+}
+
+export function downloadExport(
+  projectId: string,
+  type: "nodes.csv" | "edges.csv" | "graph.json" | "impact.csv",
+  params?: Record<string, string>
+) {
+  const url = getExportUrl(projectId, type, params);
+  // Use fetch with auth header for download
+  const token = getAuthToken();
+  fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then((resp) => resp.blob())
+    .then((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${projectId}_${type}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+}
+
+// ── Activity Feed ──
+
+export async function getActivityFeed(params?: {
+  limit?: number;
+  user_id?: string;
+  action?: string;
+}): Promise<ActivityLogEntry[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.user_id) searchParams.set("user_id", params.user_id);
+  if (params?.action) searchParams.set("action", params.action);
+  return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
 }

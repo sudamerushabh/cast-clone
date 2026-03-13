@@ -518,6 +518,27 @@ export interface TagResponse {
   created_at: string;
 }
 
+// ── Phase 4: Export ──
+
+// Export endpoints return file downloads, no response types needed.
+
+// ── Phase 4: Activity Log ──
+
+export interface ActivityAuthor {
+  id: string;
+  username: string;
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  user: ActivityAuthor | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
 // ── Phase 4: Saved Views ──
 
 export interface SavedViewState {
