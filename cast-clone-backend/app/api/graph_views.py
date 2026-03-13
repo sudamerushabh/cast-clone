@@ -383,8 +383,10 @@ async def get_transaction(project_id: str, fqn: str) -> TransactionDetailRespons
     nodes = [_record_to_node(r) for r in node_records]
 
     # Get edges between the included nodes.
-    # Include CALLS, WRITES, READS (data flow) plus IMPLEMENTS and INJECTS
-    # so that interface→impl hops and DI connections render correctly.
+    # Include CALLS (including virtual-dispatch synthetic edges), WRITES,
+    # READS (data flow), INJECTS (Spring DI), and DEPENDS_ON.
+    # IMPLEMENTS edges are not needed here — the enricher's virtual dispatch
+    # step already creates CALLS edges from interface → implementation methods.
     edge_records = await store.query(
         "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f1) "
         "MATCH (f1)-[r:CALLS|WRITES|READS|INJECTS|DEPENDS_ON]->(f2) "
@@ -393,18 +395,7 @@ async def get_transaction(project_id: str, fqn: str) -> TransactionDetailRespons
         "type(r) AS kind, r.confidence AS confidence, r.evidence AS evidence",
         {"fqn": fqn, "app_name": project_id},
     )
-    # Also fetch IMPLEMENTS edges in reverse (impl → interface) so the
-    # interface-to-implementation hop that the BFS followed is visible.
-    impl_records = await store.query(
-        "MATCH (t {fqn: $fqn, app_name: $app_name})-[:INCLUDES]->(f1) "
-        "MATCH (t)-[:INCLUDES]->(f2) "
-        "MATCH (f2)-[r:IMPLEMENTS]->(f1) "
-        "RETURN f2.fqn AS source_fqn, f1.fqn AS target_fqn, "
-        "type(r) AS kind, r.confidence AS confidence, r.evidence AS evidence",
-        {"fqn": fqn, "app_name": project_id},
-    )
     edges = [_record_to_edge(r) for r in edge_records]
-    edges.extend(_record_to_edge(r) for r in impl_records)
 
     txn_node = txn_result["n"]
     return TransactionDetailResponse(

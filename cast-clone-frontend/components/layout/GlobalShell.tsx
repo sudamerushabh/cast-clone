@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconRail } from "./IconRail";
@@ -8,12 +9,20 @@ import { ContextPanel } from "./ContextPanel";
 import { TopBar } from "./TopBar";
 import { cn } from "@/lib/utils";
 
+const AUTH_ROUTES = ["/login", "/setup"];
+
 interface GlobalShellProps {
   children: React.ReactNode;
 }
 
 export function GlobalShell({ children }: GlobalShellProps) {
+  const pathname = usePathname();
   const [panelOpen, setPanelOpen] = React.useState(true);
+
+  // Auth pages render full-screen without the shell
+  if (AUTH_ROUTES.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">

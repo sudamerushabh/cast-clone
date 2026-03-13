@@ -33,6 +33,7 @@ class SetupRequest(BaseModel):
 
 class SetupStatusResponse(BaseModel):
     needs_setup: bool
+    auth_disabled: bool = False
 
 
 class UserCreateRequest(BaseModel):

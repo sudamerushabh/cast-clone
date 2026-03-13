@@ -59,7 +59,7 @@ async def impact_analysis(
         if direction == "downstream":
             cypher = (
                 f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
-                f"-[:CALLS|INJECTS|PRODUCES|WRITES|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
+                f"-[:CALLS|INJECTS|IMPLEMENTS|PRODUCES|WRITES|READS|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
                 "WHERE affected.app_name = $appName AND affected.fqn <> $fqn "
                 "WITH affected, min(length(path)) AS depth "
                 "RETURN affected.fqn AS fqn, affected.name AS name, "
@@ -91,7 +91,7 @@ async def impact_analysis(
             # both: run downstream then upstream and merge
             downstream_cypher = (
                 f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
-                f"-[:CALLS|INJECTS|PRODUCES|WRITES|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
+                f"-[:CALLS|INJECTS|IMPLEMENTS|PRODUCES|WRITES|READS|CONTAINS|DEPENDS_ON*1..{max_depth}]->(affected) "
                 "WHERE affected.app_name = $appName AND affected.fqn <> $fqn "
                 "WITH affected, min(length(path)) AS depth "
                 "RETURN affected.fqn AS fqn, affected.name AS name, "
@@ -192,7 +192,8 @@ async def find_path(
         cypher = (
             f"MATCH path = shortestPath("
             f"(a {{fqn: $fromFqn, app_name: $appName}})"
-            f"-[*..{max_depth}]-"
+            f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS"
+            f"|READS|WRITES|PRODUCES|CONSUMES|STARTS_AT*..{max_depth}]-"
             f"(b {{fqn: $toFqn, app_name: $appName}}))"
             " RETURN [n IN nodes(path) |"
             " {fqn: n.fqn, name: n.name, type: labels(n)[0]}]"

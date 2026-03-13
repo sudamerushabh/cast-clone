@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models.db import User
 from app.services.auth import decode_access_token
 from app.services.postgres import get_session
@@ -30,13 +30,13 @@ def _make_anonymous_admin() -> User:
 async def get_current_user(
     token: str | None = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> User:
     """Extract and validate the current user from a Bearer token.
 
     When AUTH_DISABLED=true, returns a synthetic admin user without
     requiring a token — useful for local development and testing.
     """
-    settings = get_settings()
     if settings.auth_disabled:
         return _make_anonymous_admin()
 
@@ -85,12 +85,12 @@ async def require_admin(
 async def get_optional_user(
     token: str | None = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> User | None:
     """Return the current user if a valid token is provided, otherwise None.
 
     When AUTH_DISABLED=true, always returns the synthetic admin user.
     """
-    settings = get_settings()
     if settings.auth_disabled:
         return _make_anonymous_admin()
 

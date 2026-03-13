@@ -13,6 +13,7 @@ from app.stages.enricher import (
     compute_fan_metrics,
     create_technology_nodes,
     enrich_graph,
+    resolve_virtual_dispatch,
 )
 
 # ── Helpers ──────────────────────────────────────────────
@@ -704,3 +705,189 @@ class TestTechnologyNodes:
         comp = [n for n in g.nodes.values() if n.kind == NodeKind.COMPONENT][0]
         assert comp.properties["loc_total"] == 300
         assert comp.properties["class_count"] == 2
+
+
+# ── Test: Virtual Dispatch Resolution ──────────────────
+
+
+class TestVirtualDispatch:
+    """Tests for resolve_virtual_dispatch() — creating synthetic CALLS from
+    interface methods to implementation methods."""
+
+    def _build_interface_impl_graph(self):
+        """Helper: build a graph with UserService (interface) + UserServiceImpl (class)."""
+        g = SymbolGraph()
+        iface = GraphNode(fqn="com.UserService", name="UserService", kind=NodeKind.INTERFACE)
+        impl = _make_class("com.UserServiceImpl")
+        iface_method = _make_function("com.UserService.createUser")
+        impl_method = _make_function("com.UserServiceImpl.createUser")
+
+        g.add_node(iface)
+        g.add_node(impl)
+        g.add_node(iface_method)
+        g.add_node(impl_method)
+
+        # Containment: interface/class → method
+        g.add_edge(_contains_edge("com.UserService", "com.UserService.createUser"))
+        g.add_edge(_contains_edge("com.UserServiceImpl", "com.UserServiceImpl.createUser"))
+
+        return g
+
+    def test_creates_dispatch_edge_for_method_implements(self):
+        """Interface.method → Impl.method CALLS edge should be created."""
+        g = self._build_interface_impl_graph()
+
+        # impl_method IMPLEMENTS iface_method
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl.createUser",
+            target_fqn="com.UserService.createUser",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 1
+
+        # Should have a CALLS edge: interface method → impl method
+        dispatch_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and e.source_fqn == "com.UserService.createUser"
+            and e.target_fqn == "com.UserServiceImpl.createUser"
+        ]
+        assert len(dispatch_edges) == 1
+        assert dispatch_edges[0].evidence == "virtual-dispatch"
+
+    def test_handles_reverse_implements_direction(self):
+        """IMPLEMENTS from interface→impl (SCIP direction) also creates dispatch edge."""
+        g = self._build_interface_impl_graph()
+
+        # interface→impl direction (as SCIP sometimes produces)
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserService.createUser",
+            target_fqn="com.UserServiceImpl.createUser",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 1
+
+        dispatch_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and e.source_fqn == "com.UserService.createUser"
+            and e.target_fqn == "com.UserServiceImpl.createUser"
+        ]
+        assert len(dispatch_edges) == 1
+
+    def test_skips_class_level_implements(self):
+        """CLASS → INTERFACE IMPLEMENTS should not generate dispatch edges."""
+        g = SymbolGraph()
+        iface = GraphNode(fqn="com.UserService", name="UserService", kind=NodeKind.INTERFACE)
+        impl = _make_class("com.UserServiceImpl")
+
+        g.add_node(iface)
+        g.add_node(impl)
+
+        # class-level IMPLEMENTS
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl",
+            target_fqn="com.UserService",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 0
+
+    def test_no_duplicate_calls(self):
+        """Should not create a dispatch edge if CALLS already exists."""
+        g = self._build_interface_impl_graph()
+
+        # IMPLEMENTS edge
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl.createUser",
+            target_fqn="com.UserService.createUser",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+        # Pre-existing CALLS edge in the dispatch direction
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserService.createUser",
+            target_fqn="com.UserServiceImpl.createUser",
+            kind=EdgeKind.CALLS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 0
+
+    def test_multiple_implementors(self):
+        """Multiple implementations of the same interface method get dispatch edges."""
+        g = SymbolGraph()
+        iface = GraphNode(fqn="com.Service", name="Service", kind=NodeKind.INTERFACE)
+        impl_a = _make_class("com.ServiceImplA")
+        impl_b = _make_class("com.ServiceImplB")
+        iface_method = _make_function("com.Service.run")
+        impl1 = _make_function("com.ServiceImplA.run")
+        impl2 = _make_function("com.ServiceImplB.run")
+
+        for n in [iface, impl_a, impl_b, iface_method, impl1, impl2]:
+            g.add_node(n)
+
+        # Containment edges
+        g.add_edge(_contains_edge("com.Service", "com.Service.run"))
+        g.add_edge(_contains_edge("com.ServiceImplA", "com.ServiceImplA.run"))
+        g.add_edge(_contains_edge("com.ServiceImplB", "com.ServiceImplB.run"))
+
+        g.add_edge(GraphEdge(
+            source_fqn="com.ServiceImplA.run",
+            target_fqn="com.Service.run",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+        g.add_edge(GraphEdge(
+            source_fqn="com.ServiceImplB.run",
+            target_fqn="com.Service.run",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 2
+
+    def test_deduplicates_implements_edges(self):
+        """Duplicate IMPLEMENTS edges (from tree-sitter + SCIP) should produce one CALLS edge."""
+        g = self._build_interface_impl_graph()
+
+        # Two duplicate IMPLEMENTS edges
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl.createUser", target_fqn="com.UserService.createUser",
+            kind=EdgeKind.IMPLEMENTS, evidence="tree-sitter",
+        ))
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl.createUser", target_fqn="com.UserService.createUser",
+            kind=EdgeKind.IMPLEMENTS, evidence="scip",
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 1
+
+    def test_bidirectional_implements_creates_one_dispatch(self):
+        """IMPLEMENTS in both directions should still create only one dispatch CALLS edge."""
+        g = self._build_interface_impl_graph()
+
+        # Both directions (as seen in real Neo4j data)
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserServiceImpl.createUser",
+            target_fqn="com.UserService.createUser",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+        g.add_edge(GraphEdge(
+            source_fqn="com.UserService.createUser",
+            target_fqn="com.UserServiceImpl.createUser",
+            kind=EdgeKind.IMPLEMENTS,
+        ))
+
+        count = resolve_virtual_dispatch(g)
+        assert count == 1
+
+        # Only interface → impl, NOT impl → interface
+        dispatch = [e for e in g.edges if e.kind == EdgeKind.CALLS]
+        assert len(dispatch) == 1
+        assert dispatch[0].source_fqn == "com.UserService.createUser"
+        assert dispatch[0].target_fqn == "com.UserServiceImpl.createUser"

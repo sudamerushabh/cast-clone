@@ -225,6 +225,57 @@ class TestSpringDataDerivedQueries:
         assert cols == {"email", "status"}
 
     @pytest.mark.asyncio
+    async def test_find_entity_by_field(self):
+        """findAccountByAccountNumber -> READS edge (entity name between verb and By)."""
+        plugin = SpringDataPlugin()
+        ctx = _make_context_with_spring()
+        _add_entity_with_table(ctx.graph, "com.example.Account", "Account", "accounts")
+        _add_class(
+            ctx.graph, "com.example.AccountRepository", "AccountRepository",
+            is_interface=True,
+            implements=["JpaRepository"],
+            type_args=["Account", "Long"],
+        )
+        _add_method(ctx.graph, "com.example.AccountRepository",
+                    "findAccountByAccountNumber", return_type="Account")
+
+        result = await plugin.extract(ctx)
+        reads_edges = [
+            e for e in result.edges
+            if e.kind == EdgeKind.READS
+            and "accounts" in e.target_fqn
+            and e.properties.get("query_type") == "FIND"
+        ]
+        assert len(reads_edges) == 1
+        assert "account_number" in reads_edges[0].properties.get("columns", [])
+
+    @pytest.mark.asyncio
+    async def test_find_entity_by_multiple_fields(self):
+        """findUserByUserIdAndAccountType -> READS with correct columns."""
+        plugin = SpringDataPlugin()
+        ctx = _make_context_with_spring()
+        _add_entity_with_table(ctx.graph, "com.example.Account", "Account", "accounts")
+        _add_class(
+            ctx.graph, "com.example.AccountRepository", "AccountRepository",
+            is_interface=True,
+            implements=["JpaRepository"],
+            type_args=["Account", "Long"],
+        )
+        _add_method(ctx.graph, "com.example.AccountRepository",
+                    "findAccountByUserIdAndAccountType", return_type="Account")
+
+        result = await plugin.extract(ctx)
+        reads_edges = [
+            e for e in result.edges
+            if e.kind == EdgeKind.READS
+            and "accounts" in e.target_fqn
+            and e.properties.get("query_type") == "FIND"
+        ]
+        assert len(reads_edges) == 1
+        cols = set(reads_edges[0].properties.get("columns", []))
+        assert cols == {"user_id", "account_type"}
+
+    @pytest.mark.asyncio
     async def test_count_by_method(self):
         """countByStatus -> READS edge."""
         plugin = SpringDataPlugin()

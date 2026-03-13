@@ -25,6 +25,9 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_MAX_DEPTH = 15
 
+# Constructor / class-initializer names that add noise to transaction flows
+_CONSTRUCTOR_NAMES = frozenset({"<init>", "<clinit>", "__init__"})
+
 # Terminal edge kinds and their classification labels
 _TERMINAL_EDGE_MAP: dict[EdgeKind, str] = {
     EdgeKind.WRITES: "TABLE_WRITE",
@@ -103,9 +106,11 @@ def trace_transaction_flow(
         if current_fqn in visited:
             continue
 
-        # Only include Function nodes in the flow
+        # Only include Function nodes in the flow; skip constructors
         node = graph.get_node(current_fqn)
         if node is None or node.kind != NodeKind.FUNCTION:
+            continue
+        if node.name in _CONSTRUCTOR_NAMES:
             continue
 
         visited.add(current_fqn)
@@ -128,16 +133,6 @@ def trace_transaction_flow(
                 if edge.kind in (EdgeKind.CALLS, EdgeKind.INJECTS, EdgeKind.DEPENDS_ON):
                     queue.append((edge.target_fqn, current_depth + 1))
 
-            # Follow IMPLEMENTS edges in reverse: if another function implements
-            # the current one (interface method -> impl method), also traverse
-            # the implementor to pick up its CALLS edges.  This handles the
-            # common Java pattern where a controller calls a service *interface*
-            # and the real logic lives in the implementation class.
-            for edge in graph.get_edges_to(current_fqn):
-                if edge.source_fqn in visited:
-                    continue
-                if edge.kind == EdgeKind.IMPLEMENTS:
-                    queue.append((edge.source_fqn, current_depth))
 
     return flow
 

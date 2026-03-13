@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = "change-me-in-production"
-    auth_disabled: bool = False  # Set AUTH_DISABLED=true to bypass auth (dev/testing)
+    auth_disabled: bool = True  # Set AUTH_DISABLED=true to bypass auth (dev/testing)
 
     # Repository storage
     repo_storage_path: str = "/home/ubuntu/repos"

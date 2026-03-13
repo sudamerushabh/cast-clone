@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
+from app.config import Settings, get_settings
 from app.main import app
 from app.models.db import User
 from app.services.auth import hash_password, create_access_token
@@ -24,7 +25,11 @@ async def client(mock_session):
     async def _override_get_session():
         return mock_session
 
+    def _override_get_settings():
+        return Settings(auth_disabled=False)
+
     app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_settings] = _override_get_settings
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -40,7 +45,7 @@ class TestSetupStatus:
 
         resp = await client.get("/api/v1/auth/setup-status")
         assert resp.status_code == 200
-        assert resp.json() == {"needs_setup": True}
+        assert resp.json() == {"needs_setup": True, "auth_disabled": False}
 
     @pytest.mark.asyncio
     async def test_no_setup_needed_when_users_exist(self, client, mock_session):
@@ -50,7 +55,7 @@ class TestSetupStatus:
 
         resp = await client.get("/api/v1/auth/setup-status")
         assert resp.status_code == 200
-        assert resp.json() == {"needs_setup": False}
+        assert resp.json() == {"needs_setup": False, "auth_disabled": False}
 
 
 class TestLogin:

@@ -260,8 +260,8 @@ class TestTraceTransactionFlow:
         assert len(flow.visited_fqns) == 2
         assert "B.fn" in flow.visited_fqns
 
-    def test_follows_implements_edges_in_reverse(self):
-        """BFS follows IMPLEMENTS edges in reverse to find impl classes."""
+    def test_follows_virtual_dispatch_calls(self):
+        """BFS follows virtual dispatch CALLS edges (interface → impl)."""
         g = SymbolGraph()
         g.add_node(_fn("ctrl.addAccount"))
         g.add_node(_fn("svc.AccountService.createAccount"))
@@ -269,13 +269,45 @@ class TestTraceTransactionFlow:
         g.add_node(_fn("repo.AccountRepository.save"))
 
         g.add_edge(_edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS))
-        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "svc.AccountService.createAccount", EdgeKind.IMPLEMENTS))
+        # Virtual dispatch CALLS edge (created by enricher)
+        g.add_edge(_edge("svc.AccountService.createAccount", "svc.AccountServiceImpl.createAccount", EdgeKind.CALLS))
         g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "repo.AccountRepository.save", EdgeKind.CALLS))
 
         flow = trace_transaction_flow("ctrl.addAccount", g, max_depth=15)
 
         assert "svc.AccountServiceImpl.createAccount" in flow.visited_fqns
         assert "repo.AccountRepository.save" in flow.visited_fqns
+
+    def test_does_not_follow_implements_edges(self):
+        """BFS no longer follows IMPLEMENTS edges — virtual dispatch handles this."""
+        g = SymbolGraph()
+        g.add_node(_fn("ctrl.addAccount"))
+        g.add_node(_fn("svc.AccountService.createAccount"))
+        g.add_node(_fn("svc.AccountServiceImpl.createAccount"))
+
+        g.add_edge(_edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS))
+        # Only IMPLEMENTS edge (no virtual dispatch CALLS) — should NOT be followed
+        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "svc.AccountService.createAccount", EdgeKind.IMPLEMENTS))
+
+        flow = trace_transaction_flow("ctrl.addAccount", g, max_depth=15)
+
+        # Without virtual dispatch CALLS edge, impl should NOT be reached
+        assert "svc.AccountServiceImpl.createAccount" not in flow.visited_fqns
+
+    def test_skips_constructor_nodes(self):
+        """BFS skips <init>, <clinit>, __init__ constructor nodes."""
+        g = SymbolGraph()
+        g.add_node(_fn("A.handle", "handle"))
+        g.add_node(_fn("B.<init>", "<init>"))
+        g.add_node(_fn("C.process", "process"))
+
+        g.add_edge(_edge("A.handle", "B.<init>", EdgeKind.CALLS))
+        g.add_edge(_edge("A.handle", "C.process", EdgeKind.CALLS))
+
+        flow = trace_transaction_flow("A.handle", g, max_depth=15)
+
+        assert "B.<init>" not in flow.visited_fqns
+        assert "C.process" in flow.visited_fqns
 
     def test_terminal_node_still_continues_bfs(self):
         """BFS continues past terminal nodes."""

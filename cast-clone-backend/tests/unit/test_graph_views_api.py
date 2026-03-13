@@ -323,7 +323,7 @@ class TestTransactionDetail:
                     }
                 },
             ],
-            # Edges between the nodes
+            # Edges between the nodes (CALLS, including virtual dispatch)
             [
                 {
                     "source_fqn": "com.example.UserController.listUsers",

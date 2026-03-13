@@ -497,6 +497,7 @@ export interface UserResponse {
 
 export interface SetupStatusResponse {
   needs_setup: boolean;
+  auth_disabled: boolean;
 }
 
 export interface SetupRequest {

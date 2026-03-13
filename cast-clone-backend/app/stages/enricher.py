@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from app.models.enums import EdgeKind, NodeKind
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode
 
 if TYPE_CHECKING:
@@ -40,6 +40,7 @@ async def enrich_graph(context: AnalysisContext) -> None:
     2. Aggregate class-level DEPENDS_ON edges from method CALLS
     3. Aggregate module-level IMPORTS edges from class DEPENDS_ON
     3b. Apply layer and framework assignments from plugins to CLASS nodes
+    3c. Resolve virtual dispatch (interface→implementation CALLS edges)
     4. Assign architectural layers (create Layer nodes + CONTAINS edges)
 
     Note: Community detection moved to Stage 10 (GDS Louvain).
@@ -90,6 +91,15 @@ async def enrich_graph(context: AnalysisContext) -> None:
         msg = f"Plugin assignment application failed: {exc}"
         context.warnings.append(msg)
         logger.warning("enricher.apply_assignments.failed", error=str(exc))
+
+    # Step 3c: Resolve virtual dispatch (interface → implementation CALLS edges)
+    try:
+        dispatch_count = resolve_virtual_dispatch(graph)
+        logger.info("enricher.virtual_dispatch.done", edges_created=dispatch_count)
+    except Exception as exc:
+        msg = f"Virtual dispatch resolution failed: {exc}"
+        context.warnings.append(msg)
+        logger.warning("enricher.virtual_dispatch.failed", error=str(exc))
 
     # Step 4: Architectural layers
     try:
@@ -374,6 +384,93 @@ def _apply_plugin_assignments(context: AnalysisContext) -> int:
                 break
 
     return updated
+
+
+# ── Step 3c: Virtual Dispatch Resolution ─────────────────
+
+
+def resolve_virtual_dispatch(graph: SymbolGraph) -> int:
+    """Create synthetic CALLS edges from interface methods to their implementation methods.
+
+    In Java (and similar languages), when code calls an interface method, the
+    actual execution dispatches to the implementing class's method. Without
+    this step, call-graph traversals (impact analysis, trace route, transaction
+    discovery) stop at the interface method and miss the implementation's
+    downstream call chain.
+
+    For each method-level IMPLEMENTS edge, this determines the interface vs
+    implementation side by checking the owning class's kind (INTERFACE vs CLASS),
+    then creates a CALLS edge in the dispatch direction:
+        Interface.method --CALLS {evidence: "virtual-dispatch"}--> ImplClass.method
+
+    This allows any CALLS-based traversal to naturally flow through interface
+    boundaries without needing special IMPLEMENTS handling in every query.
+
+    Returns the number of synthetic CALLS edges created.
+    """
+    # Build method → owning class kind lookup from CONTAINS edges
+    method_owner_kind: dict[str, NodeKind] = {}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CONTAINS:
+            owner = graph.get_node(edge.source_fqn)
+            child = graph.get_node(edge.target_fqn)
+            if (
+                owner is not None
+                and owner.kind in (NodeKind.CLASS, NodeKind.INTERFACE)
+                and child is not None
+                and child.kind == NodeKind.FUNCTION
+            ):
+                method_owner_kind[edge.target_fqn] = owner.kind
+
+    # Collect dispatch pairs: (interface_method_fqn, impl_method_fqn)
+    dispatch_pairs: set[tuple[str, str]] = set()
+
+    for edge in graph.edges:
+        if edge.kind != EdgeKind.IMPLEMENTS:
+            continue
+        source = graph.get_node(edge.source_fqn)
+        target = graph.get_node(edge.target_fqn)
+        if source is None or target is None:
+            continue
+        # Only process method-level IMPLEMENTS (FUNCTION → FUNCTION)
+        if source.kind != NodeKind.FUNCTION or target.kind != NodeKind.FUNCTION:
+            continue
+
+        # Determine which side is the interface method and which is the impl.
+        # IMPLEMENTS edges can go either direction (tree-sitter vs SCIP),
+        # so we use the owning class kind to decide.
+        src_owner = method_owner_kind.get(edge.source_fqn)
+        tgt_owner = method_owner_kind.get(edge.target_fqn)
+
+        if src_owner == NodeKind.CLASS and tgt_owner == NodeKind.INTERFACE:
+            # impl → interface: dispatch is interface → impl
+            dispatch_pairs.add((edge.target_fqn, edge.source_fqn))
+        elif src_owner == NodeKind.INTERFACE and tgt_owner == NodeKind.CLASS:
+            # interface → impl: dispatch is source → target... no, we want
+            # interface.method → impl.method, which is source → target
+            dispatch_pairs.add((edge.source_fqn, edge.target_fqn))
+
+    # Check for existing CALLS edges to avoid duplicates
+    existing_calls: set[tuple[str, str]] = set()
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CALLS:
+            existing_calls.add((edge.source_fqn, edge.target_fqn))
+
+    created = 0
+    for iface_fqn, impl_fqn in dispatch_pairs:
+        if (iface_fqn, impl_fqn) not in existing_calls:
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=iface_fqn,
+                    target_fqn=impl_fqn,
+                    kind=EdgeKind.CALLS,
+                    confidence=Confidence.HIGH,
+                    evidence="virtual-dispatch",
+                )
+            )
+            created += 1
+
+    return created
 
 
 # ── Step 4: Architectural Layer Assignment ───────────────

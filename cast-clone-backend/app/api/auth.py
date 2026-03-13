@@ -77,10 +77,14 @@ async def get_me(
 @router.get("/setup-status", response_model=SetupStatusResponse)
 async def setup_status(
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> SetupStatusResponse:
     result = await session.execute(select(func.count()).select_from(User))
     count = result.scalar()
-    return SetupStatusResponse(needs_setup=count == 0)
+    return SetupStatusResponse(
+        needs_setup=count == 0,
+        auth_disabled=settings.auth_disabled,
+    )
 
 
 @router.post("/setup", response_model=UserResponse, status_code=201)

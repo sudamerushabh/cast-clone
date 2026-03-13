@@ -37,9 +37,10 @@ _REPO_BASE_INTERFACES = frozenset({
     "ReactiveCrudRepository", "Repository",
 })
 
-# Derived query method prefixes and their access type
-_READ_PREFIXES = ("findBy", "getBy", "queryBy", "readBy", "searchBy", "streamBy", "countBy", "existsBy")
-_WRITE_PREFIXES = ("deleteBy", "removeBy")
+# Derived query method verb prefixes — Spring Data allows an optional entity
+# name between the verb and "By", e.g. find{Account}ByAccountNumber.
+_READ_VERBS = ("find", "get", "query", "read", "search", "stream", "count", "exists")
+_WRITE_VERBS = ("delete", "remove")
 
 # Standard JPA inherited CRUD methods — not declared in source, but called via service layer
 _JPA_INHERITED_METHODS: list[str] = [
@@ -122,8 +123,9 @@ def _camel_to_snake(name: str) -> str:
 def _parse_derived_query_fields(method_name: str) -> tuple[str, list[str]]:
     """Parse a Spring Data derived query method name into (access_type, [field_names]).
 
-    Examples:
+    Spring Data allows an optional entity name between the verb and "By":
         findByEmail -> ("read", ["email"])
+        findAccountByAccountNumber -> ("read", ["account_number"])
         findByEmailAndStatus -> ("read", ["email", "status"])
         deleteByEmail -> ("write", ["email"])
         countByStatus -> ("read", ["status"])
@@ -133,17 +135,22 @@ def _parse_derived_query_fields(method_name: str) -> tuple[str, list[str]]:
     access_type = "unknown"
     remaining = ""
 
-    for prefix in _READ_PREFIXES:
-        if method_name.startswith(prefix):
-            access_type = "read"
-            remaining = method_name[len(prefix):]
+    for verb in _READ_VERBS:
+        if method_name.startswith(verb):
+            # Find "By" after the verb (possibly with entity name in between)
+            by_idx = method_name.find("By", len(verb))
+            if by_idx >= 0:
+                access_type = "read"
+                remaining = method_name[by_idx + 2:]  # everything after "By"
             break
 
     if access_type == "unknown":
-        for prefix in _WRITE_PREFIXES:
-            if method_name.startswith(prefix):
-                access_type = "write"
-                remaining = method_name[len(prefix):]
+        for verb in _WRITE_VERBS:
+            if method_name.startswith(verb):
+                by_idx = method_name.find("By", len(verb))
+                if by_idx >= 0:
+                    access_type = "write"
+                    remaining = method_name[by_idx + 2:]
                 break
 
     if access_type == "unknown" or not remaining:

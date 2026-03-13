@@ -38,7 +38,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function init() {
       try {
-        const { needs_setup } = await getSetupStatus();
+        const { needs_setup, auth_disabled } = await getSetupStatus();
+
+        // When auth is disabled on the backend, fetch the anonymous admin
+        // user directly — no token or setup required.
+        if (auth_disabled) {
+          try {
+            const me = await getMe();
+            if (!cancelled) setUser(me);
+          } catch {
+            // Backend returned auth_disabled but /me failed — fall through
+          }
+          if (!cancelled) setIsLoading(false);
+          return;
+        }
+
         if (needs_setup) {
           if (!cancelled) {
             setIsLoading(false);

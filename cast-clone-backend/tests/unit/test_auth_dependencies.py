@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 
 from app.api.dependencies import get_current_user, require_admin
+from app.config import Settings
 from app.models.db import User
 
 
@@ -27,6 +28,10 @@ def mock_admin():
     return user
 
 
+def _settings(auth_disabled: bool = False) -> Settings:
+    return Settings(auth_disabled=auth_disabled)
+
+
 class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_valid_token_returns_user(self, mock_user):
@@ -36,12 +41,9 @@ class TestGetCurrentUser:
         mock_session.execute.return_value = mock_result
 
         with patch("app.api.dependencies.decode_access_token", return_value="user-1"):
-            with patch("app.api.dependencies.get_settings") as mock_settings:
-                mock_settings.return_value.secret_key = "test-secret"
-                mock_settings.return_value.auth_disabled = False
-                user = await get_current_user(
-                    token="valid-token", session=mock_session
-                )
+            user = await get_current_user(
+                token="valid-token", session=mock_session, settings=_settings()
+            )
         assert user.id == "user-1"
 
     @pytest.mark.asyncio
@@ -49,21 +51,20 @@ class TestGetCurrentUser:
         mock_session = AsyncMock()
 
         with patch("app.api.dependencies.decode_access_token", return_value=None):
-            with patch("app.api.dependencies.get_settings") as mock_settings:
-                mock_settings.return_value.secret_key = "test-secret"
-                mock_settings.return_value.auth_disabled = False
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(token="bad-token", session=mock_session)
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(
+                    token="bad-token", session=mock_session, settings=_settings()
+                )
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_no_token_raises_401(self):
         mock_session = AsyncMock()
 
-        with patch("app.api.dependencies.get_settings") as mock_settings:
-            mock_settings.return_value.auth_disabled = False
-            with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(token=None, session=mock_session)
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                token=None, session=mock_session, settings=_settings()
+            )
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -74,13 +75,10 @@ class TestGetCurrentUser:
         mock_session.execute.return_value = mock_result
 
         with patch("app.api.dependencies.decode_access_token", return_value="user-1"):
-            with patch("app.api.dependencies.get_settings") as mock_settings:
-                mock_settings.return_value.secret_key = "test-secret"
-                mock_settings.return_value.auth_disabled = False
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_current_user(
-                        token="valid-token", session=mock_session
-                    )
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(
+                    token="valid-token", session=mock_session, settings=_settings()
+                )
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -88,9 +86,9 @@ class TestGetCurrentUser:
         """When AUTH_DISABLED=true, return synthetic admin without any token."""
         mock_session = AsyncMock()
 
-        with patch("app.api.dependencies.get_settings") as mock_settings:
-            mock_settings.return_value.auth_disabled = True
-            user = await get_current_user(token=None, session=mock_session)
+        user = await get_current_user(
+            token=None, session=mock_session, settings=_settings(auth_disabled=True)
+        )
         assert user.username == "anonymous"
         assert user.role == "admin"
         assert user.is_active is True
@@ -100,9 +98,9 @@ class TestGetCurrentUser:
         """When AUTH_DISABLED=true, even an invalid token is ignored."""
         mock_session = AsyncMock()
 
-        with patch("app.api.dependencies.get_settings") as mock_settings:
-            mock_settings.return_value.auth_disabled = True
-            user = await get_current_user(token="garbage", session=mock_session)
+        user = await get_current_user(
+            token="garbage", session=mock_session, settings=_settings(auth_disabled=True)
+        )
         assert user.username == "anonymous"
 
 

@@ -46,9 +46,31 @@ class TestCreateRepository:
         mock_connector.base_url = "https://github.com"
         mock_connector.encrypted_token = "enc_xxx"
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_connector
-        mock_session.execute = AsyncMock(return_value=mock_result)
+        # First execute returns the connector, second returns the re-fetched repo
+        mock_repo_obj = MagicMock()
+        mock_repo_obj.id = "repo-1"
+        mock_repo_obj.connector_id = "conn-1"
+        mock_repo_obj.repo_full_name = "owner/repo"
+        mock_repo_obj.default_branch = "main"
+        mock_repo_obj.description = "Test repo"
+        mock_repo_obj.language = "Java"
+        mock_repo_obj.is_private = False
+        mock_repo_obj.clone_status = "pending"
+        mock_repo_obj.clone_error = None
+        mock_repo_obj.local_path = None
+        mock_repo_obj.last_synced_at = None
+        mock_repo_obj.created_at = datetime.now(UTC)
+        mock_repo_obj.projects = []
+
+        connector_result = MagicMock()
+        connector_result.scalar_one_or_none.return_value = mock_connector
+
+        repo_result = MagicMock()
+        repo_result.scalar_one.return_value = mock_repo_obj
+
+        mock_session.execute = AsyncMock(
+            side_effect=[connector_result, repo_result]
+        )
 
         mock_provider = AsyncMock()
         mock_provider.get_repo = AsyncMock(
@@ -61,16 +83,6 @@ class TestCreateRepository:
                 is_private=False,
             )
         )
-
-        async def fake_refresh(obj, **kwargs):
-            if not hasattr(obj, "created_at") or obj.created_at is None:
-                obj.created_at = datetime.now(UTC)
-            if not hasattr(obj, "projects") or not isinstance(
-                getattr(obj, "projects", None), list
-            ):
-                obj.projects = []
-
-        mock_session.refresh = AsyncMock(side_effect=fake_refresh)
 
         with (
             patch(

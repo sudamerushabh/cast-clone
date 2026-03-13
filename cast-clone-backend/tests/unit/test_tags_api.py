@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import Settings, get_settings
 from app.main import app
 from app.services.postgres import get_session
 
@@ -18,7 +19,11 @@ async def client(mock_session):
     async def _override_get_session():
         return mock_session
 
+    def _override_get_settings():
+        return Settings(auth_disabled=False)
+
     app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_settings] = _override_get_settings
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

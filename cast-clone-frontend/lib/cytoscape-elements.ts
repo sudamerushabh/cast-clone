@@ -327,9 +327,7 @@ export function transactionToElements(
       classes:
         edge.kind === "WRITES" || edge.kind === "READS"
           ? "data-edge"
-          : edge.kind === "IMPLEMENTS"
-            ? "impl-edge"
-            : "call-edge",
+          : "call-edge",
     })
   }
 
