@@ -134,6 +134,17 @@ async def _stage_transactions(
     await discover_transactions(context)
 
 
+async def _stage_gds_enrichment(
+    context: AnalysisContext, services: PipelineServices
+) -> None:
+    """Stage 10: Run GDS algorithms (Louvain community detection)."""
+    from app.services.neo4j import get_driver
+    from app.stages.gds_enricher import run_gds_community_detection
+
+    driver = get_driver()
+    await run_gds_community_detection(context, driver)
+
+
 # ── Stage registry ────────────────────────────────────────────────────────
 
 StageFunc = Callable[[AnalysisContext, PipelineServices], Coroutine[Any, Any, None]]
@@ -150,6 +161,7 @@ PIPELINE_STAGES: list[PipelineStage] = [
     PipelineStage("enrichment", "Computing metrics and communities..."),
     PipelineStage("writing", "Writing to database...", critical=True),
     PipelineStage("transactions", "Discovering transaction flows..."),
+    PipelineStage("gds_enrichment", "Running graph algorithms (community detection)..."),
 ]
 
 _STAGE_FUNCS: dict[str, StageFunc] = {
@@ -163,6 +175,7 @@ _STAGE_FUNCS: dict[str, StageFunc] = {
     "enrichment": _stage_enrichment,
     "writing": _stage_writing,
     "transactions": _stage_transactions,
+    "gds_enrichment": _stage_gds_enrichment,
 }
 
 

@@ -26,6 +26,7 @@ class TestPipelineStages:
             "enrichment",
             "writing",
             "transactions",
+            "gds_enrichment",
         ]
         assert [s.name for s in PIPELINE_STAGES] == expected
 

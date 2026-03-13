@@ -64,8 +64,14 @@ class TestPipelineWiring:
         source = inspect.getsource(func)
         assert "discover_transactions" in source
 
+    def test_gds_enrichment_is_wired(self):
+        """Stage 10 should call run_gds_community_detection from stages.gds_enricher."""
+        func = _STAGE_FUNCS["gds_enrichment"]
+        source = inspect.getsource(func)
+        assert "run_gds_community_detection" in source
+
     def test_all_stages_present(self):
-        """All 10 stage names should be in _STAGE_FUNCS."""
+        """All 11 stage names should be in _STAGE_FUNCS."""
         expected = {
             "discovery",
             "dependencies",
@@ -77,5 +83,6 @@ class TestPipelineWiring:
             "enrichment",
             "writing",
             "transactions",
+            "gds_enrichment",
         }
         assert set(_STAGE_FUNCS.keys()) == expected
