@@ -20,6 +20,7 @@ dependencies = [
     "structlog>=24.0.0",
     "protobuf>=5.0",
     "aiofiles>=25.1.0",
+    "graphdatascience>=1.20",
 ]
 
 [dependency-groups]
