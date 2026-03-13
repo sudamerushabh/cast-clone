@@ -51,6 +51,7 @@ interface GraphViewProps {
   onNodeSelect?: (nodeData: Record<string, unknown>) => void
   onNodeDrillDown?: (fqn: string, name: string, level: string) => void
   onCyInit?: (cy: cytoscape.Core) => void
+  onNodeRightClick?: (fqn: string, position: { x: number; y: number }) => void
 }
 
 export function GraphView({
@@ -62,6 +63,7 @@ export function GraphView({
   onNodeSelect,
   onNodeDrillDown,
   onCyInit,
+  onNodeRightClick,
 }: GraphViewProps) {
   const cyRef = useRef<cytoscape.Core | null>(null)
   const prevElementIdsRef = useRef<Set<string>>(new Set())
@@ -140,8 +142,19 @@ export function GraphView({
           }
         }
       })
+
+      // Right-click node → context menu
+      // Use originalEvent.clientX/Y (viewport coordinates) so the
+      // context menu can be positioned with `fixed` correctly regardless
+      // of where the Cytoscape canvas sits in the page.
+      cy.on("cxttap", "node", (event) => {
+        const node = event.target
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const orig = (event as any).originalEvent as MouseEvent
+        onNodeRightClick?.(node.id(), { x: orig.clientX, y: orig.clientY })
+      })
     },
-    [onNodeSelect, onNodeDrillDown, onCyInit, performanceTier]
+    [onNodeSelect, onNodeDrillDown, onCyInit, onNodeRightClick, performanceTier]
   )
 
   // Track the previous viewMode to detect view switches
