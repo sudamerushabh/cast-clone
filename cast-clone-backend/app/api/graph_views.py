@@ -404,6 +404,14 @@ async def get_code(
             detail=f"File not found: {file}",
         )
 
+    # Guard against very large files (2 MB limit)
+    max_file_bytes = 2 * 1024 * 1024
+    if full_path.stat().st_size > max_file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large to display in code viewer",
+        )
+
     # Read the file
     async with aiofiles.open(
         full_path, encoding="utf-8", errors="replace"
@@ -413,7 +421,7 @@ async def get_code(
     total_lines = len(all_lines)
 
     # If a highlight line is given, return a window around it
-    if line is not None and context < total_lines:
+    if line is not None:
         start = max(0, line - context - 1)
         end = min(total_lines, line + context)
         content = "".join(all_lines[start:end])

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     minio_access_key: str = "codelens"
     minio_secret_key: str = "codelens123"
     minio_secure: bool = False
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["*"]
 
     # Analysis defaults
     scip_timeout: int = 600

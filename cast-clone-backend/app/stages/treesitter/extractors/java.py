@@ -217,6 +217,34 @@ class JavaExtractor:
         # Step 10: Tag SQL strings
         self._tag_sql_strings(root, package, nodes)
 
+        # Step 11: Create MODULE node for the package and CONTAINS edges
+        if package:
+            module_name = package.rsplit(".", 1)[-1]
+            module_node = GraphNode(
+                fqn=package,
+                name=module_name,
+                kind=NodeKind.MODULE,
+                language="java",
+                path=file_path,
+                line=1,
+            )
+            nodes.append(module_node)
+
+            # Add CONTAINS edges from module to top-level classes/interfaces
+            for node in nodes:
+                if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE) and node.fqn.startswith(package + "."):
+                    # Only direct children (no nested dots after the package prefix)
+                    relative = node.fqn[len(package) + 1:]
+                    if "." not in relative:
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=package,
+                                target_fqn=node.fqn,
+                                kind=EdgeKind.CONTAINS,
+                                evidence="tree-sitter",
+                            )
+                        )
+
         logger.debug(
             "java_extract_done",
             file_path=file_path,

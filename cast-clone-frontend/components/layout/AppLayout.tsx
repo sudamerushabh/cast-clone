@@ -82,7 +82,10 @@ export function AppLayout({
 
         {/* Right panel (node properties, code viewer, etc.) */}
         {rightPanel && (
-          <aside className="w-80 shrink-0 overflow-auto border-l bg-background">
+          <aside
+            className="w-80 shrink-0 overflow-auto border-l bg-background"
+            aria-label="Properties panel"
+          >
             {rightPanel}
           </aside>
         )}

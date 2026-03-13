@@ -108,6 +108,7 @@ class Neo4jGraphStore(GraphStore):
                 props: dict[str, Any] = {
                     "fqn": node.fqn,
                     "name": node.name,
+                    "kind": node.kind.value,
                     "app_name": app_name,
                     **node.properties,
                 }

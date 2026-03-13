@@ -32,10 +32,19 @@ export interface AnalysisTriggerResponse {
   message: string;
 }
 
+export interface AnalysisStageStatus {
+  name: string;
+  status: "pending" | "running" | "completed" | "failed";
+  duration_ms?: number;
+}
+
 export interface AnalysisStatusResponse {
   project_id: string;
   status: string;
   current_stage: string | null;
+  progress?: number;
+  stages?: AnalysisStageStatus[];
+  error?: string;
   started_at: string | null;
   completed_at: string | null;
 }
@@ -172,3 +181,8 @@ export interface CodeViewerResponse {
   highlight_line: number | null;
   total_lines: number;
 }
+
+// ─── Phase 2 M4: Graph visualization types ─────────────────────────────────
+
+export type ViewMode = "architecture" | "dependency" | "transaction";
+export type DrilldownLevel = "module" | "class" | "method";

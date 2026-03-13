@@ -39,12 +39,14 @@ async function apiFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
+  const { headers: callerHeaders, ...restOptions } = options;
+  const needsContentType = options.body !== undefined && options.body !== null;
   const res = await fetch(url, {
     headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
+      ...(needsContentType ? { "Content-Type": "application/json" } : {}),
+      ...(callerHeaders as Record<string, string>),
     },
-    ...options,
+    ...restOptions,
   });
 
   if (!res.ok) {

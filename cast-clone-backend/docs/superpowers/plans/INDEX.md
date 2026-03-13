@@ -95,3 +95,25 @@ M2 (Frontend Foundation) ──> M3 (Pages) ───┤
 - Backend: ~3 new files, ~1 modified
 - Frontend: ~20 new files, ~5 modified
 - All backend tasks follow TDD; frontend verified via typecheck + manual testing
+
+Python Plugin Plans — Index Addendum
+These two plan files extend the Phase 1 plugin system with Python framework support (Tier 4).
+Execution Order (extends M6 chain)
+M6a (plugin base)
+ ├─> M6b (Spring + Hibernate)       ── done ──
+ ├─> M6c (SQL plugins)              ── done ──
+ ├─> M6e (FastAPI + SQLAlchemy)     ── NEW ── parallel with M6e
+ └─> M6f (Django plugins)           ── NEW ── parallel with M6d
+      └─> M7a (cross-tech linker)   ── existing ──
+M6d and M6e are independent of each other and can be built in parallel.
+Within M6e, the dependency chain is: django-settings → django-urls + django-orm → django-drf.
+Plan Files
+MilestoneFileDescriptionDepends OnM6d2026-03-13-phase1-m6e-fastapi-sqlalchemy-plugins.mdFastAPI (routes, Depends() DI) + SQLAlchemy (declarative models, ForeignKey) — 2 independent pluginsM6a, M4dM6e2026-03-13-phase1-m6f-django-plugins.mdDjango Settings, URLs, ORM, DRF — 4 plugins with dependency chainM6a, M4d
+Recommended Build Order
+
+M6e Task 2: SQLAlchemy (~2 days) — closest to existing Hibernate plugin
+M6e Task 1: FastAPI (~2 days) — closest to existing Spring Web plugin
+M6e Task 1: Django Settings (~1 day) — simple config extraction
+M6f Task 3: Django ORM (~2 days) — similar to SQLAlchemy
+M6f Task 2: Django URLs (~2 days) — include() recursion
+M6f Task 4: Django DRF (~3 days) — most complex, multi-level indirection

@@ -42,3 +42,11 @@ def clear_extractors() -> None:
 def registered_languages() -> list[str]:
     """Return a list of all languages with registered extractors."""
     return list(_EXTRACTORS.keys())
+
+
+def _auto_register() -> None:
+    """Import all extractor modules so they self-register."""
+    from app.stages.treesitter.extractors import java, typescript, python, csharp  # noqa: F401
+
+
+_auto_register()
