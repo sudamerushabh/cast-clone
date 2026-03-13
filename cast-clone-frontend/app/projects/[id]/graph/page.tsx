@@ -17,10 +17,14 @@ import { SearchDialog } from "@/components/search/SearchDialog"
 import { CodeViewer } from "@/components/code/CodeViewer"
 import { ImpactPanel, applyImpactOverlay, clearImpactOverlay } from "@/components/analysis/ImpactPanel"
 import { PathFinderPanel, applyPathOverlay, clearPathOverlay } from "@/components/analysis/PathFinderPanel"
+import { applyCommunityColors, clearCommunityColors } from "@/components/analysis/CommunityToggle"
+import { CircularDepsPanel, highlightCycle, clearCycleHighlight } from "@/components/analysis/CircularDepsPanel"
+import { DeadCodePanel } from "@/components/analysis/DeadCodePanel"
 import { useGraph } from "@/hooks/useGraph"
 import { useTransactions } from "@/hooks/useTransactions"
 import { useImpactAnalysis } from "@/hooks/useImpactAnalysis"
 import { usePathFinder } from "@/hooks/usePathFinder"
+import { useAnalysisData } from "@/hooks/useAnalysisData"
 import type { ViewMode } from "@/lib/types"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
@@ -87,14 +91,18 @@ export default function GraphPage() {
   const [codeViewerOpen, setCodeViewerOpen] = useState(false)
   const [codeViewerFile, setCodeViewerFile] = useState<string>("")
   const [codeViewerLine, setCodeViewerLine] = useState<number>(1)
-  const [activeAnalysis, setActiveAnalysis] = useState<"impact" | "path" | null>(null)
+  const [activeAnalysis, setActiveAnalysis] = useState<"impact" | "path" | "circularDeps" | "deadCode" | null>(null)
   const [impactDirection, setImpactDirection] = useState<"downstream" | "upstream" | "both">("downstream")
   const [pathFromFqn, setPathFromFqn] = useState<string>("")
+  const [communityColorsEnabled, setCommunityColorsEnabled] = useState(false)
+  const [circularDepsLevel, setCircularDepsLevel] = useState<"module" | "class">("module")
+  const [deadCodeType, setDeadCodeType] = useState<"function" | "class">("function")
 
   const cyInstanceRef = useRef<cytoscape.Core | null>(null)
 
   const impact = useImpactAnalysis()
   const pathFinder = usePathFinder()
+  const analysisData = useAnalysisData()
 
   // Load modules on mount
   useEffect(() => {
@@ -253,6 +261,73 @@ export default function GraphPage() {
     if (cy) clearPathOverlay(cy)
   }, [pathFinder])
 
+  // ─── Community colors handlers ─────────────────────────────────────────
+  const handleToggleCommunityColors = useCallback(() => {
+    const cy = cyInstanceRef.current
+    if (!cy) return
+    if (communityColorsEnabled) {
+      clearCommunityColors(cy)
+      setCommunityColorsEnabled(false)
+    } else {
+      // Load communities if not yet loaded
+      if (!analysisData.communities) {
+        analysisData.loadCommunities(projectId)
+      }
+      applyCommunityColors(cy)
+      setCommunityColorsEnabled(true)
+    }
+  }, [communityColorsEnabled, analysisData, projectId])
+
+  // ─── Circular dependencies handlers ────────────────────────────────────
+  const handleShowCircularDeps = useCallback(() => {
+    setActiveAnalysis("circularDeps")
+    analysisData.loadCircularDeps(projectId, circularDepsLevel)
+  }, [projectId, circularDepsLevel, analysisData])
+
+  const handleCircularDepsLevelChange = useCallback(
+    (level: "module" | "class") => {
+      setCircularDepsLevel(level)
+      analysisData.loadCircularDeps(projectId, level)
+    },
+    [projectId, analysisData],
+  )
+
+  const handleHighlightCycle = useCallback((cycleFqns: string[]) => {
+    const cy = cyInstanceRef.current
+    if (cy) highlightCycle(cy, cycleFqns)
+  }, [])
+
+  const handleCloseCircularDeps = useCallback(() => {
+    setActiveAnalysis(null)
+    const cy = cyInstanceRef.current
+    if (cy) clearCycleHighlight(cy)
+  }, [])
+
+  // ─── Dead code handlers ────────────────────────────────────────────────
+  const handleShowDeadCode = useCallback(() => {
+    setActiveAnalysis("deadCode")
+    analysisData.loadDeadCode(projectId, deadCodeType)
+  }, [projectId, deadCodeType, analysisData])
+
+  const handleDeadCodeTypeChange = useCallback(
+    (type: "function" | "class") => {
+      setDeadCodeType(type)
+      analysisData.loadDeadCode(projectId, type)
+    },
+    [projectId, analysisData],
+  )
+
+  const handleDeadCodeNavigate = useCallback(
+    (fqn: string) => {
+      handleSearchNavigate(fqn)
+    },
+    [handleSearchNavigate],
+  )
+
+  const handleCloseDeadCode = useCallback(() => {
+    setActiveAnalysis(null)
+  }, [])
+
   // ─── Apply overlays when data changes ─────────────────────────────────
   useEffect(() => {
     const cy = cyInstanceRef.current
@@ -298,6 +373,10 @@ export default function GraphPage() {
         onRefreshLayout={handleRefreshLayout}
         isLoading={activeLoading}
         cy={cyInstance}
+        communityColorsEnabled={communityColorsEnabled}
+        onToggleCommunityColors={handleToggleCommunityColors}
+        onShowCircularDeps={handleShowCircularDeps}
+        onShowDeadCode={handleShowDeadCode}
       />
 
       {/* Sub-toolbar: filter toggle + transaction selector or breadcrumbs */}
@@ -416,6 +495,26 @@ export default function GraphPage() {
               initialFromFqn={pathFromFqn}
               onFindPath={handleFindPath}
               onClose={handleClosePath}
+            />
+          ) : activeAnalysis === "circularDeps" ? (
+            <CircularDepsPanel
+              data={analysisData.circularDeps}
+              isLoading={analysisData.isLoading}
+              error={analysisData.error}
+              level={circularDepsLevel}
+              onLevelChange={handleCircularDepsLevelChange}
+              onHighlightCycle={handleHighlightCycle}
+              onClose={handleCloseCircularDeps}
+            />
+          ) : activeAnalysis === "deadCode" ? (
+            <DeadCodePanel
+              data={analysisData.deadCode}
+              isLoading={analysisData.isLoading}
+              error={analysisData.error}
+              typeFilter={deadCodeType}
+              onTypeChange={handleDeadCodeTypeChange}
+              onNavigate={handleDeadCodeNavigate}
+              onClose={handleCloseDeadCode}
             />
           ) : (
             <NodeProperties
