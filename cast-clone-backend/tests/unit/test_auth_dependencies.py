@@ -38,6 +38,7 @@ class TestGetCurrentUser:
         with patch("app.api.dependencies.decode_access_token", return_value="user-1"):
             with patch("app.api.dependencies.get_settings") as mock_settings:
                 mock_settings.return_value.secret_key = "test-secret"
+                mock_settings.return_value.auth_disabled = False
                 user = await get_current_user(
                     token="valid-token", session=mock_session
                 )
@@ -50,8 +51,19 @@ class TestGetCurrentUser:
         with patch("app.api.dependencies.decode_access_token", return_value=None):
             with patch("app.api.dependencies.get_settings") as mock_settings:
                 mock_settings.return_value.secret_key = "test-secret"
+                mock_settings.return_value.auth_disabled = False
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(token="bad-token", session=mock_session)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_no_token_raises_401(self):
+        mock_session = AsyncMock()
+
+        with patch("app.api.dependencies.get_settings") as mock_settings:
+            mock_settings.return_value.auth_disabled = False
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(token=None, session=mock_session)
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -64,11 +76,34 @@ class TestGetCurrentUser:
         with patch("app.api.dependencies.decode_access_token", return_value="user-1"):
             with patch("app.api.dependencies.get_settings") as mock_settings:
                 mock_settings.return_value.secret_key = "test-secret"
+                mock_settings.return_value.auth_disabled = False
                 with pytest.raises(HTTPException) as exc_info:
                     await get_current_user(
                         token="valid-token", session=mock_session
                     )
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_returns_anonymous_admin(self):
+        """When AUTH_DISABLED=true, return synthetic admin without any token."""
+        mock_session = AsyncMock()
+
+        with patch("app.api.dependencies.get_settings") as mock_settings:
+            mock_settings.return_value.auth_disabled = True
+            user = await get_current_user(token=None, session=mock_session)
+        assert user.username == "anonymous"
+        assert user.role == "admin"
+        assert user.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_skips_token_validation(self):
+        """When AUTH_DISABLED=true, even an invalid token is ignored."""
+        mock_session = AsyncMock()
+
+        with patch("app.api.dependencies.get_settings") as mock_settings:
+            mock_settings.return_value.auth_disabled = True
+            user = await get_current_user(token="garbage", session=mock_session)
+        assert user.username == "anonymous"
 
 
 class TestRequireAdmin:
