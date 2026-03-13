@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import type cytoscape from "cytoscape"
-import { Filter, RefreshCw } from "lucide-react"
+import { Activity, Filter, GitBranch, RefreshCw, Route } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
@@ -20,6 +20,8 @@ import { PathFinderPanel, applyPathOverlay, clearPathOverlay } from "@/component
 import { applyCommunityColors, clearCommunityColors } from "@/components/analysis/CommunityToggle"
 import { CircularDepsPanel, highlightCycle, clearCycleHighlight } from "@/components/analysis/CircularDepsPanel"
 import { DeadCodePanel } from "@/components/analysis/DeadCodePanel"
+import { TraceRouteModal } from "@/components/analysis/TraceRouteModal"
+import type { TraceRouteNode } from "@/components/analysis/TraceRouteModal"
 import { useGraph } from "@/hooks/useGraph"
 import { useTransactions } from "@/hooks/useTransactions"
 import { useImpactAnalysis } from "@/hooks/useImpactAnalysis"
@@ -100,6 +102,13 @@ export default function GraphPage() {
   const [communityColorsEnabled, setCommunityColorsEnabled] = useState(false)
   const [circularDepsLevel, setCircularDepsLevel] = useState<"module" | "class">("module")
   const [deadCodeType, setDeadCodeType] = useState<"function" | "class">("function")
+  const [traceRouteOpen, setTraceRouteOpen] = useState(false)
+  const [traceRouteNode, setTraceRouteNode] = useState<TraceRouteNode | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    fqn: string
+    x: number
+    y: number
+  } | null>(null)
 
   const cyInstanceRef = useRef<cytoscape.Core | null>(null)
 
@@ -375,6 +384,37 @@ export default function GraphPage() {
     setActiveAnalysis(null)
   }, [])
 
+  // ─── Trace Route handlers ──────────────────────────────────────────────
+  const handleTraceRoute = useCallback(
+    (fqn: string) => {
+      // Build TraceRouteNode from selectedNode data
+      const node: TraceRouteNode = {
+        fqn,
+        name: typeof selectedNode?.label === "string" ? selectedNode.label : fqn,
+        kind: typeof selectedNode?.kind === "string" ? selectedNode.kind : "",
+        language:
+          typeof selectedNode?.language === "string"
+            ? selectedNode.language
+            : null,
+      }
+      setTraceRouteNode(node)
+      setTraceRouteOpen(true)
+      setContextMenu(null)
+    },
+    [selectedNode],
+  )
+
+  const handleNodeRightClick = useCallback(
+    (fqn: string, position: { x: number; y: number }) => {
+      setContextMenu({ fqn, x: position.x, y: position.y })
+    },
+    [],
+  )
+
+  const handleContextMenuClose = useCallback(() => {
+    setContextMenu(null)
+  }, [])
+
   // ─── Apply overlays when data changes ─────────────────────────────────
   useEffect(() => {
     const cy = cyInstanceRef.current
@@ -508,6 +548,7 @@ export default function GraphPage() {
               onNodeSelect={handleNodeSelect}
               onNodeDrillDown={handleNodeDrillDown}
               onCyInit={handleCyInit}
+              onNodeRightClick={handleNodeRightClick}
             />
           )}
 
@@ -573,6 +614,7 @@ export default function GraphPage() {
               onViewSource={handleViewSource}
               onShowImpact={handleShowImpact}
               onStartPathFrom={handleStartPathFrom}
+              onTraceRoute={handleTraceRoute}
             />
           )}
         </div>
@@ -590,6 +632,73 @@ export default function GraphPage() {
           }))}
           onNavigateToNode={handleNavigateToNode}
         />
+      )}
+
+      {/* Trace Route modal */}
+      <TraceRouteModal
+        open={traceRouteOpen}
+        onClose={() => setTraceRouteOpen(false)}
+        node={traceRouteNode}
+        projectId={projectId}
+      />
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <>
+          {/* Invisible backdrop to dismiss on outside click */}
+          <div
+            className="fixed inset-0 z-40"
+            onClick={handleContextMenuClose}
+          />
+          <div
+            className="fixed z-50 min-w-[160px] rounded-md border bg-background shadow-md"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <div className="py-1">
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => {
+                  // Read node data directly from Cytoscape to avoid stale selectedNode closure
+                  const cy = cyInstanceRef.current
+                  const cyNode = cy?.getElementById(contextMenu.fqn)
+                  const data = cyNode?.data() ?? {} as Record<string, unknown>
+                  const node: TraceRouteNode = {
+                    fqn: contextMenu.fqn,
+                    name: typeof data.label === "string" ? data.label : contextMenu.fqn,
+                    kind: typeof data.kind === "string" ? data.kind : "",
+                    language: typeof data.language === "string" ? data.language : null,
+                  }
+                  setTraceRouteNode(node)
+                  setTraceRouteOpen(true)
+                  setContextMenu(null)
+                }}
+              >
+                <GitBranch className="size-3.5 text-blue-500" />
+                Trace Route
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => {
+                  handleShowImpact(contextMenu.fqn)
+                  handleContextMenuClose()
+                }}
+              >
+                <Activity className="size-3.5 text-red-500" />
+                Show Impact
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => {
+                  handleStartPathFrom(contextMenu.fqn)
+                  handleContextMenuClose()
+                }}
+              >
+                <Route className="size-3.5 text-blue-500" />
+                Find Path From Here
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
