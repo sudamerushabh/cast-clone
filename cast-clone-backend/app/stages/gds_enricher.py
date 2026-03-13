@@ -58,14 +58,14 @@ async def run_gds_community_detection(
     """
     result: dict[str, Any] = {"communityCount": 0, "modularity": 0.0}
     projection_name = f"{context.project_id}_communities"
-    G = None
+    graph_proj = None
 
     try:
         gds = _create_gds_client(driver)
         logger.info("gds_enricher.start", project_id=context.project_id)
 
         # Project the graph first so we can clean it up on failure
-        G, stats = await asyncio.to_thread(
+        graph_proj, stats = await asyncio.to_thread(
             gds.graph.project,
             projection_name,
             {"Class": {"properties": ["fqn"]}},
@@ -81,7 +81,7 @@ async def run_gds_community_detection(
             return result
 
         louvain_result = await asyncio.to_thread(
-            gds.louvain.write, G, writeProperty="communityId"
+            gds.louvain.write, graph_proj, writeProperty="communityId"
         )
         if not isinstance(louvain_result, dict):
             louvain_result = dict(louvain_result)
@@ -108,9 +108,9 @@ async def run_gds_community_detection(
         logger.warning("gds_enricher.failed", error=str(exc))
 
     finally:
-        if G is not None:
+        if graph_proj is not None:
             try:
-                G.drop()
+                graph_proj.drop()
                 logger.info("gds_enricher.projection_dropped")
             except Exception as drop_exc:
                 logger.warning(

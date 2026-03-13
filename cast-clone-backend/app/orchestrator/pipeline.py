@@ -161,7 +161,10 @@ PIPELINE_STAGES: list[PipelineStage] = [
     PipelineStage("enrichment", "Computing metrics and communities..."),
     PipelineStage("writing", "Writing to database...", critical=True),
     PipelineStage("transactions", "Discovering transaction flows..."),
-    PipelineStage("gds_enrichment", "Running graph algorithms (community detection)..."),
+    PipelineStage(
+        "gds_enrichment",
+        "Running graph algorithms (community detection)...",
+    ),
 ]
 
 _STAGE_FUNCS: dict[str, StageFunc] = {
