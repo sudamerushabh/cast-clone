@@ -52,3 +52,9 @@ declare module "cytoscape-expand-collapse" {
   const register: (cs: typeof cytoscape) => void;
   export default register;
 }
+
+declare module "cytoscape-svg" {
+  import cytoscape from "cytoscape";
+  const register: cytoscape.Ext;
+  export default register;
+}

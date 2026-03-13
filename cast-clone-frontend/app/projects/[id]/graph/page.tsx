@@ -14,6 +14,7 @@ import { FilterPanel } from "@/components/graph/FilterPanel"
 import { Breadcrumbs } from "@/components/graph/Breadcrumbs"
 import { TransactionSelector } from "@/components/graph/TransactionSelector"
 import { SearchDialog } from "@/components/search/SearchDialog"
+import { CodeViewer } from "@/components/code/CodeViewer"
 import { useGraph } from "@/hooks/useGraph"
 import { useTransactions } from "@/hooks/useTransactions"
 import type { ViewMode } from "@/lib/types"
@@ -78,6 +79,9 @@ export default function GraphPage() {
   > | null>(null)
   const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [cyInstance, setCyInstance] = useState<cytoscape.Core | null>(null)
+  const [codeViewerOpen, setCodeViewerOpen] = useState(false)
+  const [codeViewerFile, setCodeViewerFile] = useState<string>("")
+  const [codeViewerLine, setCodeViewerLine] = useState<number>(1)
 
   const cyInstanceRef = useRef<cytoscape.Core | null>(null)
 
@@ -180,6 +184,17 @@ export default function GraphPage() {
     }
   }, [viewMode, performanceTier])
 
+  // Code viewer
+  const handleViewSource = useCallback((file: string, line: number) => {
+    setCodeViewerFile(file)
+    setCodeViewerLine(line)
+    setCodeViewerOpen(true)
+  }, [])
+
+  const handleCloseCodeViewer = useCallback(() => {
+    setCodeViewerOpen(false)
+  }, [])
+
   // Retry handler — respects current view mode
   const handleRetry = useCallback(() => {
     if (viewMode === "transaction") {
@@ -205,6 +220,7 @@ export default function GraphPage() {
         onFitToScreen={handleFitToScreen}
         onRefreshLayout={handleRefreshLayout}
         isLoading={activeLoading}
+        cy={cyInstance}
       />
 
       {/* Sub-toolbar: filter toggle + transaction selector or breadcrumbs */}
@@ -247,7 +263,7 @@ export default function GraphPage() {
         onNavigate={handleSearchNavigate}
       />
 
-      <div className="relative flex flex-1 overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {/* Left filter panel */}
         {showFilterPanel ? (
           <div className="w-56 shrink-0 border-r bg-background">
@@ -308,9 +324,19 @@ export default function GraphPage() {
           <NodeProperties
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
+            onViewSource={handleViewSource}
           />
         </div>
       </div>
+
+      {codeViewerOpen && codeViewerFile && (
+        <CodeViewer
+          projectId={projectId}
+          file={codeViewerFile}
+          line={codeViewerLine}
+          onClose={handleCloseCodeViewer}
+        />
+      )}
     </div>
   )
 }

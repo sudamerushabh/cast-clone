@@ -12,12 +12,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cytoscape": "^3.33.1",
     "cytoscape-dagre": "^2.5.0",
     "cytoscape-expand-collapse": "^4.1.1",
     "cytoscape-fcose": "^2.2.0",
+    "cytoscape-svg": "^0.4.0",
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",

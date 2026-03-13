@@ -11,8 +11,11 @@ import {
   RefreshCw,
 } from "lucide-react"
 
+import type cytoscape from "cytoscape"
+
 import { Button } from "@/components/ui/button"
 import type { ViewMode } from "@/lib/types"
+import { ExportButtons } from "./ExportButtons"
 
 interface GraphToolbarProps {
   viewMode: ViewMode
@@ -22,6 +25,7 @@ interface GraphToolbarProps {
   onFitToScreen: () => void
   onRefreshLayout: () => void
   isLoading: boolean
+  cy: cytoscape.Core | null
 }
 
 const VIEW_TABS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
@@ -50,6 +54,7 @@ export function GraphToolbar({
   onFitToScreen,
   onRefreshLayout,
   isLoading,
+  cy,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center justify-between border-b bg-background px-3 py-1.5">
@@ -109,6 +114,8 @@ export function GraphToolbar({
         >
           <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
         </Button>
+        <div className="mx-1 h-4 w-px bg-border" />
+        <ExportButtons cy={cy} />
       </div>
     </div>
   )
