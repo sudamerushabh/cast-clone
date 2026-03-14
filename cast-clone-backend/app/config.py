@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     pr_analysis_supervisor_model: str = "us.anthropic.claude-sonnet-4-6"
     pr_analysis_max_subagents: int = 15
     pr_analysis_max_total_tokens: int = 500_000
+    # Phase 5b: AI chat
+    chat_model: str = "us.anthropic.claude-sonnet-4-6"
+    chat_max_tool_calls: int = 15
+    chat_timeout_seconds: int = 120
+    chat_max_response_tokens: int = 4096
+    chat_thinking_budget_tokens: int = 2048
 
 
 @lru_cache
