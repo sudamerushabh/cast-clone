@@ -286,8 +286,7 @@ async def get_source_code(ctx: ChatToolContext, node_fqn: str) -> dict:
             end = start + 200
         selected = lines[start:end]
         numbered = "\n".join(
-            f"{start + i + 1}: {line}"
-            for i, line in enumerate(selected)
+            f"{start + i + 1}: {line}" for i, line in enumerate(selected)
         )
         result["code"] = numbered
     except Exception as exc:
@@ -300,9 +299,7 @@ async def get_source_code(ctx: ChatToolContext, node_fqn: str) -> dict:
 # Added in M2. Requires db_session on ChatToolContext.
 
 
-async def get_or_generate_summary(
-    ctx: ChatToolContext, node_fqn: str
-) -> dict:
+async def get_or_generate_summary(ctx: ChatToolContext, node_fqn: str) -> dict:
     """Get AI summary for a node. Returns cached if available."""
     from anthropic import AsyncAnthropicBedrock
 

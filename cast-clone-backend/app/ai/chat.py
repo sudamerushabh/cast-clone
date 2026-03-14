@@ -170,7 +170,9 @@ def _serialize_content(content) -> list[dict]:
             sig = (
                 block.signature
                 if hasattr(block, "signature")
-                else block.get("signature") if isinstance(block, dict) else None
+                else block.get("signature")
+                if isinstance(block, dict)
+                else None
             )
             if sig:
                 thinking_block["signature"] = sig

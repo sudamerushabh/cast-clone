@@ -1,11 +1,11 @@
 """REST endpoint for on-demand AI summaries."""
+
 from __future__ import annotations
 
+from anthropic import AsyncAnthropicBedrock
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from anthropic import AsyncAnthropicBedrock
 
 from app.ai.summaries import get_or_create_summary
 from app.ai.tools import ChatToolContext
@@ -24,9 +24,7 @@ async def _resolve_summary_context(
     session: AsyncSession,
 ) -> tuple[str, str | None, AsyncSession]:
     """Resolve project to (app_name, repo_path, session)."""
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
+    result = await session.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(

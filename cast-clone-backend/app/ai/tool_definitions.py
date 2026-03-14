@@ -35,8 +35,7 @@ def get_chat_tool_definitions() -> list[dict]:
                     "app_name": {
                         "type": "string",
                         "description": (
-                            "Application name (optional "
-                            "— defaults to current project)"
+                            "Application name (optional — defaults to current project)"
                         ),
                     },
                 },
@@ -204,8 +203,7 @@ def get_chat_tool_definitions() -> list[dict]:
                     "node_fqn": {
                         "type": "string",
                         "description": (
-                            "Fully qualified name of the node "
-                            "to summarize"
+                            "Fully qualified name of the node to summarize"
                         ),
                     },
                 },
