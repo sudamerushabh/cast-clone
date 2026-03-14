@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     chat_max_response_tokens: int = 4096
     chat_thinking_budget_tokens: int = 2048
 
+    # Phase 5b-M2: AI summaries
+    summary_model: str = "us.anthropic.claude-sonnet-4-6"
+    summary_max_tokens: int = 512
+    summary_source_line_cap: int = 200
+    summary_neighbor_limit: int = 20
+
 
 @lru_cache
 def get_settings() -> Settings:
