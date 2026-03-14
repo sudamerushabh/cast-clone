@@ -337,3 +337,27 @@ class PrAnalysis(Base):
     )
 
     repository: Mapped[Repository] = relationship()
+
+
+class AiSummary(Base):
+    __tablename__ = "ai_summaries"
+    __table_args__ = (
+        UniqueConstraint("project_id", "node_fqn", name="uq_summary_project_node"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    node_fqn: Mapped[str] = mapped_column(String(500), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    graph_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    project: Mapped[Project] = relationship()
