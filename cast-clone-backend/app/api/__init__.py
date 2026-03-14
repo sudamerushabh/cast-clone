@@ -21,6 +21,7 @@ from app.api.saved_views import view_router as views_router
 from app.api.tags import project_router as tags_project_router
 from app.api.tags import tag_router as tags_router
 from app.api.users import router as users_router
+from app.api.summaries import router as summary_router
 from app.api.webhooks import router as webhooks_router
 from app.api.websocket import router as websocket_router
 
@@ -46,6 +47,7 @@ __all__ = [
     "users_router",
     "views_project_router",
     "views_router",
+    "summary_router",
     "webhooks_router",
     "websocket_router",
 ]

@@ -23,6 +23,7 @@ from app.api import (
     projects_router,
     pull_requests_router,
     repositories_router,
+    summary_router,
     tags_project_router,
     tags_router,
     users_router,
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
     application.include_router(git_config_router)
     application.include_router(websocket_router)
     application.include_router(chat_router)
+    application.include_router(summary_router)
 
     return application
 
