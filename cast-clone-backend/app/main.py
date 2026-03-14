@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     activity_router,
     analysis_router,
+    chat_router,
     analysis_views_router,
     annotations_project_router,
     annotations_router,
@@ -119,6 +120,7 @@ def create_app() -> FastAPI:
     application.include_router(webhooks_router)
     application.include_router(git_config_router)
     application.include_router(websocket_router)
+    application.include_router(chat_router)
 
     return application
 
