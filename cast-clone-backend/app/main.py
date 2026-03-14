@@ -9,11 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     activity_router,
     analysis_router,
-    chat_router,
     analysis_views_router,
     annotations_project_router,
     annotations_router,
+    api_keys_router,
     auth_router,
+    chat_router,
     connectors_router,
     export_router,
     git_config_router,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     application.include_router(websocket_router)
     application.include_router(chat_router)
     application.include_router(summary_router)
+    application.include_router(api_keys_router)
 
     return application
 
