@@ -669,6 +669,49 @@ export interface WebhookUrlInfo {
   webhook_secret: string;
 }
 
+// ── API Keys (M4 endpoints) ──
+
+export interface ApiKeyResponse {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+  is_active: boolean;
+}
+
+export interface ApiKeyCreateResponse {
+  id: string;
+  name: string;
+  raw_key: string;
+}
+
+// ── AI Usage (M5 endpoints) ──
+
+export interface UsageBySourceItem {
+  source: string;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number;
+  count: number;
+}
+
+export interface UsageByProjectItem {
+  project_id: string;
+  project_name: string;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number;
+  count: number;
+}
+
+export interface UsageSummaryResponse {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_estimated_cost_usd: number;
+  by_source: UsageBySourceItem[];
+  by_project: UsageByProjectItem[];
+}
+
 // ── Phase 4: Saved Views ──
 
 export interface SavedViewState {

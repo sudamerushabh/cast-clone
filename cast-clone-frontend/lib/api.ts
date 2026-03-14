@@ -54,6 +54,9 @@ import type {
   SavedViewListItem,
   ActivityLogEntry,
   WebhookUrlInfo,
+  ApiKeyResponse,
+  ApiKeyCreateResponse,
+  UsageSummaryResponse,
 } from "./types";
 
 const BASE_URL =
@@ -842,4 +845,31 @@ export async function autoRegisterWebhook(
 
 export async function disableWebhooks(repoId: string): Promise<void> {
   return deleteGitConfig(repoId);
+}
+
+// ── API Keys (M4 endpoints, consumed by M5 UI) ──
+
+export async function listApiKeys(): Promise<ApiKeyResponse[]> {
+  return apiFetch<ApiKeyResponse[]>("/api/v1/api-keys");
+}
+
+export async function createApiKey(name: string): Promise<ApiKeyCreateResponse> {
+  return apiFetch<ApiKeyCreateResponse>("/api/v1/api-keys", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function revokeApiKey(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/api-keys/${id}`, { method: "DELETE" });
+}
+
+// ── AI Usage (M5 endpoints) ──
+
+export async function getAiUsageSummary(
+  days: number = 30,
+): Promise<UsageSummaryResponse> {
+  return apiFetch<UsageSummaryResponse>(
+    `/api/v1/admin/ai-usage?days=${days}`,
+  );
 }
