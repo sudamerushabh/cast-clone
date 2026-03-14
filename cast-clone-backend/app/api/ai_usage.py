@@ -1,7 +1,8 @@
 """Admin endpoints for AI usage statistics and cost tracking."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -31,7 +32,7 @@ async def get_usage_summary(
     Returns total tokens, estimated cost, and breakdowns by source and project
     for the specified time window (default: last 30 days).
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     # Totals
     totals_q = await session.execute(
