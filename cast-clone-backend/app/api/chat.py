@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -20,10 +20,14 @@ from app.schemas.chat import ChatRequest
 from app.services.neo4j import Neo4jGraphStore, get_driver
 from app.services.postgres import get_session
 
+logger = structlog.get_logger(__name__)
+
 router = APIRouter(prefix="/api/v1/projects", tags=["chat"])
 
-# Concurrency guard: max 1 active chat stream per user
-_user_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# Concurrency guard: max 1 active chat stream per user.
+# NOTE: This only works within a single process. With multiple
+# uvicorn workers, the guard is per-worker, not global.
+_user_locks: dict[str, asyncio.Lock] = {}
 
 
 async def _resolve_project_context(
@@ -78,7 +82,10 @@ async def chat(
     Limited to 1 active stream per user to prevent abuse.
     """
     # Concurrency guard: reject if user already has an active stream
-    user_lock = _user_locks[_user.id]
+    user_id = str(_user.id)
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    user_lock = _user_locks[user_id]
     if user_lock.locked():
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -121,8 +128,11 @@ async def chat(
                     if await request.is_disconnected():
                         break
                     yield event
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error(
+                    "chat_stream_generator_error",
+                    error=str(exc),
+                )
 
     return StreamingResponse(
         event_generator(),

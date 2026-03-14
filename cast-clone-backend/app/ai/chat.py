@@ -154,14 +154,23 @@ def _serialize_content(content) -> list[dict]:
                 }
             )
         elif block_type == "thinking":
-            blocks.append(
-                {
-                    "type": "thinking",
-                    "thinking": block.thinking
+            thinking_block: dict = {
+                "type": "thinking",
+                "thinking": (
+                    block.thinking
                     if hasattr(block, "thinking")
-                    else block.get("thinking", ""),
-                }
+                    else block.get("thinking", "")
+                ),
+            }
+            # Preserve signature for multi-turn thinking
+            sig = (
+                block.signature
+                if hasattr(block, "signature")
+                else block.get("signature") if isinstance(block, dict) else None
             )
+            if sig:
+                thinking_block["signature"] = sig
+            blocks.append(thinking_block)
     return blocks
 
 
