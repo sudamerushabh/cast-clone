@@ -324,3 +324,22 @@ class TestGetOrCreateSummary:
                 max_tokens=512,
             )
         assert "error" in result
+
+
+from app.ai.tools import get_or_generate_summary as tool_get_or_generate_summary
+
+
+class TestGetOrGenerateSummaryTool:
+    @pytest.mark.asyncio
+    async def test_tool_delegates_to_service(self, ctx):
+        with patch("app.ai.summaries.get_or_create_summary") as mock_svc:
+            mock_svc.return_value = {
+                "fqn": "com.app.X",
+                "summary": "X does things.",
+                "cached": True,
+                "model": "model-1",
+                "tokens_used": 100,
+            }
+            result = await tool_get_or_generate_summary(ctx, node_fqn="com.app.X")
+            assert result["summary"] == "X does things."
+            mock_svc.assert_called_once()

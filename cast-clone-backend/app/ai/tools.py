@@ -294,3 +294,29 @@ async def get_source_code(ctx: ChatToolContext, node_fqn: str) -> dict:
         result["error"] = f"Cannot read file: {exc}"
 
     return result
+
+
+# ── Summary Tools ────────────────────────────────────────────
+# Added in M2. Requires db_session on ChatToolContext.
+
+
+async def get_or_generate_summary(
+    ctx: ChatToolContext, node_fqn: str
+) -> dict:
+    """Get AI summary for a node. Returns cached if available."""
+    from anthropic import AsyncAnthropicBedrock
+
+    from app.ai.summaries import (
+        get_or_create_summary as summaries_get_or_create_summary,
+    )
+    from app.config import get_settings
+
+    settings = get_settings()
+    client = AsyncAnthropicBedrock(aws_region=settings.aws_region)
+    return await summaries_get_or_create_summary(
+        ctx=ctx,
+        node_fqn=node_fqn,
+        client=client,
+        model=settings.summary_model,
+        max_tokens=settings.summary_max_tokens,
+    )

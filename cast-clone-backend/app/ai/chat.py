@@ -21,6 +21,7 @@ from app.ai.tools import (
     application_stats,
     find_path,
     get_architecture,
+    get_or_generate_summary,
     get_source_code,
     impact_analysis,
     list_applications,
@@ -61,6 +62,9 @@ _TOOL_HANDLERS = {
         ctx, transaction_name=inp["transaction_name"]
     ),
     "get_source_code": lambda ctx, inp: get_source_code(ctx, node_fqn=inp["node_fqn"]),
+    "get_or_generate_summary": lambda ctx, inp: get_or_generate_summary(
+        ctx, node_fqn=inp["node_fqn"]
+    ),
 }
 
 

@@ -190,4 +190,26 @@ def get_chat_tool_definitions() -> list[dict]:
                 "required": ["node_fqn"],
             },
         },
+        {
+            "name": "get_or_generate_summary",
+            "description": (
+                "Get an AI-generated explanation of a code object. "
+                "Returns cached summary if available, generates new "
+                "one if not. Use when user asks to explain or "
+                "summarize a class, method, or module."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "node_fqn": {
+                        "type": "string",
+                        "description": (
+                            "Fully qualified name of the node "
+                            "to summarize"
+                        ),
+                    },
+                },
+                "required": ["node_fqn"],
+            },
+        },
     ]
