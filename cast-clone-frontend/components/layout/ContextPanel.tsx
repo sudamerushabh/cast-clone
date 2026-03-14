@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   FolderGit2,
   GitBranch,
+  Key,
   LayoutDashboard,
   Monitor,
   Bot,
@@ -123,6 +124,7 @@ export function ContextPanel() {
           { label: "System", href: "/settings/system", icon: Monitor },
           { label: "AI Configuration", href: "/settings/ai", icon: Bot },
           { label: "Team", href: "/settings/team", icon: Users },
+          { label: "API Keys", href: "/settings/api-keys", icon: Key },
           { label: "Activity", href: "/settings/activity", icon: Activity },
         ]}
       />
