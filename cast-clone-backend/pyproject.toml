@@ -27,6 +27,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.22",
     "anthropic[bedrock]>=0.40",
+    "mcp[cli]>=1.25,<2",
 ]
 
 [dependency-groups]

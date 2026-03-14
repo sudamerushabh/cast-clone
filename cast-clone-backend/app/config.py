@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     summary_source_line_cap: int = 200
     summary_neighbor_limit: int = 20
 
+    # Phase 5b-M4: MCP server
+    mcp_port: int = 8090
+    mcp_api_key_cache_ttl_seconds: int = 300
+    mcp_last_used_batch_seconds: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
