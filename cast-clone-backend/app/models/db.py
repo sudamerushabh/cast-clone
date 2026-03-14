@@ -361,3 +361,28 @@ class AiSummary(Base):
     )
 
     project: Mapped[Project] = relationship()
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    user: Mapped[User | None] = relationship()
+
+    def __init__(self, **kwargs: object) -> None:
+        if "is_active" not in kwargs:
+            kwargs["is_active"] = True
+        super().__init__(**kwargs)
