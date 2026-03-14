@@ -216,3 +216,29 @@ class TestListTransactions:
         result = await list_transactions(ctx)
         assert len(result) == 1
         assert result[0]["name"] == "POST /orders"
+
+
+from app.ai.tool_definitions import get_chat_tool_definitions
+
+
+class TestToolDefinitions:
+    def test_all_tools_present(self):
+        defs = get_chat_tool_definitions()
+        names = {d["name"] for d in defs}
+        expected = {
+            "list_applications", "application_stats", "get_architecture",
+            "search_objects", "object_details", "impact_analysis",
+            "find_path", "list_transactions", "transaction_graph",
+            "get_source_code",
+        }
+        assert expected.issubset(names)
+
+    def test_each_has_input_schema(self):
+        for tool in get_chat_tool_definitions():
+            assert "input_schema" in tool
+            assert tool["input_schema"]["type"] == "object"
+
+    def test_each_has_description(self):
+        for tool in get_chat_tool_definitions():
+            assert "description" in tool
+            assert len(tool["description"]) > 10
