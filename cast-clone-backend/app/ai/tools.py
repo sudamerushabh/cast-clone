@@ -4,10 +4,11 @@
 Each function wraps a Cypher query against GraphStore. All functions are async
 and return plain dicts/lists (JSON-serializable).
 """
+
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,11 +25,12 @@ logger = structlog.get_logger(__name__)
 @dataclass
 class ChatToolContext:
     """Shared context passed to all tool functions."""
+
     graph_store: GraphStore
     app_name: str
     project_id: str
-    repo_path: str | None = None         # Cloned repo path (for get_source_code)
-    db_session: "AsyncSession | None" = None  # For PostgreSQL writes (M2: summaries)
+    repo_path: str | None = None  # Cloned repo path (for get_source_code)
+    db_session: AsyncSession | None = None  # For PostgreSQL writes (M2: summaries)
 
 
 # ── Portfolio Tools ──────────────────────────────────────────
@@ -61,7 +63,8 @@ async def application_stats(ctx: ChatToolContext, app_name: str | None = None) -
 
 
 async def get_architecture(
-    ctx: ChatToolContext, level: str = "module",
+    ctx: ChatToolContext,
+    level: str = "module",
 ) -> dict:
     """Get application architecture at module or class level."""
     if level == "module":
@@ -74,13 +77,15 @@ async def get_architecture(
             "MATCH (a)-[r:IMPORTS]->(b) "
             "WHERE a.app_name = $name AND b.app_name = $name "
             "AND a.kind = 'Module' AND b.kind = 'Module' "
-            "RETURN a.fqn AS source, b.fqn AS target, type(r) AS kind, r.weight AS weight",
+            "RETURN a.fqn AS source, b.fqn AS target, "
+            "type(r) AS kind, r.weight AS weight",
             {"name": ctx.app_name},
         )
     else:
         nodes = await ctx.graph_store.query(
             "MATCH (c) WHERE c.app_name = $name AND c.kind = 'Class' "
-            "RETURN c.fqn AS fqn, c.name AS name, 'Class' AS type, c.loc AS loc "
+            "RETURN c.fqn AS fqn, c.name AS name, "
+            "'Class' AS type, c.loc AS loc "
             "LIMIT 500",
             {"name": ctx.app_name},
         )
@@ -88,7 +93,8 @@ async def get_architecture(
             "MATCH (a)-[r:DEPENDS_ON]->(b) "
             "WHERE a.app_name = $name AND b.app_name = $name "
             "AND a.kind = 'Class' AND b.kind = 'Class' "
-            "RETURN a.fqn AS source, b.fqn AS target, type(r) AS kind, r.weight AS weight "
+            "RETURN a.fqn AS source, b.fqn AS target, "
+            "type(r) AS kind, r.weight AS weight "
             "LIMIT 2000",
             {"name": ctx.app_name},
         )
@@ -103,7 +109,8 @@ async def search_objects(
     """Search for code objects by name. Optionally filter by type."""
     where_parts = [
         "n.app_name = $app_name",
-        "(toLower(n.name) CONTAINS toLower($query) OR toLower(n.fqn) CONTAINS toLower($query))",
+        "(toLower(n.name) CONTAINS toLower($query) "
+        "OR toLower(n.fqn) CONTAINS toLower($query))",
     ]
     params: dict = {"app_name": ctx.app_name, "query": query}
 
@@ -171,7 +178,8 @@ async def impact_analysis(
             "MATCH (start {fqn: $fqn, app_name: $app_name})-[:CONTAINS*0..10]->(seed) "
             "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
             f"MATCH (dep {{app_name: $app_name}})"
-            f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS*1..{depth}]->(target) "
+            "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS"
+            f"|INJECTS|CONSUMES|READS*1..{depth}]->(target) "
             "WHERE target.fqn IN seed_fqns AND dep.fqn <> $fqn "
             "WITH DISTINCT dep, 1 AS depth "
             "RETURN dep.fqn AS fqn, dep.name AS name, "
@@ -181,7 +189,9 @@ async def impact_analysis(
     else:  # downstream or both
         cypher = (
             f"MATCH path = (start {{fqn: $fqn, app_name: $app_name}})"
-            f"-[:CALLS|INJECTS|IMPLEMENTS|PRODUCES|WRITES|READS|CONTAINS|DEPENDS_ON*1..{depth}]->(affected) "
+            "-[:CALLS|INJECTS|IMPLEMENTS|PRODUCES"
+            "|WRITES|READS|CONTAINS"
+            f"|DEPENDS_ON*1..{depth}]->(affected) "
             "WHERE affected.app_name = $app_name AND affected.fqn <> $fqn "
             "WITH affected, min(length(path)) AS depth "
             "RETURN affected.fqn AS fqn, affected.name AS name, "
@@ -203,8 +213,11 @@ async def find_path(ctx: ChatToolContext, from_fqn: str, to_fqn: str) -> dict:
         "(a {fqn: $source, app_name: $app_name})"
         "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS|READS|WRITES|PRODUCES|CONSUMES*..10]-"
         "(b {fqn: $target, app_name: $app_name})) "
-        "RETURN [n IN nodes(path) | {fqn: n.fqn, name: n.name, type: labels(n)[0]}] AS nodes, "
-        "[r IN relationships(path) | {type: type(r), source: startNode(r).fqn, target: endNode(r).fqn}] AS edges, "
+        "RETURN [n IN nodes(path) | "
+        "{fqn: n.fqn, name: n.name, type: labels(n)[0]}] AS nodes, "
+        "[r IN relationships(path) | {type: type(r), "
+        "source: startNode(r).fqn, "
+        "target: endNode(r).fqn}] AS edges, "
         "length(path) AS path_length",
         {"source": from_fqn, "target": to_fqn, "app_name": ctx.app_name},
     )
@@ -243,7 +256,9 @@ async def transaction_graph(ctx: ChatToolContext, transaction_name: str) -> dict
 async def get_source_code(ctx: ChatToolContext, node_fqn: str) -> dict:
     """Get the source code for a specific code object."""
     node = await ctx.graph_store.query_single(
-        "MATCH (n {fqn: $fqn, app_name: $app_name}) RETURN n.path AS path, n.line AS line, n.end_line AS end_line",
+        "MATCH (n {fqn: $fqn, app_name: $app_name}) "
+        "RETURN n.path AS path, n.line AS line, "
+        "n.end_line AS end_line",
         {"fqn": node_fqn, "app_name": ctx.app_name},
     )
     if not node:
@@ -270,7 +285,10 @@ async def get_source_code(ctx: ChatToolContext, node_fqn: str) -> dict:
         if end - start > 200:
             end = start + 200
         selected = lines[start:end]
-        numbered = "\n".join(f"{start + i + 1}: {l}" for i, l in enumerate(selected))
+        numbered = "\n".join(
+            f"{start + i + 1}: {line}"
+            for i, line in enumerate(selected)
+        )
         result["code"] = numbered
     except Exception as exc:
         result["error"] = f"Cannot read file: {exc}"

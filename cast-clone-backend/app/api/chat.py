@@ -1,5 +1,6 @@
 # app/api/chat.py
 """AI chat endpoint — agentic architecture assistant with SSE streaming."""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,9 +35,7 @@ async def _resolve_project_context(
     Queries Neo4j for language/framework metadata since the graph nodes
     store this information (populated during analysis Stage 1/7).
     """
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
+    result = await session.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
 
     if not project:
@@ -83,11 +82,15 @@ async def chat(
     if user_lock.locked():
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="You already have an active chat stream. Please wait for it to complete.",
+            detail=(
+                "You already have an active chat stream. "
+                "Please wait for it to complete."
+            ),
         )
 
     app_name, languages, frameworks, repo_path = await _resolve_project_context(
-        project_id, session,
+        project_id,
+        session,
     )
 
     # Build page-aware or generic system prompt

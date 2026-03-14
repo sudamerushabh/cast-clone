@@ -4,6 +4,7 @@
 The agent has access to architecture graph tools and streams thinking blocks,
 tool calls, and responses as SSE events.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,16 +37,29 @@ logger = structlog.get_logger(__name__)
 # Map tool names to handler functions
 _TOOL_HANDLERS = {
     "list_applications": lambda ctx, inp: list_applications(ctx),
-    "application_stats": lambda ctx, inp: application_stats(ctx, app_name=inp.get("app_name")),
-    "get_architecture": lambda ctx, inp: get_architecture(ctx, level=inp.get("level", "module")),
-    "search_objects": lambda ctx, inp: search_objects(ctx, query=inp["query"], type_filter=inp.get("type_filter")),
+    "application_stats": lambda ctx, inp: application_stats(
+        ctx, app_name=inp.get("app_name")
+    ),
+    "get_architecture": lambda ctx, inp: get_architecture(
+        ctx, level=inp.get("level", "module")
+    ),
+    "search_objects": lambda ctx, inp: search_objects(
+        ctx, query=inp["query"], type_filter=inp.get("type_filter")
+    ),
     "object_details": lambda ctx, inp: object_details(ctx, node_fqn=inp["node_fqn"]),
     "impact_analysis": lambda ctx, inp: impact_analysis(
-        ctx, node_fqn=inp["node_fqn"], depth=inp.get("depth", 5), direction=inp.get("direction", "both"),
+        ctx,
+        node_fqn=inp["node_fqn"],
+        depth=inp.get("depth", 5),
+        direction=inp.get("direction", "both"),
     ),
-    "find_path": lambda ctx, inp: find_path(ctx, from_fqn=inp["from_fqn"], to_fqn=inp["to_fqn"]),
+    "find_path": lambda ctx, inp: find_path(
+        ctx, from_fqn=inp["from_fqn"], to_fqn=inp["to_fqn"]
+    ),
     "list_transactions": lambda ctx, inp: list_transactions(ctx),
-    "transaction_graph": lambda ctx, inp: transaction_graph(ctx, transaction_name=inp["transaction_name"]),
+    "transaction_graph": lambda ctx, inp: transaction_graph(
+        ctx, transaction_name=inp["transaction_name"]
+    ),
     "get_source_code": lambda ctx, inp: get_source_code(ctx, node_fqn=inp["node_fqn"]),
 }
 
@@ -64,7 +78,10 @@ def build_system_prompt(
         parts.append(f"The application is built with {', '.join(frameworks)}.")
     if languages:
         parts.append(f"Languages: {', '.join(languages)}.")
-    parts.append("You have access to the application's complete architecture graph via the provided tools.")
+    parts.append(
+        "You have access to the application's complete "
+        "architecture graph via the provided tools."
+    )
 
     if page_context:
         ctx_parts = []
@@ -78,20 +95,28 @@ def build_system_prompt(
         location = " ".join(ctx_parts) if ctx_parts else page_context.page
         parts.append(f"\nThe user is currently viewing {location}.")
         if page_context.selected_node_fqn:
-            parts.append(f"They have selected the node: {page_context.selected_node_fqn}")
-        parts.append("Use this context to make your answers more relevant to what they're looking at.")
+            parts.append(
+                f"They have selected the node: {page_context.selected_node_fqn}"
+            )
+        parts.append(
+            "Use this context to make your answers "
+            "more relevant to what they're looking at."
+        )
 
     parts.append(
         "\nWhen answering questions:\n"
         "- Use tools to look up real data. Don't guess about the architecture.\n"
         "- Be specific — reference actual class names, method names, and file paths.\n"
         "- Include FQNs when mentioning code objects so the UI can link to them.\n"
-        "- If a question is ambiguous, search first to find relevant nodes, then get details."
+        "- If a question is ambiguous, search first to find "
+        "relevant nodes, then get details."
     )
     return "\n".join(parts)
 
 
-async def execute_tool_call(ctx: ChatToolContext, tool_name: str, tool_input: dict) -> str:
+async def execute_tool_call(
+    ctx: ChatToolContext, tool_name: str, tool_input: dict
+) -> str:
     """Execute a tool call and return a JSON string result."""
     handler = _TOOL_HANDLERS.get(tool_name)
     if not handler:
@@ -120,17 +145,23 @@ def _serialize_content(content) -> list[dict]:
             text = block.text if hasattr(block, "text") else block.get("text", "")
             blocks.append({"type": "text", "text": text})
         elif block_type == "tool_use":
-            blocks.append({
-                "type": "tool_use",
-                "id": block.id if hasattr(block, "id") else block["id"],
-                "name": block.name if hasattr(block, "name") else block["name"],
-                "input": block.input if hasattr(block, "input") else block["input"],
-            })
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": block.id if hasattr(block, "id") else block["id"],
+                    "name": block.name if hasattr(block, "name") else block["name"],
+                    "input": block.input if hasattr(block, "input") else block["input"],
+                }
+            )
         elif block_type == "thinking":
-            blocks.append({
-                "type": "thinking",
-                "thinking": block.thinking if hasattr(block, "thinking") else block.get("thinking", ""),
-            })
+            blocks.append(
+                {
+                    "type": "thinking",
+                    "thinking": block.thinking
+                    if hasattr(block, "thinking")
+                    else block.get("thinking", ""),
+                }
+            )
     return blocks
 
 
@@ -193,7 +224,9 @@ async def chat_stream(
             # Emit events for each content block
             for block in response.content:
                 if hasattr(block, "type"):
-                    block_type = block.type if isinstance(block.type, str) else str(block.type)
+                    block_type = (
+                        block.type if isinstance(block.type, str) else str(block.type)
+                    )
                 else:
                     continue
 
@@ -206,36 +239,55 @@ async def chat_stream(
                     yield _sse_event("text", {"content": block.text})
 
                 elif block_type == "tool_use":
-                    yield _sse_event("tool_use", {
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
+                    yield _sse_event(
+                        "tool_use",
+                        {
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        },
+                    )
 
             # If no tool calls, we're done
             if response.stop_reason != "tool_use":
                 break
 
             # Process tool calls
-            messages.append({"role": "assistant", "content": _serialize_content(response.content)})
+            messages.append(
+                {"role": "assistant", "content": _serialize_content(response.content)}
+            )
             tool_results = []
 
             for block in response.content:
-                block_type = block.type if hasattr(block, "type") and isinstance(block.type, str) else ""
+                block_type = (
+                    block.type
+                    if hasattr(block, "type") and isinstance(block.type, str)
+                    else ""
+                )
                 if block_type != "tool_use":
                     continue
 
                 if tool_calls_made >= settings.chat_max_tool_calls:
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps({"error": "Tool call limit reached. Please provide your answer now."}),
-                        "is_error": True,
-                    })
-                    yield _sse_event("tool_result", {
-                        "tool_use_id": block.id,
-                        "content_summary": "Tool limit reached",
-                    })
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(
+                                {
+                                    "error": "Tool call limit reached. "
+                                    "Please provide your answer now."
+                                }
+                            ),
+                            "is_error": True,
+                        }
+                    )
+                    yield _sse_event(
+                        "tool_result",
+                        {
+                            "tool_use_id": block.id,
+                            "content_summary": "Tool limit reached",
+                        },
+                    )
                     continue
 
                 result = await execute_tool_call(ctx, block.name, block.input)
@@ -243,27 +295,35 @@ async def chat_stream(
 
                 # Truncate large results for the SSE event (frontend display)
                 summary = result[:500] + "..." if len(result) > 500 else result
-                yield _sse_event("tool_result", {
-                    "tool_use_id": block.id,
-                    "content_summary": summary,
-                })
+                yield _sse_event(
+                    "tool_result",
+                    {
+                        "tool_use_id": block.id,
+                        "content_summary": summary,
+                    },
+                )
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    }
+                )
 
             messages.append({"role": "user", "content": tool_results})
 
-        yield _sse_event("done", {
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "tool_calls": tool_calls_made,
-            "duration_ms": int((time.monotonic() - start) * 1000),
-        })
+        yield _sse_event(
+            "done",
+            {
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "tool_calls": tool_calls_made,
+                "duration_ms": int((time.monotonic() - start) * 1000),
+            },
+        )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         yield _sse_event("error", {"message": "Chat request timed out"})
     except asyncio.CancelledError:
         logger.info("chat_stream_cancelled")
