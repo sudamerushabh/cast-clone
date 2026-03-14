@@ -343,3 +343,55 @@ class TestGetOrGenerateSummaryTool:
             result = await tool_get_or_generate_summary(ctx, node_fqn="com.app.X")
             assert result["summary"] == "X does things."
             mock_svc.assert_called_once()
+
+
+class TestFullFlow:
+    @pytest.mark.asyncio
+    async def test_miss_then_hit(self, ctx):
+        """First call generates, second returns cache."""
+        mock_session = ctx.db_session
+
+        mock_result_miss = MagicMock()
+        mock_result_miss.scalar_one_or_none.return_value = None
+
+        mock_cached = MagicMock()
+        mock_cached.summary = "Generated summary"
+        mock_cached.model = "model-1"
+        mock_cached.graph_hash = "hash123"
+        mock_cached.tokens_used = 500
+        mock_result_hit = MagicMock()
+        mock_result_hit.scalar_one_or_none.return_value = mock_cached
+
+        mock_session.execute.side_effect = [
+            mock_result_miss,
+            MagicMock(),
+            mock_result_hit,
+        ]
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Generated summary")]
+        mock_response.usage.input_tokens = 300
+        mock_response.usage.output_tokens = 200
+        mock_client.messages.create.return_value = mock_response
+
+        with (
+            patch("app.ai.summaries.compute_graph_hash", return_value="hash123"),
+            patch("app.ai.summaries.assemble_node_context", return_value={
+                "node": {"fqn": "com.app.X", "name": "X", "type": "Class"},
+                "callers": [], "callees": [],
+            }),
+        ):
+            r1 = await get_or_create_summary(
+                ctx=ctx, node_fqn="com.app.X",
+                client=mock_client, model="model-1", max_tokens=512,
+            )
+            assert r1["cached"] is False
+            assert mock_client.messages.create.call_count == 1
+
+            r2 = await get_or_create_summary(
+                ctx=ctx, node_fqn="com.app.X",
+                client=mock_client, model="model-1", max_tokens=512,
+            )
+            assert r2["cached"] is True
+            assert mock_client.messages.create.call_count == 1
