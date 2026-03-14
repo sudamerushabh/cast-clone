@@ -78,7 +78,7 @@ def _build_context(app_name: str = "", repo_path: str | None = None) -> ChatTool
 
 @mcp.tool()
 async def list_applications() -> list[dict]:
-    """List all analyzed applications in CodeLens with their languages and module count."""
+    """List all analyzed applications in CodeLens with languages and module count."""
     ctx = _build_context()
     return await tools.list_applications(ctx)
 
