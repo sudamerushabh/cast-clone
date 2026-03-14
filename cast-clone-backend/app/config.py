@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     mcp_api_key_cache_ttl_seconds: int = 300
     mcp_last_used_batch_seconds: int = 60
 
+    # Phase 5b-M5: AI usage cost estimation (Sonnet pricing, USD per million tokens)
+    ai_cost_input_per_mtok: float = 3.0
+    ai_cost_output_per_mtok: float = 15.0
+
 
 @lru_cache
 def get_settings() -> Settings:

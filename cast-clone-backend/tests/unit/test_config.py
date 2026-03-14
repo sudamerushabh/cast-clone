@@ -16,3 +16,10 @@ def test_summary_settings_defaults():
     assert s.summary_max_tokens == 512
     assert s.summary_source_line_cap == 200
     assert s.summary_neighbor_limit == 20
+
+
+def test_ai_cost_settings_defaults():
+    from app.config import Settings
+    s = Settings(database_url="postgresql+asyncpg://x", neo4j_uri="bolt://x")
+    assert s.ai_cost_input_per_mtok == 3.0
+    assert s.ai_cost_output_per_mtok == 15.0
