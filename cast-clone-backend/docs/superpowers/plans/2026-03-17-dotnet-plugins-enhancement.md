@@ -182,6 +182,8 @@ git commit -m "refactor: consolidate .NET plugins under dotnet/ folder"
 
 Add the `dotnet_di_map` field to `AnalysisContext` and enhance test helpers with `is_override` support and new helper functions.
 
+**Note:** This is a pure infrastructure task — no failing-test-first cycle. The new field and helpers are verified through downstream tasks (Task 3 tests `dotnet_di_map`, Task 8 tests `add_hub_class`, Task 9 tests `add_grpc_service`). Step 4 runs existing tests to verify backward compatibility.
+
 **Files:**
 - Modify: `app/models/context.py:21-62`
 - Modify: `tests/unit/helpers.py:59-134`
@@ -260,7 +262,9 @@ def add_hub_class(
     Args:
         hub_type_arg: Generic type arg for strongly-typed hubs (e.g., "INotificationClient").
         methods: List of hub method names to add (excluding lifecycle methods).
-        client_events: List of client event names produced by the hub.
+        client_events: Shared list of client event names. For test convenience, this is
+            assigned to ALL hub methods (not per-method). The plugin itself discovers events
+            from either method-level client_events OR strongly-typed hub interface methods.
     """
     base_class = f"Hub<{hub_type_arg}>" if hub_type_arg else "Hub"
     node = add_class(graph, fqn, name, base_class=base_class)
@@ -268,7 +272,7 @@ def add_hub_class(
     for method_name in (methods or []):
         method_node = add_method(graph, fqn, method_name, return_type="Task")
         if client_events:
-            method_node.properties["client_events"] = client_events
+            method_node.properties["client_events"] = list(client_events)
 
     return node
 
@@ -373,17 +377,7 @@ Expected: FAIL — AddDbContext with empty implementation doesn't create a self-
 
 - [ ] **Step 3: Implement AddDbContext self-registration in `_collect_registrations`**
 
-In `app/stages/plugins/dotnet/di.py`, update `_collect_registrations` — after the line `if not impl_name: impl_name = interface_name`, also handle `AddDbContext`:
-
-```python
-                # If no implementation specified, it's a self-registration
-                if not impl_name:
-                    impl_name = interface_name
-
-                # AddDbContext is always a self-registration
-                if method == "AddDbContext" and not impl_name:
-                    impl_name = interface_name
-```
+In `app/stages/plugins/dotnet/di.py`, the existing `if not impl_name: impl_name = interface_name` already handles the self-registration case for `AddDbContext` (empty implementation → uses interface name as impl name). No code change needed for registration itself. However, verify that `AddDbContext` entries in `di_registrations` with empty `implementation` are correctly picked up by the existing logic. If the test from Step 1 passes without changes, this step is a no-op — the existing self-registration logic already covers it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -709,10 +703,10 @@ class TestExtensionEndpoints:
 
 - [ ] **Step 8: Implement extension method endpoint extraction**
 
-In `_extract_minimal_apis`, add a scan for `extension_endpoints`:
+In `_extract_minimal_apis`, the existing loop already iterates over ALL class nodes. Inside that loop (which processes `minimal_api_endpoints` and `minimal_api_groups`), add a third block for `extension_endpoints`. This means extension endpoints are discovered on any class node in the graph, not just the Program class — which is correct because extension methods live in separate static classes:
 
 ```python
-# Extension method endpoints (1-hop)
+# Extension method endpoints (1-hop) — lives on extension method classes, not Program
 extension_eps = class_node.properties.get("extension_endpoints", [])
 for ep_data in extension_eps:
     self._create_minimal_endpoint(graph, ep_data, "", nodes, edges, entry_points)
@@ -860,14 +854,15 @@ class TestCustomMiddlewareResolution:
 
 - [ ] **Step 3: Implement custom middleware class resolution**
 
-In `extract()`, after creating middleware component nodes, add resolution logic:
+In `extract()`, the existing code already builds a `mw_fqns: list[str]` list of middleware component FQNs (one per middleware call). After that loop, add the resolution logic:
 
 ```python
 import re
 
 _USE_MIDDLEWARE_RE = re.compile(r"^UseMiddleware<(\w+)>$")
 
-# After creating middleware component nodes, resolve UseMiddleware<T>
+# mw_fqns is already built above: mw_fqns[i] corresponds to middleware_calls[i]
+# Resolve UseMiddleware<T> to actual middleware classes
 for i, mw_name in enumerate(middleware_calls):
     match = _USE_MIDDLEWARE_RE.match(mw_name)
     if not match:
@@ -888,10 +883,9 @@ for i, mw_name in enumerate(middleware_calls):
                     break
 
             if has_invoke:
-                mw_fqn = mw_fqns[i]
                 edges.append(GraphEdge(
                     source_fqn=graph_node.fqn,
-                    target_fqn=mw_fqn,
+                    target_fqn=mw_fqns[i],
                     kind=EdgeKind.HANDLES,
                     confidence=Confidence.HIGH,
                     evidence="aspnet-middleware",
@@ -1337,23 +1331,43 @@ class TestManyToMany:
 
 - [ ] **Step 5: Implement many-to-many**
 
-In `_apply_fluent_configurations`, detect `has_many` + `with_many` entries:
+Add a `new_nodes: list[GraphNode]` parameter to `_apply_fluent_configurations` so it can create join table nodes. Update the call site in `extract()` to pass `nodes` list. Then detect `has_many` + `with_many` entries:
 
 ```python
 if "has_many" in config and "with_many" in config:
     target_entity_name = config["has_many"]
-    join_table = config.get("using_entity", f"{entity_name}{target_entity_name}")
+    join_table_name = config.get("using_entity", f"{entity_name}{target_entity_name}")
     target_entity = entities.get(target_entity_name)
     if entity_info and target_entity:
-        # Create join table node
-        join_fqn = f"table:{join_table}"
-        from app.models.graph import GraphNode as GN
-        # (nodes list is not accessible here — return join table info to caller)
-        # Store in a list for the caller to create nodes
-        ...
+        join_fqn = f"table:{join_table_name}"
+        new_nodes.append(GraphNode(
+            fqn=join_fqn,
+            name=join_table_name,
+            kind=NodeKind.TABLE,
+            properties={"orm": "entity-framework", "is_join_table": True},
+        ))
+        # FK from join table to source entity PK
+        source_pk = self._find_pk_column(entity_info)
+        target_pk = self._find_pk_column(target_entity)
+        if source_pk:
+            fk1_fqn = f"{join_fqn}.{entity_name}Id"
+            edges.append(GraphEdge(
+                source_fqn=fk1_fqn,
+                target_fqn=f"table:{entity_info.table_name}.{source_pk}",
+                kind=EdgeKind.REFERENCES,
+                confidence=Confidence.HIGH,
+                evidence="entity-framework:fluent-api",
+            ))
+        if target_pk:
+            fk2_fqn = f"{join_fqn}.{target_entity_name}Id"
+            edges.append(GraphEdge(
+                source_fqn=fk2_fqn,
+                target_fqn=f"table:{target_entity.table_name}.{target_pk}",
+                kind=EdgeKind.REFERENCES,
+                confidence=Confidence.HIGH,
+                evidence="entity-framework:fluent-api",
+            ))
 ```
-
-This requires restructuring slightly — the method needs to return new nodes as well as edges. Add a `new_nodes` accumulator list passed into the method, or collect join table data and process in `extract()`.
 
 - [ ] **Step 6: Write failing test for composite keys**
 
@@ -1705,6 +1719,33 @@ class TestHubExtraction:
         assert produces[0].properties.get("event") == "ReceiveMessage"
 
     @pytest.mark.asyncio
+    async def test_strongly_typed_hub_resolves_client_interface(self):
+        """Hub<INotificationClient> resolves client interface methods as events."""
+        plugin = SignalRPlugin()
+        ctx = make_dotnet_context()
+
+        # Strongly-typed hub
+        add_class(ctx.graph, "MyApp.NotificationHub", "NotificationHub", base_class="Hub<INotificationClient>")
+        add_method(ctx.graph, "MyApp.NotificationHub", "SendNotification", return_type="Task")
+
+        # Client interface with methods that become client events
+        add_class(ctx.graph, "MyApp.INotificationClient", "INotificationClient", is_interface=True)
+        add_method(ctx.graph, "MyApp.INotificationClient", "ReceiveNotification", return_type="Task")
+        add_method(ctx.graph, "MyApp.INotificationClient", "UserJoined", return_type="Task")
+
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.Program", name="Program", kind=NodeKind.CLASS, language="csharp",
+            properties={"hub_mappings": [{"hub_type": "NotificationHub", "path": "/notifications"}]},
+        ))
+
+        result = await plugin.extract(ctx)
+
+        produces = [e for e in result.edges if e.kind == EdgeKind.PRODUCES]
+        event_names = {e.properties.get("event") for e in produces}
+        assert "ReceiveNotification" in event_names
+        assert "UserJoined" in event_names
+
+    @pytest.mark.asyncio
     async def test_hub_classified_as_presentation(self):
         """Hub classes are assigned to the Presentation layer."""
         plugin = SignalRPlugin()
@@ -1848,6 +1889,8 @@ from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode
 from app.stages.plugins.base import (
     FrameworkPlugin,
+    LayerRule,
+    LayerRules,
     PluginDetectionResult,
     PluginResult,
 )
@@ -1878,6 +1921,11 @@ class GRPCPlugin(FrameworkPlugin):
 
     async def extract(self, context: AnalysisContext) -> PluginResult:
         return PluginResult.empty()
+
+    def get_layer_classification(self) -> LayerRules:
+        # Note: gRPC services are Presentation layer, but the pattern "Service" is too broad.
+        # Layer assignments are handled directly in extract() via layer_assignments dict.
+        return LayerRules.empty()
 ```
 
 - [ ] **Step 3: Run detection tests**
@@ -1996,6 +2044,7 @@ In `grpc.py`, implement the extraction:
 3. Find gRPC mappings on Program class
 4. For each service class, find override methods (CONTAINS edges → FUNCTION nodes with `is_override: true`)
 5. Create API_ENDPOINT, HANDLES, EXPOSES, entry points, layer assignments
+6. **Proto file linking (deferred):** The spec describes optional `.proto` → service class DEPENDS_ON edges. This is deferred from this plan because the tree-sitter extractor does not yet parse `.proto` files or produce `CONFIG_FILE` nodes for them. When proto parsing is added, create DEPENDS_ON edges from service class FQN to the proto CONFIG_FILE FQN.
 
 - [ ] **Step 6: Run all gRPC tests**
 
