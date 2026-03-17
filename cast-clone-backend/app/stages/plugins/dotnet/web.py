@@ -39,6 +39,8 @@ _HTTP_METHODS: dict[str, str] = {
     "HttpPut": "PUT",
     "HttpDelete": "DELETE",
     "HttpPatch": "PATCH",
+    "HttpOptions": "OPTIONS",
+    "HttpHead": "HEAD",
 }
 
 # Minimal API MapXxx -> HTTP verb
@@ -48,6 +50,15 @@ _MAP_METHODS: dict[str, str] = {
     "MapPut": "PUT",
     "MapDelete": "DELETE",
     "MapPatch": "PATCH",
+    "MapOptions": "OPTIONS",
+    "MapHead": "HEAD",
+}
+
+# Parameter binding attributes -> binding type
+_BINDING_ATTRS: dict[str, str] = {
+    "FromBody": "body",
+    "FromQuery": "query",
+    "FromRoute": "route",
 }
 
 # Base classes that indicate a controller
@@ -86,6 +97,12 @@ class ASPNetWebPlugin(FrameworkPlugin):
         edges: list[GraphEdge] = []
         entry_points: list[EntryPoint] = []
         layer_assignments: dict[str, str] = {}
+
+        # Build name -> fqn index for DTO linking
+        name_to_fqn: dict[str, str] = {}
+        for node in graph.nodes.values():
+            if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+                name_to_fqn[node.name] = node.fqn
 
         for class_node in graph.nodes.values():
             if class_node.kind != NodeKind.CLASS:
@@ -128,10 +145,26 @@ class ASPNetWebPlugin(FrameworkPlugin):
                 if http_method is None:
                     continue
 
-                # Build full path: prefix + method path
-                full_path = self._combine_paths(
-                    class_prefix, method_path, class_node.name, method_node.name
-                )
+                # Check for [Route] override on method
+                route_override = None
+                if "Route" in method_annotations:
+                    route_path = method_annotation_args.get("Route", "")
+                    if route_path:
+                        if route_path.startswith("/") or route_path.startswith("~/"):
+                            # Absolute route — bypass class prefix
+                            route_override = route_path.lstrip("~")
+                            route_override = _ROUTE_PARAM_RE.sub(r":\1", route_override)
+                        else:
+                            # Relative route — replaces method-level path segment
+                            method_path = route_path
+
+                if route_override is not None:
+                    full_path = route_override
+                else:
+                    # Build full path: prefix + method path
+                    full_path = self._combine_paths(
+                        class_prefix, method_path, class_node.name, method_node.name
+                    )
 
                 # Create API_ENDPOINT node
                 endpoint_fqn = f"endpoint:{http_method}:{full_path}"
@@ -180,6 +213,28 @@ class ASPNetWebPlugin(FrameworkPlugin):
                         metadata={"method": http_method, "path": full_path},
                     )
                 )
+
+                # DTO linking: [FromBody], [FromQuery], [FromRoute]
+                params = method_node.properties.get("parameters", [])
+                for param in params:
+                    if not isinstance(param, dict):
+                        continue
+                    param_annotations = param.get("annotations", [])
+                    for attr_name, binding_type in _BINDING_ATTRS.items():
+                        if attr_name in param_annotations:
+                            param_type = param.get("type", "")
+                            dto_fqn = name_to_fqn.get(param_type)
+                            if dto_fqn:
+                                edges.append(
+                                    GraphEdge(
+                                        source_fqn=endpoint_fqn,
+                                        target_fqn=dto_fqn,
+                                        kind=EdgeKind.DEPENDS_ON,
+                                        confidence=Confidence.HIGH,
+                                        evidence="aspnet-web",
+                                        properties={"binding": binding_type},
+                                    )
+                                )
 
         # Extract Minimal API endpoints (app.MapGet, MapPost, etc.)
         self._extract_minimal_apis(
@@ -236,6 +291,13 @@ class ASPNetWebPlugin(FrameworkPlugin):
                     self._create_minimal_endpoint(
                         graph, ep_data, prefix, nodes, edges, entry_points
                     )
+
+            # Extension method endpoints (1-hop)
+            extension_eps = class_node.properties.get("extension_endpoints", [])
+            for ep_data in extension_eps:
+                self._create_minimal_endpoint(
+                    graph, ep_data, "", nodes, edges, entry_points
+                )
 
     def _create_minimal_endpoint(
         self,

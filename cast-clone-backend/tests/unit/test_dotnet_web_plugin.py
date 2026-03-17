@@ -481,3 +481,118 @@ class TestMinimalApis:
         result = await plugin.extract(ctx)
         methods = {n.properties["method"] for n in result.nodes if n.kind == NodeKind.API_ENDPOINT}
         assert methods == {"GET", "POST", "PUT", "DELETE", "PATCH"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Additional HTTP Verbs (HttpOptions, HttpHead)
+# ---------------------------------------------------------------------------
+
+
+class TestAdditionalHttpVerbs:
+    @pytest.mark.asyncio
+    async def test_http_options_and_head(self) -> None:
+        """HttpOptions and HttpHead attributes produce OPTIONS and HEAD endpoints."""
+        ctx = make_dotnet_context()
+        class_fqn = "MyApp.Controllers.UsersController"
+        add_class(ctx.graph, class_fqn, "UsersController", base_class="ControllerBase",
+                  annotations=["ApiController", "Route"], annotation_args={"": "api/[controller]"})
+        add_method(ctx.graph, class_fqn, "Options", annotations=["HttpOptions"])
+        add_method(ctx.graph, class_fqn, "Head", annotations=["HttpHead"])
+
+        plugin = ASPNetWebPlugin()
+        result = await plugin.extract(ctx)
+        methods = {n.properties["method"] for n in result.nodes}
+        assert "OPTIONS" in methods
+        assert "HEAD" in methods
+
+
+# ---------------------------------------------------------------------------
+# Tests: DTO Linking ([FromBody], [FromQuery], [FromRoute])
+# ---------------------------------------------------------------------------
+
+
+class TestDTOLinking:
+    @pytest.mark.asyncio
+    async def test_frombody_creates_depends_on_edge(self) -> None:
+        """[FromBody] parameter on a controller method creates DEPENDS_ON edge to DTO class."""
+        ctx = make_dotnet_context()
+        class_fqn = "MyApp.Controllers.UsersController"
+        add_class(ctx.graph, class_fqn, "UsersController", base_class="ControllerBase",
+                  annotations=["ApiController", "Route"], annotation_args={"": "api/[controller]"})
+        add_method(ctx.graph, class_fqn, "Create", annotations=["HttpPost"],
+                   parameters=[{
+                       "name": "dto", "type": "CreateUserDto",
+                       "annotations": ["FromBody"],
+                   }])
+        add_class(ctx.graph, "MyApp.Dtos.CreateUserDto", "CreateUserDto")
+
+        plugin = ASPNetWebPlugin()
+        result = await plugin.extract(ctx)
+
+        depends_edges = [e for e in result.edges if e.kind == EdgeKind.DEPENDS_ON]
+        assert len(depends_edges) == 1
+        assert depends_edges[0].target_fqn == "MyApp.Dtos.CreateUserDto"
+        assert depends_edges[0].properties.get("binding") == "body"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Extension Method Endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestExtensionEndpoints:
+    @pytest.mark.asyncio
+    async def test_extension_method_endpoints_extracted(self) -> None:
+        """Extension method endpoints (1-hop) are extracted via extension_endpoints property."""
+        ctx = make_dotnet_context()
+        ctx.graph.add_node(GraphNode(
+            fqn="MyApp.UserEndpoints", name="UserEndpoints", kind=NodeKind.CLASS, language="csharp",
+            properties={"extension_endpoints": [
+                {"method": "MapGet", "path": "/api/users", "handler_fqn": "MyApp.Handlers.GetUsers"},
+                {"method": "MapPost", "path": "/api/users", "handler_fqn": "MyApp.Handlers.CreateUser"},
+            ]},
+        ))
+
+        plugin = ASPNetWebPlugin()
+        result = await plugin.extract(ctx)
+        endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+        assert len(endpoints) == 2
+        methods = {n.properties["method"] for n in endpoints}
+        assert methods == {"GET", "POST"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: [Route] Override
+# ---------------------------------------------------------------------------
+
+
+class TestRouteOverride:
+    @pytest.mark.asyncio
+    async def test_absolute_route_overrides_class_prefix(self) -> None:
+        """Method-level [Route('/custom/path')] overrides class prefix entirely."""
+        ctx = make_dotnet_context()
+        class_fqn = "MyApp.Controllers.UsersController"
+        add_class(ctx.graph, class_fqn, "UsersController", base_class="ControllerBase",
+                  annotations=["ApiController", "Route"], annotation_args={"": "api/[controller]"})
+        add_method(ctx.graph, class_fqn, "Health", annotations=["HttpGet", "Route"],
+                   annotation_args={"": "", "Route": "/health"})
+
+        plugin = ASPNetWebPlugin()
+        result = await plugin.extract(ctx)
+        assert result.node_count == 1
+        assert result.nodes[0].properties["path"] == "/health"
+
+    @pytest.mark.asyncio
+    async def test_relative_route_replaces_method_segment(self) -> None:
+        """Method-level [Route('custom')] replaces verb path but keeps class prefix."""
+        ctx = make_dotnet_context()
+        class_fqn = "MyApp.Controllers.UsersController"
+        add_class(ctx.graph, class_fqn, "UsersController", base_class="ControllerBase",
+                  annotations=["ApiController", "Route"], annotation_args={"": "api/[controller]"})
+        add_method(ctx.graph, class_fqn, "Custom", annotations=["HttpGet", "Route"],
+                   annotation_args={"": "", "Route": "custom"})
+
+        plugin = ASPNetWebPlugin()
+        result = await plugin.extract(ctx)
+        assert result.node_count == 1
+        assert result.nodes[0].properties["path"] == "/api/users/custom"
