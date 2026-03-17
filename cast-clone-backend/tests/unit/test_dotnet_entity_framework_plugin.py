@@ -453,3 +453,124 @@ class TestInverseProperty:
         ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
         # AuthorId -> User.Id, EditorId -> User.Id
         assert len(ref_edges) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Test: IEntityTypeConfiguration<T>
+# ---------------------------------------------------------------------------
+
+class TestEntityTypeConfiguration:
+    @pytest.mark.asyncio
+    async def test_ientitytypeconfiguration_fluent_api_applied(self):
+        """IEntityTypeConfiguration<T> classes have their fluent_configurations applied."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True, annotations=["Key"])
+
+        # Config class implementing IEntityTypeConfiguration<User>
+        config_node = add_class(ctx.graph, "MyApp.Config.UserConfiguration", "UserConfiguration",
+                                implements=["IEntityTypeConfiguration<User>"])
+        config_node.properties["fluent_configurations"] = [
+            {"entity": "User", "table": "app_users"},
+        ]
+
+        result = await plugin.extract(ctx)
+        table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
+        assert any(n.name == "app_users" for n in table_nodes)
+        assert result.layer_assignments.get("MyApp.Config.UserConfiguration") == "Data Access"
+
+
+# ---------------------------------------------------------------------------
+# Test: Many-to-many
+# ---------------------------------------------------------------------------
+
+class TestManyToMany:
+    @pytest.mark.asyncio
+    async def test_many_to_many_with_using_entity(self):
+        """HasMany().WithMany().UsingEntity() creates a join table with FK references."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Students", "DbSet<Student>", is_property=True, type_args=["Student"])
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Courses", "DbSet<Course>", is_property=True, type_args=["Course"])
+
+        add_class(ctx.graph, "MyApp.Models.Student", "Student")
+        add_field(ctx.graph, "MyApp.Models.Student", "Id", "int", is_property=True, annotations=["Key"])
+
+        add_class(ctx.graph, "MyApp.Models.Course", "Course")
+        add_field(ctx.graph, "MyApp.Models.Course", "Id", "int", is_property=True, annotations=["Key"])
+
+        ctx.graph.get_node("MyApp.Data.AppDbContext").properties["fluent_configurations"] = [
+            {"entity": "Student", "has_many": "Courses", "with_many": "Students", "using_entity": "StudentCourses"},
+        ]
+
+        result = await plugin.extract(ctx)
+
+        table_names = {n.name for n in result.nodes if n.kind == NodeKind.TABLE}
+        assert "StudentCourses" in table_names
+
+        ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES and "StudentCourses" in e.source_fqn]
+        assert len(ref_edges) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test: Composite keys
+# ---------------------------------------------------------------------------
+
+class TestCompositeKeys:
+    @pytest.mark.asyncio
+    async def test_composite_key_marks_multiple_columns_as_pk(self):
+        """HasKey(x => new { x.A, x.B }) marks both columns as PK."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Enrollments", "DbSet<Enrollment>", is_property=True, type_args=["Enrollment"])
+        add_class(ctx.graph, "MyApp.Models.Enrollment", "Enrollment")
+        add_field(ctx.graph, "MyApp.Models.Enrollment", "StudentId", "int", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.Enrollment", "CourseId", "int", is_property=True)
+
+        ctx.graph.get_node("MyApp.Data.AppDbContext").properties["fluent_configurations"] = [
+            {"entity": "Enrollment", "composite_key": ["StudentId", "CourseId"]},
+        ]
+
+        result = await plugin.extract(ctx)
+        col_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
+        pk_cols = [n for n in col_nodes if n.properties.get("is_primary_key")]
+        pk_names = {n.name for n in pk_cols}
+        assert pk_names == {"StudentId", "CourseId"}
+
+
+# ---------------------------------------------------------------------------
+# Test: Migration parsing
+# ---------------------------------------------------------------------------
+
+class TestMigrationParsing:
+    @pytest.mark.asyncio
+    async def test_migration_fk_creates_reference_edge(self):
+        """AddForeignKey in migration creates a REFERENCES edge."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Orders", "DbSet<Order>", is_property=True, type_args=["Order"])
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.Order", "Order")
+        add_field(ctx.graph, "MyApp.Models.Order", "Id", "int", is_property=True, annotations=["Key"])
+        add_field(ctx.graph, "MyApp.Models.Order", "UserId", "int", is_property=True)
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True, annotations=["Key"])
+
+        # Migration class with FK operation
+        migration_node = add_class(ctx.graph, "MyApp.Migrations.Init", "Init")
+        migration_node.properties["migration_operations"] = [
+            {"operation": "AddForeignKey", "table": "Orders", "column": "UserId",
+             "principal_table": "Users", "principal_column": "Id"},
+        ]
+
+        result = await plugin.extract(ctx)
+        migration_refs = [e for e in result.edges
+                          if e.kind == EdgeKind.REFERENCES and e.evidence == "entity-framework:migration"]
+        assert len(migration_refs) >= 1
+        assert any("UserId" in e.source_fqn and "Id" in e.target_fqn for e in migration_refs)

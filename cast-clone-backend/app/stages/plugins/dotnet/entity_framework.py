@@ -247,10 +247,27 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
         # Step 2b: Apply Fluent API configurations (overrides data annotations)
         self._apply_fluent_configurations(
-            db_contexts, entities, name_to_fqn, edges, warnings, graph,
+            db_contexts, entities, name_to_fqn, edges, warnings, graph, nodes,
         )
 
-        # Step 3: Create Table/Column nodes and relationship edges
+        # Step 2c: Apply IEntityTypeConfiguration<T> classes
+        for node in graph.nodes.values():
+            if node.kind != NodeKind.CLASS:
+                continue
+            implements = node.properties.get("implements", [])
+            for impl in implements:
+                if impl.startswith("IEntityTypeConfiguration<") and impl.endswith(">"):
+                    fluent_configs = node.properties.get("fluent_configurations", [])
+                    if fluent_configs:
+                        self._process_fluent_config_list(
+                            fluent_configs, entities, name_to_fqn, edges, warnings, graph, nodes,
+                        )
+                    layer_assignments[node.fqn] = "Data Access"
+
+        # Step 3: Parse migration classes for ground-truth schema operations
+        self._parse_migrations(graph, entities, edges, warnings)
+
+        # Step 4: Create Table/Column nodes and relationship edges
         for entity in entities.values():
             table_fqn = f"table:{entity.table_name}"
 
@@ -479,6 +496,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         edges: list[GraphEdge],
         warnings: list[str],
         graph: object,
+        nodes: list[GraphNode],
     ) -> None:
         """Apply Fluent API configurations from DbContext.OnModelCreating.
 
@@ -496,56 +514,160 @@ class EntityFrameworkPlugin(FrameworkPlugin):
             if not fluent_configs:
                 continue
 
-            for config in fluent_configs:
-                entity_name = config.get("entity", "")
-                entity_info = entities.get(entity_name)
-                if entity_info is None:
+            self._process_fluent_config_list(
+                fluent_configs, entities, name_to_fqn, edges, warnings, graph, nodes,
+            )
+
+    def _process_fluent_config_list(
+        self,
+        fluent_configs: list[dict[str, object]],
+        entities: dict[str, _EntityInfo],
+        name_to_fqn: dict[str, str],
+        edges: list[GraphEdge],
+        warnings: list[str],
+        graph: object,
+        nodes: list[GraphNode],
+    ) -> None:
+        """Process a list of fluent configuration dicts.
+
+        Shared by _apply_fluent_configurations (DbContext) and
+        IEntityTypeConfiguration<T> processing.
+        """
+        for config in fluent_configs:
+            entity_name = str(config.get("entity", ""))
+            entity_info = entities.get(entity_name)
+            if entity_info is None:
+                warnings.append(
+                    f"Fluent config references unknown entity '{entity_name}'"
+                )
+                continue
+
+            # Table name override: .ToTable("name")
+            if "table" in config:
+                entity_info.table_name = str(config["table"])
+
+            # Column name override: .Property(x => x.Prop).HasColumnName("name")
+            if "property" in config and "column" in config:
+                prop_name = str(config["property"])
+                col_name = str(config["column"])
+                for field_info in entity_info.fields:
+                    if field_info.name == prop_name:
+                        # Inject a Column annotation override so column creation picks it up
+                        field_info.annotations.add("Column")
+                        field_info.annotation_args[""] = col_name
+                        break
+
+            # Composite key: .HasKey(x => new { x.A, x.B })
+            if "composite_key" in config:
+                composite_fields = config["composite_key"]
+                if isinstance(composite_fields, list):
+                    for field_info in entity_info.fields:
+                        if field_info.name in composite_fields:
+                            field_info.is_key = True
+
+            # Relationship: .HasOne().WithMany().HasForeignKey()
+            if "has_one" in config and "foreign_key" in config:
+                target_entity_name = str(config["has_one"])
+                fk_field_name = str(config["foreign_key"])
+                target_entity = entities.get(target_entity_name)
+                if target_entity is None:
                     warnings.append(
-                        f"Fluent config references unknown entity '{entity_name}'"
+                        f"Fluent relationship on '{entity_name}' references "
+                        f"unknown target entity '{target_entity_name}'"
                     )
                     continue
 
-                # Table name override: .ToTable("name")
-                if "table" in config:
-                    entity_info.table_name = config["table"]
+                target_pk = self._find_pk_column(target_entity)
+                fk_col_fqn = f"table:{entity_info.table_name}.{fk_field_name}"
+                if target_pk:
+                    pk_col_fqn = f"table:{target_entity.table_name}.{target_pk}"
+                else:
+                    # Fallback: reference the table itself
+                    pk_col_fqn = f"table:{target_entity.table_name}"
 
-                # Column name override: .Property(x => x.Prop).HasColumnName("name")
-                if "property" in config and "column" in config:
-                    prop_name = config["property"]
-                    col_name = config["column"]
-                    for field_info in entity_info.fields:
-                        if field_info.name == prop_name:
-                            # Inject a Column annotation override so Step 3 picks it up
-                            field_info.annotations.add("Column")
-                            field_info.annotation_args[""] = col_name
+                edges.append(
+                    GraphEdge(
+                        source_fqn=fk_col_fqn,
+                        target_fqn=pk_col_fqn,
+                        kind=EdgeKind.REFERENCES,
+                        confidence=Confidence.HIGH,
+                        evidence="entity-framework:fluent-api",
+                    )
+                )
+
+            # Many-to-many: .HasMany().WithMany().UsingEntity()
+            if "has_many" in config and "with_many" in config:
+                target_entity_name = str(config["has_many"])
+                join_table_name = str(
+                    config.get("using_entity", f"{entity_name}{target_entity_name}")
+                )
+                # Resolve target: try direct name first, then match by table_name
+                target_entity = entities.get(target_entity_name)
+                if target_entity is None:
+                    for ent in entities.values():
+                        if ent.table_name == target_entity_name:
+                            target_entity = ent
+                            target_entity_name = ent.name
                             break
-
-                # Relationship: .HasOne().WithMany().HasForeignKey()
-                if "has_one" in config and "foreign_key" in config:
-                    target_entity_name = config["has_one"]
-                    fk_field_name = config["foreign_key"]
-                    target_entity = entities.get(target_entity_name)
-                    if target_entity is None:
-                        warnings.append(
-                            f"Fluent relationship on '{entity_name}' references "
-                            f"unknown target entity '{target_entity_name}'"
-                        )
-                        continue
-
-                    target_pk = self._find_pk_column(target_entity)
-                    fk_col_fqn = f"table:{entity_info.table_name}.{fk_field_name}"
-                    if target_pk:
-                        pk_col_fqn = f"table:{target_entity.table_name}.{target_pk}"
-                    else:
-                        # Fallback: reference the table itself
-                        pk_col_fqn = f"table:{target_entity.table_name}"
-
-                    edges.append(
-                        GraphEdge(
-                            source_fqn=fk_col_fqn,
-                            target_fqn=pk_col_fqn,
-                            kind=EdgeKind.REFERENCES,
-                            confidence=Confidence.HIGH,
-                            evidence="entity-framework:fluent-api",
+                if entity_info and target_entity:
+                    join_fqn = f"table:{join_table_name}"
+                    nodes.append(
+                        GraphNode(
+                            fqn=join_fqn,
+                            name=join_table_name,
+                            kind=NodeKind.TABLE,
+                            properties={"orm": "entity-framework", "is_join_table": True},
                         )
                     )
+                    source_pk = self._find_pk_column(entity_info)
+                    target_pk = self._find_pk_column(target_entity)
+                    if source_pk:
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=f"{join_fqn}.{entity_name}Id",
+                                target_fqn=f"table:{entity_info.table_name}.{source_pk}",
+                                kind=EdgeKind.REFERENCES,
+                                confidence=Confidence.HIGH,
+                                evidence="entity-framework:fluent-api",
+                            )
+                        )
+                    if target_pk:
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=f"{join_fqn}.{target_entity_name}Id",
+                                target_fqn=f"table:{target_entity.table_name}.{target_pk}",
+                                kind=EdgeKind.REFERENCES,
+                                confidence=Confidence.HIGH,
+                                evidence="entity-framework:fluent-api",
+                            )
+                        )
+
+    def _parse_migrations(
+        self,
+        graph: object,
+        entities: dict[str, _EntityInfo],
+        edges: list[GraphEdge],
+        warnings: list[str],
+    ) -> None:
+        """Parse migration classes for ground-truth schema operations."""
+        for node in graph.nodes.values():  # type: ignore[union-attr]
+            migration_ops = node.properties.get("migration_operations")
+            if not migration_ops:
+                continue
+
+            for op in migration_ops:
+                if op.get("operation") == "AddForeignKey":
+                    table = op.get("table", "")
+                    column = op.get("column", "")
+                    principal_table = op.get("principal_table", "")
+                    principal_column = op.get("principal_column", "")
+                    if table and column and principal_table and principal_column:
+                        edges.append(
+                            GraphEdge(
+                                source_fqn=f"table:{table}.{column}",
+                                target_fqn=f"table:{principal_table}.{principal_column}",
+                                kind=EdgeKind.REFERENCES,
+                                confidence=Confidence.HIGH,
+                                evidence="entity-framework:migration",
+                            )
+                        )
