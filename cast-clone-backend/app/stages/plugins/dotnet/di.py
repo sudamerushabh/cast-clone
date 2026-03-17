@@ -9,6 +9,8 @@ Scans for:
 - builder.Services.AddSingleton<IService, ServiceImpl>()
 - builder.Services.AddDbContext<AppDbContext>(...)
 - Self-registration: builder.Services.AddScoped<Service>()
+- Keyed services: builder.Services.AddKeyedScoped<I, T>('key')
+- Open generics: builder.Services.AddScoped(typeof(IRepo<>), typeof(Repo<>))
 
 Then resolves constructor injection: for each class whose constructor has
 interface-typed parameters, looks up the DI registration to find the concrete
@@ -18,11 +20,12 @@ Produces:
 - INJECTS edges: (:Interface)-[:INJECTS]->(:Class) for registrations
 - INJECTS edges: (:Class)-[:INJECTS]->(:Class) for constructor injection
 - Layer assignments: services->Business Logic, repos->Data Access
+- Shared DI map: context.dotnet_di_map for downstream plugins
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import structlog
 
@@ -45,6 +48,9 @@ _LIFETIME_MAP: dict[str, str] = {
     "AddTransient": "transient",
     "AddSingleton": "singleton",
     "AddDbContext": "scoped",
+    "AddKeyedScoped": "scoped",
+    "AddKeyedTransient": "transient",
+    "AddKeyedSingleton": "singleton",
 }
 
 
@@ -58,6 +64,8 @@ class _DIRegistration:
     implementation_fqn: str | None = None  # Resolved FQN
     lifetime: str = "scoped"
     method: str = "AddScoped"
+    key: str | None = None  # Keyed service key (e.g., "redis")
+    is_open_generic: bool = False  # Open generic registration (e.g., IRepo<> -> Repo<>)
 
 
 class ASPNetDIPlugin(FrameworkPlugin):
@@ -105,9 +113,19 @@ class ASPNetDIPlugin(FrameworkPlugin):
         registrations = self._collect_registrations(graph, name_to_fqn)
         log.info("aspnet_di_registrations_found", count=len(registrations))
 
+        # Separate open generics from normal registrations
+        open_generics = [r for r in registrations if r.is_open_generic]
+        normal_registrations = [r for r in registrations if not r.is_open_generic]
+
         # Phase 2: Create INJECTS edges for each registration
-        for reg in registrations:
+        for reg in normal_registrations:
             if reg.interface_fqn and reg.implementation_fqn:
+                props: dict[str, str] = {
+                    "framework": "aspnet",
+                    "lifetime": reg.lifetime,
+                }
+                if reg.key is not None:
+                    props["key"] = reg.key
                 edges.append(
                     GraphEdge(
                         source_fqn=reg.interface_fqn,
@@ -115,20 +133,22 @@ class ASPNetDIPlugin(FrameworkPlugin):
                         kind=EdgeKind.INJECTS,
                         confidence=Confidence.HIGH,
                         evidence="aspnet-di",
-                        properties={
-                            "framework": "aspnet",
-                            "lifetime": reg.lifetime,
-                        },
+                        properties=props,
                     )
                 )
 
         # Phase 3: Classify layers
         layer_assignments.update(self._classify_layers(graph, registrations))
 
-        # Phase 4: Resolve constructor injection
-        ctor_edges = self._resolve_constructor_injection(graph, registrations)
+        # Phase 4: Resolve constructor injection and build DI lookup
+        ctor_edges, di_lookup = self._resolve_constructor_injection(
+            graph, registrations, open_generics
+        )
         edges.extend(ctor_edges)
         log.info("aspnet_di_constructor_injections", count=len(ctor_edges))
+
+        # Phase 5: Store shared DI map on context for downstream plugins
+        context.dotnet_di_map = di_lookup
 
         log.info(
             "aspnet_di_extract_done",
@@ -172,8 +192,15 @@ class ASPNetDIPlugin(FrameworkPlugin):
                 method = reg_dict.get("method", "")
                 interface_name = reg_dict.get("interface", "")
                 impl_name = reg_dict.get("implementation", "")
+                key = reg_dict.get("key")
 
                 lifetime = _LIFETIME_MAP.get(method, "scoped")
+
+                # Detect open generic registrations
+                is_open_generic = bool(
+                    reg_dict.get("is_open_generic")
+                    or (interface_name.endswith("<>"))
+                )
 
                 # If no implementation specified, it's a self-registration
                 if not impl_name:
@@ -184,11 +211,20 @@ class ASPNetDIPlugin(FrameworkPlugin):
                     implementation_name=impl_name,
                     lifetime=lifetime,
                     method=method,
+                    key=key,
+                    is_open_generic=is_open_generic,
                 )
 
                 # Resolve FQNs via pre-built index (O(1) per lookup)
-                reg.interface_fqn = name_to_fqn.get(interface_name)
-                reg.implementation_fqn = name_to_fqn.get(impl_name)
+                # For open generics, strip <> before lookup
+                if is_open_generic:
+                    base_iface = interface_name.rstrip("<>")
+                    base_impl = impl_name.rstrip("<>")
+                    reg.interface_fqn = name_to_fqn.get(base_iface)
+                    reg.implementation_fqn = name_to_fqn.get(base_impl)
+                else:
+                    reg.interface_fqn = name_to_fqn.get(interface_name)
+                    reg.implementation_fqn = name_to_fqn.get(impl_name)
 
                 registrations.append(reg)
 
@@ -226,16 +262,35 @@ class ASPNetDIPlugin(FrameworkPlugin):
         return assignments
 
     def _resolve_constructor_injection(
-        self, graph: SymbolGraph, registrations: list[_DIRegistration]
-    ) -> list[GraphEdge]:
-        """Resolve constructor params via DI registrations."""
+        self,
+        graph: SymbolGraph,
+        registrations: list[_DIRegistration],
+        open_generics: list[_DIRegistration],
+    ) -> tuple[list[GraphEdge], dict[str, str]]:
+        """Resolve constructor params via DI registrations.
+
+        Returns:
+            Tuple of (constructor injection edges, di_lookup map).
+        """
         edges: list[GraphEdge] = []
 
         # Build lookup: interface_name -> implementation_fqn
         di_lookup: dict[str, str] = {}
+        # Build keyed lookup: (interface_name, key) -> implementation_fqn
+        keyed_lookup: dict[tuple[str, str], str] = {}
+
         for reg in registrations:
             if reg.interface_fqn and reg.implementation_fqn:
-                di_lookup[reg.interface_name] = reg.implementation_fqn
+                if reg.key is not None:
+                    keyed_lookup[(reg.interface_name, reg.key)] = reg.implementation_fqn
+                else:
+                    di_lookup[reg.interface_name] = reg.implementation_fqn
+
+        # Build open generic lookup: base_interface_name -> (impl_fqn, registration)
+        open_generic_lookup: dict[str, _DIRegistration] = {}
+        for reg in open_generics:
+            base_name = reg.interface_name.rstrip("<>")
+            open_generic_lookup[base_name] = reg
 
         # Scan all classes for constructors
         for node in graph.nodes.values():
@@ -261,15 +316,43 @@ class ASPNetDIPlugin(FrameworkPlugin):
                     if not param_type:
                         continue
 
-                    # Look up in DI registrations
-                    impl_fqn = di_lookup.get(param_type)
+                    impl_fqn: str | None = None
+                    confidence = Confidence.HIGH
+
+                    # Check for keyed service resolution via [FromKeyedServices]
+                    annotations = (
+                        param.get("annotations", [])
+                        if isinstance(param, dict)
+                        else []
+                    )
+                    if "FromKeyedServices" in annotations:
+                        key = (
+                            param.get("annotation_args", {}).get("FromKeyedServices")
+                            if isinstance(param, dict)
+                            else None
+                        )
+                        if key:
+                            impl_fqn = keyed_lookup.get((param_type, key))
+
+                    # Normal DI lookup
+                    if impl_fqn is None:
+                        impl_fqn = di_lookup.get(param_type)
+
+                    # Open generic fallback: IRepo<User> -> Repo
+                    if impl_fqn is None and "<" in param_type:
+                        base_name = param_type.split("<")[0]
+                        og_reg = open_generic_lookup.get(base_name)
+                        if og_reg and og_reg.implementation_fqn:
+                            impl_fqn = og_reg.implementation_fqn
+                            confidence = Confidence.MEDIUM
+
                     if impl_fqn:
                         edges.append(
                             GraphEdge(
                                 source_fqn=node.fqn,
                                 target_fqn=impl_fqn,
                                 kind=EdgeKind.INJECTS,
-                                confidence=Confidence.HIGH,
+                                confidence=confidence,
                                 evidence="aspnet-di",
                                 properties={
                                     "framework": "aspnet",
@@ -278,4 +361,4 @@ class ASPNetDIPlugin(FrameworkPlugin):
                             )
                         )
 
-        return edges
+        return edges, di_lookup

@@ -238,3 +238,146 @@ class TestLayerClassification:
 
         result = await plugin.extract(ctx)
         assert result.layer_assignments.get("MyApp.UserRepository") == "Data Access"
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 1: AddDbContext wiring
+# ---------------------------------------------------------------------------
+
+class TestAddDbContextWiring:
+    @pytest.mark.asyncio
+    async def test_adddbcontext_creates_self_registration(self):
+        """AddDbContext<AppDbContext> creates a self-registration INJECTS edge."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+
+        add_class(ctx.graph, "MyApp.Program", "Program")
+        _add_di_registrations(ctx.graph, "MyApp.Program", [
+            {"method": "AddDbContext", "interface": "AppDbContext", "implementation": ""},
+        ])
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+
+        # Controller that takes AppDbContext in constructor
+        add_class(ctx.graph, "MyApp.UserService", "UserService")
+        add_method(
+            ctx.graph, "MyApp.UserService", ".ctor",
+            is_constructor=True,
+            parameters=[{"name": "db", "type": "AppDbContext"}],
+        )
+
+        result = await plugin.extract(ctx)
+        ctor_edges = [e for e in result.edges if e.properties.get("injection_type") == "constructor"]
+        assert any(
+            e.source_fqn == "MyApp.UserService" and e.target_fqn == "MyApp.Data.AppDbContext"
+            for e in ctor_edges
+        )
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 2: Keyed services
+# ---------------------------------------------------------------------------
+
+class TestKeyedServices:
+    @pytest.mark.asyncio
+    async def test_keyed_registration_includes_key_in_edge(self):
+        """AddKeyedScoped<I, T>('mykey') stores the key in INJECTS edge properties."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+
+        add_class(ctx.graph, "MyApp.Program", "Program")
+        _add_di_registrations(ctx.graph, "MyApp.Program", [
+            {"method": "AddKeyedScoped", "interface": "ICache", "implementation": "RedisCache", "key": "redis"},
+        ])
+        add_class(ctx.graph, "MyApp.ICache", "ICache", is_interface=True)
+        add_class(ctx.graph, "MyApp.RedisCache", "RedisCache", implements=["ICache"])
+
+        result = await plugin.extract(ctx)
+        inject_edges = [e for e in result.edges if e.kind == EdgeKind.INJECTS]
+        assert len(inject_edges) >= 1
+        keyed_edge = [e for e in inject_edges if e.properties.get("key") == "redis"]
+        assert len(keyed_edge) == 1
+
+    @pytest.mark.asyncio
+    async def test_keyed_constructor_resolution_via_from_keyed_services(self):
+        """Constructor param with FromKeyedServices resolves to keyed registration."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+
+        add_class(ctx.graph, "MyApp.Program", "Program")
+        _add_di_registrations(ctx.graph, "MyApp.Program", [
+            {"method": "AddKeyedScoped", "interface": "ICache", "implementation": "RedisCache", "key": "redis"},
+            {"method": "AddKeyedScoped", "interface": "ICache", "implementation": "MemCache", "key": "memory"},
+        ])
+        add_class(ctx.graph, "MyApp.ICache", "ICache", is_interface=True)
+        add_class(ctx.graph, "MyApp.RedisCache", "RedisCache", implements=["ICache"])
+        add_class(ctx.graph, "MyApp.MemCache", "MemCache", implements=["ICache"])
+
+        add_class(ctx.graph, "MyApp.MyService", "MyService")
+        add_method(
+            ctx.graph, "MyApp.MyService", ".ctor",
+            is_constructor=True,
+            parameters=[{
+                "name": "cache", "type": "ICache",
+                "annotations": ["FromKeyedServices"],
+                "annotation_args": {"FromKeyedServices": "redis"},
+            }],
+        )
+
+        result = await plugin.extract(ctx)
+        ctor_edges = [e for e in result.edges if e.properties.get("injection_type") == "constructor"]
+        assert any(e.target_fqn == "MyApp.RedisCache" for e in ctor_edges)
+        assert not any(e.target_fqn == "MyApp.MemCache" for e in ctor_edges)
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 3: Open generics
+# ---------------------------------------------------------------------------
+
+class TestOpenGenerics:
+    @pytest.mark.asyncio
+    async def test_open_generic_resolves_closed_type(self):
+        """AddScoped(typeof(IRepo<>), typeof(Repo<>)) resolves IRepo<User> -> Repo<User>."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+
+        add_class(ctx.graph, "MyApp.Program", "Program")
+        _add_di_registrations(ctx.graph, "MyApp.Program", [
+            {"method": "AddScoped", "interface": "IRepo<>", "implementation": "Repo<>", "is_open_generic": True},
+        ])
+        add_class(ctx.graph, "MyApp.IRepo", "IRepo", is_interface=True)
+        add_class(ctx.graph, "MyApp.Repo", "Repo")
+
+        add_class(ctx.graph, "MyApp.UserService", "UserService")
+        add_method(
+            ctx.graph, "MyApp.UserService", ".ctor",
+            is_constructor=True,
+            parameters=[{"name": "repo", "type": "IRepo<User>"}],
+        )
+
+        result = await plugin.extract(ctx)
+        ctor_edges = [e for e in result.edges if e.properties.get("injection_type") == "constructor"]
+        assert len(ctor_edges) >= 1
+        assert ctor_edges[0].target_fqn == "MyApp.Repo"
+        assert ctor_edges[0].confidence == Confidence.MEDIUM
+
+
+# ---------------------------------------------------------------------------
+# Enhancement 4: Shared DI map
+# ---------------------------------------------------------------------------
+
+class TestSharedDIMap:
+    @pytest.mark.asyncio
+    async def test_di_map_stored_on_context(self):
+        """After extraction, context.dotnet_di_map contains interface->impl mappings."""
+        plugin = ASPNetDIPlugin()
+        ctx = make_dotnet_context()
+
+        add_class(ctx.graph, "MyApp.Program", "Program")
+        _add_di_registrations(ctx.graph, "MyApp.Program", [
+            {"method": "AddScoped", "interface": "IUserService", "implementation": "UserService"},
+        ])
+        add_class(ctx.graph, "MyApp.IUserService", "IUserService", is_interface=True)
+        add_class(ctx.graph, "MyApp.UserService", "UserService")
+
+        await plugin.extract(ctx)
+        assert ctx.dotnet_di_map.get("IUserService") == "MyApp.UserService"
