@@ -120,6 +120,8 @@ class GRPCPlugin(FrameworkPlugin):
                         "method": "GRPC",
                         "path": grpc_path,
                         "framework": "grpc",
+                        "request_type": child.properties.get("parameters", [{}])[0].get("type", "") if child.properties.get("parameters") else "",
+                        "response_type": child.properties.get("return_type", ""),
                     },
                 )
                 nodes.append(endpoint_node)

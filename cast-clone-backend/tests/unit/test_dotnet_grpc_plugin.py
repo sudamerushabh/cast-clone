@@ -85,6 +85,41 @@ class TestGRPCExtraction:
         assert "/Greeter/SayGoodbye" in paths
 
     @pytest.mark.asyncio
+    async def test_grpc_endpoint_stores_request_response_types(self):
+        """gRPC endpoints include request_type and response_type in properties."""
+        plugin = GRPCPlugin()
+        ctx = make_dotnet_context()
+        add_grpc_service(
+            ctx.graph,
+            "MyApp.GreeterService",
+            "GreeterService",
+            base_class="Greeter.GreeterBase",
+            override_methods=[
+                {
+                    "name": "SayHello",
+                    "request_type": "HelloRequest",
+                    "response_type": "Task<HelloReply>",
+                },
+            ],
+        )
+        ctx.graph.add_node(
+            GraphNode(
+                fqn="MyApp.Program",
+                name="Program",
+                kind=NodeKind.CLASS,
+                language="csharp",
+                properties={
+                    "grpc_mappings": [{"service_type": "GreeterService"}]
+                },
+            )
+        )
+        result = await plugin.extract(ctx)
+        endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+        assert len(endpoints) == 1
+        assert endpoints[0].properties["request_type"] == "HelloRequest"
+        assert endpoints[0].properties["response_type"] == "Task<HelloReply>"
+
+    @pytest.mark.asyncio
     async def test_grpc_creates_handles_and_exposes_edges(self):
         plugin = GRPCPlugin()
         ctx = make_dotnet_context()

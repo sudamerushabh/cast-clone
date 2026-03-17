@@ -21,7 +21,7 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, GraphNode
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -495,7 +495,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         name_to_fqn: dict[str, str],
         edges: list[GraphEdge],
         warnings: list[str],
-        graph: object,
+        graph: SymbolGraph,
         nodes: list[GraphNode],
     ) -> None:
         """Apply Fluent API configurations from DbContext.OnModelCreating.
@@ -505,7 +505,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         allow overrides.
         """
         for ctx_info in db_contexts:
-            ctx_node = graph.get_node(ctx_info.fqn)  # type: ignore[union-attr]
+            ctx_node = graph.get_node(ctx_info.fqn)
             if ctx_node is None:
                 continue
             fluent_configs: list[dict[str, str]] = ctx_node.properties.get(
@@ -525,7 +525,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         name_to_fqn: dict[str, str],
         edges: list[GraphEdge],
         warnings: list[str],
-        graph: object,
+        graph: SymbolGraph,
         nodes: list[GraphNode],
     ) -> None:
         """Process a list of fluent configuration dicts.
@@ -644,13 +644,13 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
     def _parse_migrations(
         self,
-        graph: object,
+        graph: SymbolGraph,
         entities: dict[str, _EntityInfo],
         edges: list[GraphEdge],
         warnings: list[str],
     ) -> None:
         """Parse migration classes for ground-truth schema operations."""
-        for node in graph.nodes.values():  # type: ignore[union-attr]
+        for node in graph.nodes.values():
             migration_ops = node.properties.get("migration_operations")
             if not migration_ops:
                 continue
