@@ -277,6 +277,10 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
             # Process fields -> columns
             for field_info in entity.fields:
+                # Skip [NotMapped] properties — they have no database column
+                if "NotMapped" in field_info.annotations:
+                    continue
+
                 # Skip navigation properties (collections / references)
                 if self._is_collection_navigation(field_info):
                     # One-to-many: infer FK on the "many" side
@@ -288,9 +292,10 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                         self._infer_fk_from_navigation(
                             entity,
                             target_entity,
-                            entities,
-                            edges,
-                            warnings,
+                            all_entities=entities,
+                            edges=edges,
+                            warnings=warnings,
+                            nav_field=field_info,
                         )
                     continue
 
@@ -309,14 +314,25 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                 col_fqn = f"{table_fqn}.{col_name}"
                 is_fk = "ForeignKey" in field_info.annotations
 
+                # Convention-based PK: "Id" or "{ClassName}Id"
+                is_pk = field_info.is_key
+                if not is_pk:
+                    is_pk = field_info.name == "Id" or field_info.name == f"{entity.name}Id"
+
+                col_props: dict[str, object] = {
+                    "is_primary_key": is_pk,
+                    "is_foreign_key": is_fk,
+                    "is_nullable": "Required" not in field_info.annotations,
+                }
+                max_len = field_info.annotation_args.get("MaxLength")
+                if max_len is not None:
+                    col_props["max_length"] = max_len
+
                 col_node = GraphNode(
                     fqn=col_fqn,
                     name=col_name,
                     kind=NodeKind.COLUMN,
-                    properties={
-                        "is_primary_key": field_info.is_key,
-                        "is_foreign_key": is_fk,
-                    },
+                    properties=col_props,
                 )
                 nodes.append(col_node)
 
@@ -385,6 +401,7 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
     def _find_pk_column(self, entity: _EntityInfo) -> str | None:
         """Find the primary key column name for an entity."""
+        # 1. Explicit [Key] annotation
         for field_info in entity.fields:
             if field_info.is_key:
                 # Check for [Column] override on the PK field
@@ -393,6 +410,12 @@ class EntityFrameworkPlugin(FrameworkPlugin):
                     if col_override:
                         return col_override
                 return field_info.name
+
+        # 2. Convention: "Id" or "{ClassName}Id"
+        for field_info in entity.fields:
+            if field_info.name == "Id" or field_info.name == f"{entity.name}Id":
+                return field_info.name
+
         return None
 
     def _infer_fk_from_navigation(
@@ -402,36 +425,50 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         all_entities: dict[str, _EntityInfo],
         edges: list[GraphEdge],
         warnings: list[str],
+        nav_field: _FieldInfo | None = None,
     ) -> None:
         """Infer FK from a collection navigation.
 
         E.g. Author.Books -> Book.AuthorId references Author.Id.
         Looks for a conventional FK on the target named <OwnerName>Id.
+        If [InverseProperty("NavName")] is present, derives FK as <NavName>Id.
         """
-        expected_fk_name = f"{owner_entity.name}Id"
+        # Determine expected FK name(s) to search for
+        expected_fk_names: list[str] = []
+
+        # [InverseProperty] takes priority — derive FK from the nav property name
+        if nav_field and "InverseProperty" in nav_field.annotations:
+            inverse_nav_name = nav_field.annotation_args.get("InverseProperty", "")
+            if inverse_nav_name:
+                expected_fk_names.append(f"{inverse_nav_name}Id")
+
+        # Fallback: conventional <OwnerName>Id
+        expected_fk_names.append(f"{owner_entity.name}Id")
+
         owner_pk = self._find_pk_column(owner_entity)
         if not owner_pk:
             return
 
-        for field_info in target_entity.fields:
-            if field_info.name == expected_fk_name:
-                # Found the FK property — create REFERENCES edge
-                fk_col_fqn = f"table:{target_entity.table_name}.{field_info.name}"
-                pk_col_fqn = f"table:{owner_entity.table_name}.{owner_pk}"
-                edges.append(
-                    GraphEdge(
-                        source_fqn=fk_col_fqn,
-                        target_fqn=pk_col_fqn,
-                        kind=EdgeKind.REFERENCES,
-                        confidence=Confidence.MEDIUM,
-                        evidence="entity-framework:convention",
+        for expected_fk_name in expected_fk_names:
+            for field_info in target_entity.fields:
+                if field_info.name == expected_fk_name:
+                    # Found the FK property — create REFERENCES edge
+                    fk_col_fqn = f"table:{target_entity.table_name}.{field_info.name}"
+                    pk_col_fqn = f"table:{owner_entity.table_name}.{owner_pk}"
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=fk_col_fqn,
+                            target_fqn=pk_col_fqn,
+                            kind=EdgeKind.REFERENCES,
+                            confidence=Confidence.MEDIUM,
+                            evidence="entity-framework:convention",
+                        )
                     )
-                )
-                return
+                    return
 
         warnings.append(
             f"Collection navigation {owner_entity.name} -> {target_entity.name} "
-            f"but no FK property '{expected_fk_name}' found on {target_entity.name}"
+            f"but no FK property '{expected_fk_names[0]}' found on {target_entity.name}"
         )
 
     def _apply_fluent_configurations(

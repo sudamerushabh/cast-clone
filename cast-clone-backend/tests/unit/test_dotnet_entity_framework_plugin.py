@@ -330,3 +330,126 @@ class TestFluentApi:
         table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
         assert any(n.name == "new_users" for n in table_nodes)
         assert not any(n.name == "old_users" for n in table_nodes)
+
+
+# ---------------------------------------------------------------------------
+# Test: Convention-based PK
+# ---------------------------------------------------------------------------
+
+class TestConventionPK:
+    @pytest.mark.asyncio
+    async def test_id_property_inferred_as_pk(self):
+        """Property named 'Id' is inferred as PK even without [Key] annotation."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.User", "Name", "string", is_property=True)
+
+        result = await plugin.extract(ctx)
+        col_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
+        id_col = [n for n in col_nodes if n.name == "Id"]
+        assert len(id_col) == 1
+        assert id_col[0].properties.get("is_primary_key") is True
+
+    @pytest.mark.asyncio
+    async def test_classname_id_inferred_as_pk(self):
+        """Property named '{ClassName}Id' (e.g., 'UserId') is inferred as PK."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "UserId", "int", is_property=True)
+
+        result = await plugin.extract(ctx)
+        col_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
+        pk_col = [n for n in col_nodes if n.name == "UserId"]
+        assert len(pk_col) == 1
+        assert pk_col[0].properties.get("is_primary_key") is True
+
+
+# ---------------------------------------------------------------------------
+# Test: [NotMapped]
+# ---------------------------------------------------------------------------
+
+class TestNotMapped:
+    @pytest.mark.asyncio
+    async def test_notmapped_property_skipped(self):
+        """[NotMapped] properties do not generate column nodes."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True, annotations=["Key"])
+        add_field(ctx.graph, "MyApp.Models.User", "Name", "string", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.User", "FullName", "string", is_property=True, annotations=["NotMapped"])
+
+        result = await plugin.extract(ctx)
+        col_names = {n.name for n in result.nodes if n.kind == NodeKind.COLUMN}
+        assert "Id" in col_names
+        assert "Name" in col_names
+        assert "FullName" not in col_names
+
+
+# ---------------------------------------------------------------------------
+# Test: [Required] / [MaxLength] column metadata
+# ---------------------------------------------------------------------------
+
+class TestColumnMetadata:
+    @pytest.mark.asyncio
+    async def test_required_sets_nullable_false(self):
+        """[Required] annotation sets is_nullable: false on column node."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True, annotations=["Key"])
+        add_field(ctx.graph, "MyApp.Models.User", "Email", "string", is_property=True, annotations=["Required", "MaxLength"],
+                  annotation_args={"MaxLength": "100"})
+
+        result = await plugin.extract(ctx)
+        email_col = [n for n in result.nodes if n.kind == NodeKind.COLUMN and n.name == "Email"]
+        assert len(email_col) == 1
+        assert email_col[0].properties.get("is_nullable") is False
+        assert email_col[0].properties.get("max_length") == "100"
+
+
+# ---------------------------------------------------------------------------
+# Test: [InverseProperty]
+# ---------------------------------------------------------------------------
+
+class TestInverseProperty:
+    @pytest.mark.asyncio
+    async def test_inverse_property_disambiguates_navigation(self):
+        """[InverseProperty] disambiguates when entity has multiple navs to same target."""
+        plugin = EntityFrameworkPlugin()
+        ctx = make_dotnet_context()
+        add_class(ctx.graph, "MyApp.Data.AppDbContext", "AppDbContext", base_class="DbContext")
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Users", "DbSet<User>", is_property=True, type_args=["User"])
+        add_field(ctx.graph, "MyApp.Data.AppDbContext", "Posts", "DbSet<Post>", is_property=True, type_args=["Post"])
+
+        add_class(ctx.graph, "MyApp.Models.User", "User")
+        add_field(ctx.graph, "MyApp.Models.User", "Id", "int", is_property=True, annotations=["Key"])
+        add_field(ctx.graph, "MyApp.Models.User", "AuthoredPosts", "ICollection<Post>", is_property=True,
+                  type_args=["Post"], annotations=["InverseProperty"], annotation_args={"InverseProperty": "Author"})
+        add_field(ctx.graph, "MyApp.Models.User", "EditedPosts", "ICollection<Post>", is_property=True,
+                  type_args=["Post"], annotations=["InverseProperty"], annotation_args={"InverseProperty": "Editor"})
+
+        add_class(ctx.graph, "MyApp.Models.Post", "Post")
+        add_field(ctx.graph, "MyApp.Models.Post", "Id", "int", is_property=True, annotations=["Key"])
+        add_field(ctx.graph, "MyApp.Models.Post", "AuthorId", "int", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.Post", "Author", "User", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.Post", "EditorId", "int", is_property=True)
+        add_field(ctx.graph, "MyApp.Models.Post", "Editor", "User", is_property=True)
+
+        result = await plugin.extract(ctx)
+
+        # Should not emit "no FK found" warnings since InverseProperty disambiguates
+        ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
+        # AuthorId -> User.Id, EditorId -> User.Id
+        assert len(ref_edges) >= 2
