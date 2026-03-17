@@ -2,6 +2,7 @@
 
 from app.stages.plugins.dotnet.di import ASPNetDIPlugin
 from app.stages.plugins.dotnet.entity_framework import EntityFrameworkPlugin
+from app.stages.plugins.dotnet.grpc import GRPCPlugin
 from app.stages.plugins.dotnet.middleware import ASPNetMiddlewarePlugin
 from app.stages.plugins.dotnet.signalr import SignalRPlugin
 from app.stages.plugins.dotnet.web import ASPNetWebPlugin
@@ -11,5 +12,6 @@ __all__ = [
     "ASPNetWebPlugin",
     "ASPNetMiddlewarePlugin",
     "EntityFrameworkPlugin",
+    "GRPCPlugin",
     "SignalRPlugin",
 ]
