@@ -45,6 +45,9 @@ class AnalysisContext:
     plugin_new_edges: int = 0
     layer_assignments: dict[str, str] = field(default_factory=dict)  # fqn -> layer
 
+    # Stage 5 DI map: shared between .NET plugins (interface_name -> impl_fqn)
+    dotnet_di_map: dict[str, str] = field(default_factory=dict)
+
     # Stage 6 tracking
     cross_tech_edge_count: int = 0
 
