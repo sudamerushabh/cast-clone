@@ -105,9 +105,19 @@ Support `AddScoped(typeof(IRepo<>), typeof(Repo<>))`. The `di_registrations` pro
 
 Store the resolved `interface_name → implementation_fqn` map on `context` so downstream plugins can consume it.
 
-**Implementation:** After Phase 2 (creating INJECTS edges), set `context.dotnet_di_map = di_lookup` where `di_lookup` is the dict already built in `_resolve_constructor_injection`.
+**Implementation:**
+- Add a `dotnet_di_map: dict[str, str] = field(default_factory=dict)` field to `AnalysisContext` in `app/models/context.py`. This is a proper dataclass field, not a dynamic attribute.
+- After Phase 2 (creating INJECTS edges), set `context.dotnet_di_map = di_lookup` where `di_lookup` is the dict already built in `_resolve_constructor_injection`.
 
-### 3.5 Not Doing (Deferred)
+### 3.5 Keyed Service Constructor Resolution
+
+In ASP.NET Core, consumers of keyed services declare their dependency via `[FromKeyedServices("key")]` on constructor parameters. The DI plugin must check for this attribute when resolving constructor injection:
+
+- When a constructor parameter has `FromKeyedServices` in its annotations, extract the key from `annotation_args`
+- Match against keyed DI registrations by both type + key
+- Non-keyed parameters continue to resolve via type-only matching as before
+
+### 3.6 Not Doing (Deferred)
 
 - Factory registrations (`sp => new ServiceImpl(...)`) — can't statically resolve lambda returns
 - Third-party DI containers (Autofac, Scrutor) — each has its own DSL, out of scope for v1
@@ -147,16 +157,19 @@ Detect extension methods that register endpoints. When `Program.cs` calls `app.M
 
 ### 4.4 `[Route]` Override on Methods
 
-When a method has both `[Route("custom/path")]` and an HTTP verb attribute, the `[Route]` path overrides the combined class prefix + verb path.
+When a method has both `[Route("custom/path")]` and an HTTP verb attribute, the `[Route]` path replaces the verb attribute's path argument.
 
 **Implementation:**
 - In the method scanning loop, check if `"Route"` is in `method_annotations`
-- If present, use the Route annotation arg as the full path (ignoring class prefix and verb path)
-- Still combine with class prefix if the Route path is relative (doesn't start with `/` or `~`)
+- If the `[Route]` path is absolute (starts with `/` or `~/`), use it directly — ignoring both the class prefix and the verb attribute path
+- If the `[Route]` path is relative, combine it with the class prefix (replacing only the verb attribute's path argument)
+- This matches ASP.NET Core's actual routing behavior: absolute `[Route]` overrides everything, relative `[Route]` overrides just the method-level segment
 
 ---
 
 ## 5. Middleware Plugin Enhancements (`middleware.py`)
+
+**Dependency fix:** Change `depends_on` from `[]` to `["aspnet-di"]` to match the dependency chain in section 9.4. This ensures the middleware plugin runs after DI resolution and can access the shared DI map for custom middleware class resolution.
 
 ### 5.1 Custom Middleware Class Resolution
 
@@ -324,7 +337,7 @@ Parse migration classes for ground-truth schema operations.
 **Client event extraction:**
 - Hub method nodes may have `client_events` property: `["ReceiveMessage", "UserJoined"]`
 - For strongly-typed hubs, find the client interface (`Hub<T>` → interface `T`) and extract its methods as client events
-- Create PRODUCES edges: `(:Class)-[:PRODUCES {event: "EventName"}]->(:API_ENDPOINT)`
+- Create PRODUCES edges from the hub class to its own WebSocket API_ENDPOINT node: `(:Class)-[:PRODUCES {event: "ReceiveMessage"}]->(:API_ENDPOINT)`. The `event` property on the edge identifies the specific client event. Client events are not separate nodes — they are metadata on the PRODUCES edge, since they flow over the same WebSocket connection represented by the hub's endpoint.
 
 **Endpoint mapping:**
 - Find `hub_mappings` property on Program class node: `[{"hub_type": "ChatHub", "path": "/chatHub"}]`
@@ -354,7 +367,7 @@ LayerRules(rules=[
 ### 8.1 Detection
 
 - Check manifest for `grpc` in framework name → `Confidence.HIGH`
-- Fallback: scan graph for classes whose `base_class` contains `.` and ends with `Base` (e.g., `Greeter.GreeterBase`) → `Confidence.MEDIUM`
+- Fallback: scan graph for classes whose `base_class` matches the pattern `{Name}.{Name}Base` where both names share a common root (e.g., `Greeter.GreeterBase` — the protobuf-generated naming convention). Regex: `^(\w+)\.\1Base$`. This avoids false positives on unrelated `*.Base` patterns like `AutoMapper.ProfileBase`. → `Confidence.MEDIUM`
 
 ### 8.2 Extraction
 
@@ -396,16 +409,28 @@ Note: This is scoped narrowly — only applies to classes whose `base_class` mat
 
 ### 9.1 Test Helpers
 
-Add to `tests/unit/helpers.py`:
+Update existing helpers in `tests/unit/helpers.py`:
+
+- **`add_method`** — Add `is_override: bool = False` kwarg. Stores `is_override` in node properties. Required by the gRPC plugin (section 8.2) to identify overridden RPC methods.
+
+Add new helpers:
 
 ```python
 def add_hub_class(graph, fqn, name, *, hub_type_arg=None, methods=None, client_events=None): ...
 def add_grpc_service(graph, fqn, name, *, base_class, override_methods=None): ...
 ```
 
+`add_grpc_service` internally uses `add_method` with `is_override=True` for each override method.
+
 ### 9.2 No New Enums
 
 All node/edge kinds already exist: `API_ENDPOINT`, `COMPONENT`, `PRODUCES`, `DEPENDS_ON`, `HANDLES`, `EXPOSES`.
+
+**New `EntryPoint.kind` values** introduced by this spec (free-form strings, no enum change needed):
+- `"websocket_endpoint"` — SignalR hub methods (section 7.2)
+- `"grpc_endpoint"` — gRPC service methods (section 8.2)
+
+These join the existing `"http_endpoint"` kind used by the Web plugin.
 
 ### 9.3 Registry Update
 
@@ -424,27 +449,58 @@ aspnet-di (foundation)
 
 All 5 downstream plugins depend on `aspnet-di`. They are independent of each other and run concurrently in the same topological sort layer.
 
+### 9.5 `dotnet/__init__.py` Role
+
+The `dotnet/__init__.py` re-exports all 6 plugin classes for convenience. Plugin registration with `global_registry` stays in `plugins/__init__.py` (following the existing pattern).
+
 ---
 
-## 10. Phasing
+## 10. Tree-sitter Extractor Prerequisites
+
+Several plugin enhancements depend on the C# tree-sitter extractor (`app/stages/treesitter/extractors/csharp.py`) populating specific properties on graph nodes. These properties must exist before plugins run (Stage 5 depends on Stage 3 output).
+
+| Property | On Node Type | Required By | Description |
+|----------|-------------|-------------|-------------|
+| `di_registrations` | Program/Startup class | DI plugin (existing) | List of `{method, interface, implementation, key?, is_open_generic?}` |
+| `middleware_calls` | Program/Startup class | Middleware plugin (existing) | Ordered list of `Use*` call names |
+| `minimal_api_endpoints` | Program class | Web plugin (existing) | List of `{method, path, handler_fqn}` |
+| `minimal_api_groups` | Program class | Web plugin (existing) | List of `{prefix, endpoints: [...]}` |
+| `extension_endpoints` | Extension method class | Web plugin (NEW - section 4.3) | Same format as `minimal_api_endpoints` |
+| `fluent_configurations` | DbContext / IEntityTypeConfiguration class | EF plugin (existing on DbContext, NEW on config classes) | List of config dicts |
+| `migration_operations` | Migration class | EF plugin (NEW - section 6.8) | List of `{operation, table, columns, foreign_keys}` |
+| `hub_mappings` | Program class | SignalR plugin (NEW - section 7.2) | List of `{hub_type, path}` |
+| `client_events` | Hub method nodes | SignalR plugin (NEW - section 7.2) | List of event name strings |
+| `grpc_mappings` | Program class | gRPC plugin (NEW - section 8.2) | List of `{service_type}` |
+| `is_override` | Method nodes | gRPC plugin (NEW - section 8.2) | Boolean |
+| `FromKeyedServices` in annotations | Constructor params | DI plugin (NEW - section 3.5) | Attribute with key arg |
+
+Properties marked "existing" are already produced by the extractor. Properties marked "NEW" require extractor enhancements that are included in the phasing estimates below.
+
+---
+
+## 11. Phasing
 
 ### Phase 1 (M6f): Core Enhancements + SignalR
 
 | Task | Description | Est. |
 |------|-------------|------|
-| 1 | Folder consolidation: move files, update imports, rename tests | 0.5d |
-| 2 | DI plugin enhancements (keyed services, open generics, shared map, AddDbContext) | 1.5d |
-| 3 | Web plugin enhancements (DTO linking, verbs, extension endpoints, Route override) | 1.5d |
-| 4 | Middleware plugin enhancements (custom class resolution, terminal, tech nodes, layers) | 1d |
-| 5 | EF plugin enhancements (all 8 items) | 3d |
-| 6 | SignalR plugin (new) | 1.5d |
-| **Total** | | **~9d** |
+| 1 | Folder consolidation: move files, update imports, rename tests, verify all tests pass | 0.5d |
+| 2 | C# tree-sitter extractor enhancements: add `extension_endpoints`, `migration_operations`, `hub_mappings`, `client_events`, `grpc_mappings`, `is_override`, keyed service annotation support | 2d |
+| 3 | `AnalysisContext` update: add `dotnet_di_map` field | 0.1d |
+| 4 | DI plugin enhancements (keyed services, open generics, shared map, AddDbContext, FromKeyedServices) | 1.5d |
+| 5 | Web plugin enhancements (DTO linking, verbs, extension endpoints, Route override) | 1.5d |
+| 6 | Middleware plugin enhancements (depends_on fix, custom class resolution, terminal, tech nodes, layers) | 1d |
+| 7 | EF plugin enhancements (all 8 items) | 3.5d |
+| 8 | SignalR plugin (new) | 1.5d |
+| **Total** | | **~11.6d** |
 
 ### Phase 2 (M6g): gRPC
 
 | Task | Description | Est. |
 |------|-------------|------|
-| 7 | gRPC plugin (new) | 1.5d |
+| 9 | gRPC plugin (new) | 1.5d |
 | **Total** | | **~1.5d** |
 
-**Grand total: ~10.5 days**
+**Grand total: ~13 days**
+
+Note: Task 2 (tree-sitter extractor) is a prerequisite for tasks 4-9. Tasks 4-8 can be worked in parallel once task 2 is complete. Task 1 (folder consolidation) is independent and can be done first.
