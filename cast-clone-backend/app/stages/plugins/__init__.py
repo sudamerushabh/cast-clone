@@ -4,9 +4,9 @@ Plugins detect framework usage, extract hidden relationships (DI wiring,
 ORM mappings, endpoint routes), and produce new graph nodes and edges.
 """
 
-from app.stages.plugins.aspnet.di import ASPNetDIPlugin
-from app.stages.plugins.aspnet.middleware import ASPNetMiddlewarePlugin
-from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+from app.stages.plugins.dotnet.di import ASPNetDIPlugin
+from app.stages.plugins.dotnet.middleware import ASPNetMiddlewarePlugin
+from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 from app.stages.plugins.django.drf import DjangoDRFPlugin
 from app.stages.plugins.django.orm import DjangoORMPlugin
 from app.stages.plugins.django.settings import DjangoSettingsPlugin
@@ -18,7 +18,7 @@ from app.stages.plugins.base import (
     PluginDetectionResult,
     PluginResult,
 )
-from app.stages.plugins.entity_framework.dbcontext import EntityFrameworkPlugin
+from app.stages.plugins.dotnet.entity_framework import EntityFrameworkPlugin
 from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
 from app.stages.plugins.hibernate.jpa import HibernateJPAPlugin
 from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin

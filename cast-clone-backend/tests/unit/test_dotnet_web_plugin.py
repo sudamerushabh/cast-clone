@@ -8,7 +8,7 @@ from app.models.context import AnalysisContext, EntryPoint
 from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import DetectedFramework, ProjectManifest
-from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 from tests.unit.helpers import make_dotnet_context, add_class, add_method
 
 
@@ -23,7 +23,7 @@ class TestControllerDetection:
     @pytest.mark.asyncio
     async def test_controller_with_route_and_httpget(self) -> None:
         """[ApiController] + [Route("api/[controller]")] + [HttpGet("{id}")] -> GET /api/users/:id."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -57,7 +57,7 @@ class TestControllerDetection:
     @pytest.mark.asyncio
     async def test_httppost_endpoint(self) -> None:
         """[HttpPost] with no path argument -> POST /api/users."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -89,7 +89,7 @@ class TestControllerDetection:
     @pytest.mark.asyncio
     async def test_controller_token_replacement(self) -> None:
         """[Route("api/v1/[controller]")] replaces [controller] with class name minus 'Controller'."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -120,7 +120,7 @@ class TestControllerDetection:
     @pytest.mark.asyncio
     async def test_multiple_http_methods_on_controller(self) -> None:
         """A controller with GET, POST, PUT, DELETE methods produces 4 endpoints."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -179,7 +179,7 @@ class TestEdgesAndEntryPoints:
     @pytest.mark.asyncio
     async def test_handles_and_exposes_edges(self) -> None:
         """Each endpoint gets a HANDLES edge (method->endpoint) and EXPOSES edge (class->endpoint)."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -215,7 +215,7 @@ class TestEdgesAndEntryPoints:
     @pytest.mark.asyncio
     async def test_entry_points_created(self) -> None:
         """Each endpoint handler method is registered as an http_endpoint entry point."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -264,7 +264,7 @@ class TestLayerClassification:
     @pytest.mark.asyncio
     async def test_controllers_classified_as_presentation(self) -> None:
         """Controller classes should be assigned to the Presentation layer."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -303,7 +303,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_route_constraint_normalization(self) -> None:
         """Route constraints like {id:int} and {id?} are normalized to :param."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph
@@ -343,7 +343,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_action_token_replacement(self) -> None:
         """[action] token in route is replaced with lowercased method name."""
-        from app.stages.plugins.aspnet.web import ASPNetWebPlugin
+        from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 
         ctx = make_dotnet_context()
         graph = ctx.graph

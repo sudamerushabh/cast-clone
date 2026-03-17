@@ -13,7 +13,7 @@ from tests.unit.helpers import make_dotnet_context, add_class, add_method, add_f
 # Import the plugin under test
 # ---------------------------------------------------------------------------
 
-from app.stages.plugins.entity_framework.dbcontext import EntityFrameworkPlugin
+from app.stages.plugins.dotnet.entity_framework import EntityFrameworkPlugin
 
 
 # ---------------------------------------------------------------------------

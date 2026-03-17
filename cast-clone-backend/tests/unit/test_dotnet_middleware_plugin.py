@@ -7,7 +7,7 @@ from app.models.enums import NodeKind, EdgeKind, Confidence
 from app.models.graph import GraphNode, GraphEdge, SymbolGraph
 from app.models.context import AnalysisContext
 from app.models.manifest import ProjectManifest, DetectedFramework
-from app.stages.plugins.aspnet.middleware import ASPNetMiddlewarePlugin
+from app.stages.plugins.dotnet.middleware import ASPNetMiddlewarePlugin
 from tests.unit.helpers import make_dotnet_context
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from app.models.graph import GraphNode, GraphEdge, SymbolGraph
 from app.models.context import AnalysisContext
 from app.models.manifest import ProjectManifest, DetectedFramework
 from app.stages.plugins.base import PluginDetectionResult
-from app.stages.plugins.aspnet.di import ASPNetDIPlugin
+from app.stages.plugins.dotnet.di import ASPNetDIPlugin
 from tests.unit.helpers import make_dotnet_context, add_class, add_method, add_field
 
 
