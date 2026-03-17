@@ -14,6 +14,18 @@ export interface PageContext {
   pr_analysis_id?: string | null;
 }
 
+// ─── Tone & Drawer Size ───────────────────────────────────────────────────
+
+export type ChatTone = "detailed_technical" | "normal" | "concise";
+
+export const CHAT_TONE_LABELS: Record<ChatTone, string> = {
+  detailed_technical: "Detailed Technical",
+  normal: "Normal",
+  concise: "Concise",
+};
+
+export type ChatDrawerSize = "minimized" | "normal" | "wide";
+
 // ─── Chat Request ──────────────────────────────────────────────────────────
 
 export interface ChatRequest {
@@ -21,6 +33,7 @@ export interface ChatRequest {
   history: HistoryEntry[];
   page_context?: PageContext | null;
   include_page_context: boolean;
+  tone: ChatTone;
 }
 
 // NOTE: History is flattened to text-only for simplicity. The agent won't
@@ -98,12 +111,19 @@ export interface ToolCallDisplay {
   resultSummary?: string;
 }
 
+/** A segment in the interleaved content stream. */
+export type ContentSegment =
+  | { type: "text"; text: string }
+  | { type: "tool_group"; toolCallIds: string[] };
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
-  content: string; // User text or streamed assistant markdown
+  content: string; // User text or streamed assistant markdown (full concat)
   thinking?: string; // Collapsible thinking content
   toolCalls: ToolCallDisplay[];
+  /** Ordered segments of text and tool-call groups for correct interleaving. */
+  contentSegments?: ContentSegment[];
   isStreaming: boolean;
   tokenUsage?: { input: number; output: number };
   timestamp: number;

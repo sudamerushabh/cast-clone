@@ -23,6 +23,7 @@ class ChatRequest(BaseModel):
     history: list[dict] = Field(default_factory=list)
     page_context: PageContext | None = None
     include_page_context: bool = True
+    tone: str = "normal"  # "detailed_technical", "normal", "concise"
 
     @model_validator(mode="after")
     def trim_history(self) -> ChatRequest:

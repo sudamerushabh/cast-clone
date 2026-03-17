@@ -1,0 +1,52 @@
+
+> cast-clone-frontend@0.0.1 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 5.9s
+  Running TypeScript ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/15) ...
+  Generating static pages using 7 workers (3/15) 
+  Generating static pages using 7 workers (7/15) 
+  Generating static pages using 7 workers (11/15) 
+✓ Generating static pages using 7 workers (15/15) in 431.6ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /connectors
+├ ○ /connectors/new
+├ ○ /login
+├ ○ /projects
+├ ƒ /projects/[id]
+├ ƒ /projects/[id]/graph
+├ ƒ /projects/[id]/metrics
+├ ○ /repositories
+├ ƒ /repositories/[repoId]
+├ ƒ /repositories/[repoId]/[...branch]
+├ ƒ /repositories/[repoId]/chat/[...branch]
+├ ƒ /repositories/[repoId]/dependencies/[...branch]
+├ ƒ /repositories/[repoId]/graph/[...branch]
+├ ƒ /repositories/[repoId]/impact/[...branch]
+├ ƒ /repositories/[repoId]/pull-requests
+├ ƒ /repositories/[repoId]/pull-requests/[analysisId]
+├ ƒ /repositories/[repoId]/search/[...branch]
+├ ƒ /repositories/[repoId]/settings/[...branch]
+├ ƒ /repositories/[repoId]/transactions/[...branch]
+├ ƒ /repositories/[repoId]/views/[...branch]
+├ ○ /settings
+├ ○ /settings/activity
+├ ○ /settings/api-keys
+├ ○ /settings/system
+├ ○ /settings/team
+└ ○ /setup
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

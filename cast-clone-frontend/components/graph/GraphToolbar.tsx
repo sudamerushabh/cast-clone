@@ -5,6 +5,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
+  Minimize,
   RefreshCw,
   RefreshCcw,
   Trash2,
@@ -38,6 +39,8 @@ interface GraphToolbarProps {
   onSaveView?: () => void
   projectId?: string
   selectedNodeFqn?: string
+  isFullscreen?: boolean
+  onToggleFullscreen?: () => void
 }
 
 export function GraphToolbar({
@@ -54,6 +57,8 @@ export function GraphToolbar({
   onSaveView,
   projectId,
   selectedNodeFqn,
+  isFullscreen,
+  onToggleFullscreen,
 }: GraphToolbarProps) {
   return (
     <div className="flex items-center gap-0.5">
@@ -84,6 +89,17 @@ export function GraphToolbar({
         >
           <Maximize className="size-4" />
         </Button>
+        {onToggleFullscreen && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="size-7 p-0"
+            onClick={onToggleFullscreen}
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          >
+            {isFullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+          </Button>
+        )}
         <div className="mx-1 h-4 w-px bg-border" />
         <Button
           variant="ghost"

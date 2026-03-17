@@ -1,0 +1,882 @@
+# Comprehensive .NET/C# Plugin Research for CodeLens
+
+**Date:** 2026-03-17  
+**Scope:** Deep research on building a comprehensive .NET plugin suite for CodeLens, covering ASP.NET Core, Entity Framework Core, SignalR, gRPC, MediatR, and middleware analysis.  
+**Sources:** CodeLens codebase (plugin architecture, existing Java/Python plugins, Neo4j schema), Microsoft Learn docs, tree-sitter-c-sharp grammar, SCIP-dotnet indexer, ASP.NET Core 9/10 patterns.
+
+---
+
+## 1. Executive Summary
+
+The .NET ecosystem requires **6 plugins** (up from the original 4 in the spec) for comprehensive coverage. The architecture maps directly onto the existing `FrameworkPlugin` ABC — same lifecycle, same Neo4j output types, same detection/ordering/execution pattern. The key difference from Java/Spring is that .NET has **two API paradigms** (controllers + minimal APIs), **three entity configuration paths** (conventions, annotations, Fluent API), and **explicit DI registration** (no classpath scanning). The `tree-sitter-c-sharp` grammar (v0.23.1, C# 1-13 support) and `scip-dotnet` (Roslyn-based SCIP indexer) are both production-ready.
+
+### Recommended Plugin Suite
+
+| # | Plugin Name | Plugin ID | Priority | Depends On | Est. Days |
+|---|-------------|-----------|----------|------------|-----------|
+| 1 | **ASP.NET Core DI Plugin** | `aspnet-di` | P0 | — | 2 |
+| 2 | **ASP.NET Core Web Plugin** | `aspnet-web` | P0 | `aspnet-di` | 3 |
+| 3 | **ASP.NET Core Middleware Plugin** | `aspnet-middleware` | P1 | `aspnet-di` | 1.5 |
+| 4 | **Entity Framework Plugin** | `entity-framework` | P0 | `aspnet-di` | 3.5 |
+| 5 | **SignalR Plugin** | `aspnet-signalr` | P2 | `aspnet-di` | 1.5 |
+| 6 | **gRPC Plugin** | `aspnet-grpc` | P2 | `aspnet-di` | 1.5 |
+
+**Total estimated effort:** ~13 working days  
+**Milestone designation:** M6f (ASP.NET Core DI + Web + EF Core) and M6g (Middleware + SignalR + gRPC)
+
+---
+
+## 2. Tooling Foundation
+
+### 2.1 Tree-sitter C# Grammar
+
+- **Package:** `tree-sitter-c-sharp` v0.23.1 on PyPI (`pip install tree-sitter-c-sharp`)
+- **Coverage:** C# 1 through C# 13 — includes all modern features needed:
+  - `attribute_list` / `attribute` — for `[ApiController]`, `[HttpGet]`, `[Table]`, `[ForeignKey]`, etc.
+  - `class_declaration` with `base_list` — for detecting `ControllerBase`, `DbContext`, `Hub` inheritance
+  - `method_declaration` — for controller actions, hub methods
+  - `property_declaration` with `generic_name` — for `DbSet<T>`, `ICollection<T>` navigation properties
+  - `invocation_expression` with `generic_name` — for `AddScoped<TService, TImpl>()`, `MapGet()`, `HasOne().WithMany()`
+  - `file_scoped_namespace_declaration` — modern C# file-scoped namespaces
+  - `global_statement` — top-level statements in `Program.cs` (critical for minimal APIs)
+  - `record_declaration` — for record types used as DTOs
+- **Grammar source:** Based on the Roslyn grammar — very stable and comprehensive
+- **Key AST node types we'll query:**
+
+```
+class_declaration
+  → attribute_list → attribute (name, argument_list)
+  → base_list → base_type (identifier / generic_name)
+  → declaration_list → method_declaration, property_declaration, field_declaration, constructor_declaration
+
+method_declaration
+  → attribute_list → attribute
+  → parameter_list → parameter (type, identifier, default_value)
+  → block (body)
+
+invocation_expression
+  → member_access_expression (expression, name)
+  → argument_list → argument (expression)
+  → type_argument_list → generic_name (for generic method calls)
+
+property_declaration
+  → attribute_list → attribute
+  → type (generic_name for DbSet<T>, ICollection<T>)
+  → identifier (property name)
+```
+
+### 2.2 SCIP-dotnet
+
+- **Package:** `scip-dotnet` v0.1.8 (NuGet + Docker image `sourcegraph/scip-dotnet:latest`)
+- **Built on:** Roslyn .NET compiler — provides compiler-accurate cross-references
+- **Output:** `index.scip` protobuf file with symbol definitions and references
+- **Supports:** C# and Visual Basic
+- **Integration:** Already compatible with CodeLens's SCIP processing pipeline (Stage 5 / M5)
+- **Docker usage:** `docker run -v $(pwd):/app sourcegraph/scip-dotnet:latest scip-dotnet index`
+- **Requirement:** Needs a buildable .NET project (`.sln` or `.csproj`)
+
+### 2.3 .csproj Manifest Parsing
+
+For framework detection, we need to parse `*.csproj` XML files to find NuGet package references:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="Microsoft.AspNetCore.App" />
+  <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+  <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="9.0.0" />
+  <PackageReference Include="Grpc.AspNetCore" Version="2.76.0" />
+</ItemGroup>
+```
+
+This is analogous to parsing `pom.xml` for Java Spring or `requirements.txt` for Python. The `.csproj` parser should be a shared utility used by all .NET plugins for detection.
+
+---
+
+## 3. Plugin #1: ASP.NET Core DI Plugin (`aspnet-di`)
+
+### 3.1 What It Extracts
+
+The DI plugin resolves the explicit dependency injection registrations in `Program.cs` (or legacy `Startup.cs`). This is the **foundation plugin** — all other .NET plugins depend on its interface→implementation map.
+
+### 3.2 Patterns to Capture
+
+**Service registration methods (on `IServiceCollection`):**
+
+```csharp
+// Explicit interface→implementation bindings (most common)
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddTransient<IRepository<User>, UserRepository>();
+builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+
+// Self-registration (no interface)
+builder.Services.AddScoped<EmailService>();
+
+// Factory registration
+builder.Services.AddScoped<IService>(sp => new ServiceImpl(sp.GetRequiredService<IDep>()));
+
+// Extension method bulk registration
+builder.Services.AddDbContext<AppDbContext>(options => ...);
+builder.Services.AddSignalR();
+builder.Services.AddGrpc();
+builder.Services.AddControllers();
+```
+
+**Constructor injection resolution:**
+
+```csharp
+public class UserController : ControllerBase
+{
+    private readonly IUserService _userService;
+    private readonly ILogger<UserController> _logger;
+
+    public UserController(IUserService userService, ILogger<UserController> logger)
+    {
+        _userService = userService;
+        _logger = logger;
+    }
+}
+```
+
+### 3.3 Tree-sitter Extraction Strategy
+
+1. **Find DI registration calls:** Match `invocation_expression` where the method name matches `Add(Scoped|Transient|Singleton)` with `type_argument_list` containing 1 or 2 generic type arguments.
+2. **Extract interface→implementation mapping:** First type arg = interface, second type arg = implementation. If only one type arg, it's self-registration.
+3. **Find constructor parameters:** For each `class_declaration`, find `constructor_declaration` → `parameter_list` → extract parameter types.
+4. **Resolve INJECTS edges:** Match constructor parameter types against the DI registration map.
+
+### 3.4 Output
+
+- **Edges:** `(:Class)-[:INJECTS {framework: "aspnet-core", lifetime: "scoped|transient|singleton"}]->(:Class)`
+- **Layer assignments:** None (DI is cross-cutting)
+- **Shared data:** The interface→implementation map is stored in `PluginResult.metadata["di_map"]` for consumption by downstream plugins.
+
+### 3.5 Key Differences from Spring DI
+
+| Aspect | Spring | ASP.NET Core |
+|--------|--------|-------------|
+| Registration | Implicit (component scanning `@Component`) | Explicit (`AddScoped<I, T>()`) |
+| Ambiguity | `@Primary` / `@Qualifier` | Single registration wins (last registration wins) |
+| Lifetime | Singleton by default | Must specify `Scoped/Transient/Singleton` |
+| Accuracy | ~85% (scanning ambiguity) | ~90-95% (explicit = less ambiguity) |
+
+### 3.6 Estimated Accuracy: **~90-95%**
+
+Higher than Spring because everything is explicitly registered — no scanning magic.
+
+**Blind spots:**
+- Factory registrations with lambda expressions (can't statically resolve what the lambda returns)
+- Keyed services (`.AddKeyedScoped<I, T>("key")` in .NET 8+)
+- Open generic registrations (`AddScoped(typeof(IRepo<>), typeof(Repo<>))`)
+- Third-party DI containers (Autofac, Scrutor) — out of scope for v1
+
+---
+
+## 4. Plugin #2: ASP.NET Core Web Plugin (`aspnet-web`)
+
+### 4.1 What It Extracts
+
+API endpoints from **two distinct patterns**: controller-based APIs and minimal APIs.
+
+### 4.2 Pattern A: Controller-based APIs
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    [HttpGet]
+    public async Task<IActionResult> GetAll() { ... }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetById(int id) { ... }
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateUserDto dto) { ... }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(int id, [FromBody] UpdateUserDto dto) { ... }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(int id) { ... }
+}
+```
+
+**Extraction approach:**
+1. Find `class_declaration` nodes inheriting from `ControllerBase` or `Controller` (check `base_list`)
+2. Also check for `[ApiController]` attribute as a backup detection signal
+3. Extract class-level `[Route("...")]` attribute — handle `[controller]` token replacement (lowercase class name minus "Controller" suffix)
+4. For each `method_declaration` with HTTP verb attributes (`[HttpGet]`, `[HttpPost]`, `[HttpPut]`, `[HttpDelete]`, `[HttpPatch]`, `[HttpOptions]`, `[HttpHead]`):
+   - Extract the route template from the attribute argument (may be empty)
+   - Combine with class-level route: `class_route + "/" + method_route`
+   - Extract HTTP method from the attribute name
+5. For parameters with `[FromBody]`, `[FromQuery]`, `[FromRoute]` attributes, link to DTO types
+6. Handle `[Route("custom/path")]` on individual methods (overrides verb-based routing)
+
+**Route template tokens:**
+- `[controller]` → lowercase class name minus "Controller" suffix
+- `[action]` → lowercase method name
+- `{id}` → path parameter
+- `{id:int}` → constrained path parameter
+
+### 4.3 Pattern B: Minimal APIs (.NET 6+)
+
+```csharp
+// Direct mapping in Program.cs
+var app = builder.Build();
+app.MapGet("/users", async (IUserService svc) => await svc.GetAll());
+app.MapPost("/users", async (CreateUserDto dto, IUserService svc) => await svc.Create(dto));
+app.MapGet("/users/{id}", async (int id, IUserService svc) => await svc.GetById(id));
+
+// Route groups (prefix composition)
+var group = app.MapGroup("/api/v1");
+group.MapGet("/products", GetProducts);
+group.MapPost("/products", CreateProduct);
+
+// Extension method pattern (common in larger projects)
+app.MapUserEndpoints();
+// Where MapUserEndpoints is defined as:
+public static IEndpointRouteBuilder MapUserEndpoints(this IEndpointRouteBuilder app)
+{
+    var group = app.MapGroup("/api/users");
+    group.MapGet("/", GetAll);
+    group.MapGet("/{id}", GetById);
+    return app;
+}
+```
+
+**Extraction approach:**
+1. Find `invocation_expression` where method name matches `Map(Get|Post|Put|Delete|Patch|Options|Head)`
+2. Extract the first string argument as the route path
+3. If the receiver is a `MapGroup` result, resolve the group prefix by tracing back the assignment chain
+4. For extension method patterns: detect methods returning `IEndpointRouteBuilder` / `RouteGroupBuilder` and trace into them for nested `Map*` calls
+5. Lambda parameters or delegate references determine the handler — link to resolved method/class via DI
+
+**Cross-file tracking challenge:** Endpoint definitions often span multiple files via extension methods. This requires building a call graph from `Program.cs` outward. For v1, we support single-file resolution + one level of extension method indirection. Multi-hop chains are flagged as low-confidence.
+
+### 4.4 Output
+
+- **Nodes:** `(:APIEndpoint {method: "GET", path: "/api/users/{id}", framework: "aspnet-core", pattern: "controller|minimal"})`
+- **Edges:** `(:Method)-[:HANDLES]->(:APIEndpoint)`, `(:Class)-[:EXPOSES]->(:APIEndpoint)`
+- **Layer assignments:** Controller classes → Presentation layer
+- **EntryPoints:** Each endpoint registered as an entry point
+
+### 4.5 Estimated Accuracy
+
+| Pattern | Accuracy | Notes |
+|---------|----------|-------|
+| Controller endpoints | ~90% | Attribute routing is explicit, very similar to Spring |
+| Minimal API (direct) | ~85% | `MapGet`/`MapPost` in Program.cs — straightforward |
+| Minimal API (groups) | ~80% | Need to resolve `MapGroup` prefix chain |
+| Minimal API (extension) | ~70% | Cross-file extension method tracking is hard statically |
+| `[controller]` token | ~95% | Convention is well-defined |
+| `[FromBody]` DTO linking | ~85% | Type resolution via SCIP helps |
+
+---
+
+## 5. Plugin #3: ASP.NET Core Middleware Plugin (`aspnet-middleware`)
+
+### 5.1 What It Extracts
+
+The ASP.NET Core middleware pipeline — the ordered sequence of `Use*` calls that form the request processing chain.
+
+### 5.2 Patterns to Capture
+
+```csharp
+var app = builder.Build();
+
+// Built-in middleware (order matters!)
+app.UseExceptionHandler("/Error");
+app.UseHsts();
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseCors("AllowAll");
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseRateLimiter();
+app.UseResponseCaching();
+
+// Custom middleware
+app.UseMiddleware<RequestLoggingMiddleware>();
+app.UseMiddleware<TenantResolutionMiddleware>();
+
+// Inline middleware
+app.Use(async (context, next) => { ... await next(); ... });
+
+// Terminal middleware
+app.Run(async context => { ... });
+
+// Endpoint middleware (terminal)
+app.MapControllers();
+app.MapRazorPages();
+app.MapHub<ChatHub>("/chatHub");
+app.MapGrpcService<GreeterService>();
+```
+
+### 5.3 Extraction Strategy
+
+1. Find all `invocation_expression` on `app` (or `WebApplication` variable) where method name starts with `Use` or is `Run`
+2. Preserve source order — middleware ordering is **semantically critical** in ASP.NET Core
+3. For `UseMiddleware<T>()`, extract the generic type argument as the middleware class
+4. For custom middleware classes, find `class_declaration` with `Invoke` or `InvokeAsync` method (the middleware convention)
+5. Map `MapControllers()`, `MapHub<T>()`, `MapGrpcService<T>()` as terminal endpoint middleware
+
+### 5.4 Output
+
+- **Nodes:** `(:Middleware {name: "Authentication", framework: "aspnet-core", order: 5})`
+- **Edges:** `(:Middleware)-[:CALLS]->(:Middleware)` (ordered chain), `(:Class)-[:HANDLES]->(:Middleware)` (for custom middleware classes)
+- **Technology nodes:** `UseAuthentication` → `Authentication` middleware technology, `UseCors` → `CORS` technology
+- **Architecture View contribution:** Middleware pipeline visualization
+
+### 5.5 Estimated Accuracy: **~90%**
+
+Middleware registration is explicit and ordered. The main challenge is identifying custom middleware classes when `UseMiddleware<T>()` uses a type from another assembly.
+
+---
+
+## 6. Plugin #4: Entity Framework Plugin (`entity-framework`)
+
+### 6.1 What It Extracts
+
+Entity-to-table mappings, column definitions, relationships (FK, navigation properties), and the full database schema as inferred by EF Core.
+
+### 6.2 Three Configuration Paths
+
+#### Path A: Conventions (Implicit)
+
+EF Core follows naming conventions — these require **inference** rather than explicit extraction:
+
+```csharp
+public class User
+{
+    public int Id { get; set; }          // Convention: "Id" or "{ClassName}Id" = PK
+    public string Name { get; set; }
+    public int DepartmentId { get; set; } // Convention: "{NavProp}Id" = FK
+    public Department Department { get; set; } // Navigation property → relationship
+    public ICollection<Order> Orders { get; set; } // Collection nav → one-to-many
+}
+
+public class Department
+{
+    public int DepartmentId { get; set; } // Convention: "{ClassName}Id" = PK
+    public string Name { get; set; }
+    public ICollection<User> Users { get; set; }
+}
+```
+
+**Convention rules to implement:**
+- Property named `Id` or `{ClassName}Id` → primary key
+- Property named `{NavigationPropertyName}Id` or `{NavigationPropertyName}{PK}` → foreign key
+- Reference navigation property (single entity type) → relationship to that entity
+- Collection navigation property (`ICollection<T>`, `IEnumerable<T>`, `List<T>`, `IList<T>`) → one-to-many relationship from T
+- Table name = class name (pluralized by EF Core, but we use the class name as-is for v1)
+
+#### Path B: Data Annotations (Attributes)
+
+```csharp
+[Table("tbl_users")]
+public class User
+{
+    [Key]
+    public int UserId { get; set; }
+
+    [Column("user_name")]
+    [Required]
+    [MaxLength(100)]
+    public string Name { get; set; }
+
+    [ForeignKey("Department")]
+    public int DeptId { get; set; }
+
+    [NotMapped]
+    public string FullName => $"{FirstName} {LastName}";
+
+    [InverseProperty("Author")]
+    public ICollection<Post> Posts { get; set; }
+}
+```
+
+**Attributes to handle:**
+- `[Table("name")]` → explicit table name
+- `[Column("name")]` → explicit column name
+- `[Key]` → primary key
+- `[ForeignKey("nav_property")]` → explicit FK reference
+- `[Required]` → NOT NULL constraint
+- `[MaxLength(n)]` → column length constraint
+- `[NotMapped]` → skip this property entirely
+- `[InverseProperty("name")]` → disambiguate bidirectional navigation
+- `[Index]` / `[Index(IsUnique = true)]` → index definition
+
+**Extraction:** Same tree-sitter attribute parsing as ASP.NET controllers. Match `attribute_list` on `property_declaration` nodes within entity classes.
+
+#### Path C: Fluent API (in `OnModelCreating`)
+
+```csharp
+public class AppDbContext : DbContext
+{
+    public DbSet<User> Users { get; set; }
+    public DbSet<Department> Departments { get; set; }
+    public DbSet<Order> Orders { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Table mapping
+        modelBuilder.Entity<User>().ToTable("tbl_users");
+
+        // Column mapping
+        modelBuilder.Entity<User>().Property(u => u.Name)
+            .HasColumnName("user_name")
+            .HasMaxLength(100)
+            .IsRequired();
+
+        // One-to-many
+        modelBuilder.Entity<User>()
+            .HasOne(u => u.Department)
+            .WithMany(d => d.Users)
+            .HasForeignKey(u => u.DepartmentId);
+
+        // One-to-one
+        modelBuilder.Entity<User>()
+            .HasOne(u => u.Profile)
+            .WithOne(p => p.User)
+            .HasForeignKey<UserProfile>(p => p.UserId);
+
+        // Many-to-many (EF Core 5+ skip navigation)
+        modelBuilder.Entity<Student>()
+            .HasMany(s => s.Courses)
+            .WithMany(c => c.Students)
+            .UsingEntity(j => j.ToTable("StudentCourses"));
+
+        // Many-to-many (explicit join entity)
+        modelBuilder.Entity<StudentCourse>()
+            .HasKey(sc => new { sc.StudentId, sc.CourseId });
+        modelBuilder.Entity<StudentCourse>()
+            .HasOne(sc => sc.Student)
+            .WithMany(s => s.StudentCourses)
+            .HasForeignKey(sc => sc.StudentId);
+    }
+}
+```
+
+**Also handle `IEntityTypeConfiguration<T>` pattern:**
+
+```csharp
+public class UserConfiguration : IEntityTypeConfiguration<User>
+{
+    public void Configure(EntityTypeBuilder<User> builder)
+    {
+        builder.ToTable("tbl_users");
+        builder.HasKey(u => u.Id);
+        builder.HasOne(u => u.Department).WithMany(d => d.Users);
+    }
+}
+
+// Registered in DbContext:
+modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
+```
+
+**Fluent API extraction strategy:**
+
+This is the most complex extraction path. The approach:
+
+1. Find classes inheriting `DbContext` → extract `DbSet<T>` properties to discover entity types
+2. Find `OnModelCreating` method → walk `invocation_expression` chains
+3. For each `modelBuilder.Entity<T>()` call, identify the entity type from generic argument
+4. Walk the chained method calls:
+   - `.ToTable("name")` → explicit table name
+   - `.HasOne(lambda)` → start of relationship, extract navigation property from lambda body
+   - `.WithMany(lambda)` → one-to-many relationship type
+   - `.WithOne(lambda)` → one-to-one relationship type
+   - `.HasForeignKey(lambda)` → FK property extraction
+   - `.HasMany(lambda).WithMany(lambda)` → many-to-many
+   - `.UsingEntity(...)` → join table configuration
+   - `.HasKey(lambda)` → composite or explicit key
+   - `.Property(lambda).HasColumnName("name")` → column mapping
+
+5. Also find classes implementing `IEntityTypeConfiguration<T>` and parse their `Configure` method identically
+
+**Lambda extraction challenge:** Lambda expressions like `u => u.Department` require resolving the member access to the property name. Tree-sitter parses these as `lambda_expression → member_access_expression` — we extract the rightmost identifier as the property/navigation name.
+
+### 6.3 DbContext Discovery
+
+```csharp
+public class AppDbContext : DbContext
+{
+    public DbSet<User> Users { get; set; }
+    public DbSet<Order> Orders { get; set; }
+    public DbSet<Product> Products { get; set; }
+}
+```
+
+`DbSet<T>` properties register entity types. The generic type argument tells us which classes are EF entities. Classes not registered via `DbSet` but referenced via navigation properties are also entities (discovered transitively).
+
+### 6.4 Migration Files
+
+Migration files (`Migrations/*.cs`) contain schema operations:
+
+```csharp
+migrationBuilder.CreateTable(
+    name: "Users",
+    columns: table => new
+    {
+        Id = table.Column<int>(nullable: false).Annotation("..."),
+        Name = table.Column<string>(maxLength: 100, nullable: false),
+        DepartmentId = table.Column<int>(nullable: false)
+    },
+    constraints: table =>
+    {
+        table.PrimaryKey("PK_Users", x => x.Id);
+        table.ForeignKey("FK_Users_Departments_DepartmentId",
+            x => x.DepartmentId, "Departments", "Id",
+            onDelete: ReferentialAction.Cascade);
+    });
+```
+
+**Strategy:** Parse `CreateTable`, `AddColumn`, `AddForeignKey`, `CreateIndex` calls. This provides a **ground truth** for the database schema that can validate/supplement the entity model analysis.
+
+### 6.5 Output
+
+- **Nodes:**
+  - `(:Table {name: "tbl_users", framework: "entity-framework"})` — FQN: `table:tbl_users`
+  - `(:Column {name: "user_name", column_type: "string", is_primary_key: false, is_nullable: false})` — FQN: `table:tbl_users.user_name`
+- **Edges:**
+  - `(:Class)-[:MAPS_TO {orm: "entity-framework"}]->(:Table)`
+  - `(:Table)-[:HAS_COLUMN]->(:Column)`
+  - `(:Column)-[:REFERENCES {relationship: "many-to-one|one-to-one"}]->(:Column)` (FK → PK)
+- **Layer assignments:** Entity classes → Data Access layer
+
+### 6.6 Estimated Accuracy
+
+| Configuration Path | Accuracy | Notes |
+|-------------------|----------|-------|
+| Data Annotations | ~90% | Attribute parsing is straightforward |
+| Fluent API (simple) | ~80% | `HasOne/WithMany/HasForeignKey` chains |
+| Fluent API (complex) | ~70-75% | Multi-step chaining, `UsingEntity`, composite keys |
+| Convention-based | ~70% | Requires inference, nullable FK heuristics |
+| Migration files | ~90% | Explicit schema operations |
+| `IEntityTypeConfiguration<T>` | ~75% | Need to trace `ApplyConfigurationsFromAssembly` |
+| DbContext discovery | ~95% | `DbSet<T>` extraction is simple |
+
+---
+
+## 7. Plugin #5: SignalR Plugin (`aspnet-signalr`)
+
+### 7.1 What It Extracts
+
+Real-time communication hubs, their endpoint mappings, and client-callable methods.
+
+### 7.2 Patterns to Capture
+
+```csharp
+// Hub definition
+public class ChatHub : Hub
+{
+    public async Task SendMessage(string user, string message)
+    {
+        await Clients.All.SendAsync("ReceiveMessage", user, message);
+    }
+
+    public async Task JoinGroup(string groupName)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+    }
+
+    public override async Task OnConnectedAsync() { ... }
+    public override async Task OnDisconnectedAsync(Exception? exception) { ... }
+}
+
+// Strongly-typed hub
+public class NotificationHub : Hub<INotificationClient>
+{
+    public async Task SendNotification(string message)
+    {
+        await Clients.All.ReceiveNotification(message);
+    }
+}
+
+public interface INotificationClient
+{
+    Task ReceiveNotification(string message);
+}
+
+// Registration in Program.cs
+builder.Services.AddSignalR();
+app.MapHub<ChatHub>("/chatHub");
+app.MapHub<NotificationHub>("/notifications");
+```
+
+### 7.3 Extraction Strategy
+
+1. Find classes inheriting `Hub` or `Hub<T>` (check `base_list`)
+2. Extract all public methods (excluding `OnConnectedAsync`, `OnDisconnectedAsync`) as hub methods
+3. For `Hub<T>`, extract the interface type `T` and its methods as client-callable methods
+4. Find `MapHub<T>("/path")` calls in `Program.cs` to get the endpoint path
+5. Find `Clients.All.SendAsync("MethodName", ...)` calls to discover server-to-client events
+
+### 7.4 Output
+
+- **Nodes:** `(:APIEndpoint {method: "WS", path: "/chatHub", framework: "signalr", protocol: "websocket"})`
+- **Edges:** `(:Class)-[:EXPOSES]->(:APIEndpoint)`, `(:Method)-[:HANDLES]->(:APIEndpoint)`, `(:Class)-[:PRODUCES {event: "ReceiveMessage"}]->(:APIEndpoint)`
+- **Layer assignments:** Hub classes → Presentation layer
+
+### 7.5 Estimated Accuracy: **~90%**
+
+Hub patterns are very explicit — class inheritance, attribute detection, and `MapHub` registration are all unambiguous.
+
+---
+
+## 8. Plugin #6: gRPC Plugin (`aspnet-grpc`)
+
+### 8.1 What It Extracts
+
+gRPC service definitions, their endpoint mappings, and the connection between `.proto` definitions and C# service implementations.
+
+### 8.2 Patterns to Capture
+
+```csharp
+// gRPC service implementation
+public class GreeterService : Greeter.GreeterBase
+{
+    public override Task<HelloReply> SayHello(
+        HelloRequest request, ServerCallContext context)
+    {
+        return Task.FromResult(new HelloReply
+        {
+            Message = "Hello " + request.Name
+        });
+    }
+}
+
+// Registration in Program.cs
+builder.Services.AddGrpc();
+app.MapGrpcService<GreeterService>();
+```
+
+### 8.3 Extraction Strategy
+
+1. Find classes where the base class name ends with `Base` and is in a nested type (e.g., `Greeter.GreeterBase`) — this is the protobuf-generated base class pattern
+2. Extract overridden methods as gRPC service methods
+3. Find `MapGrpcService<T>()` calls for endpoint registration
+4. Optionally parse `.proto` files (tree-sitter has a proto grammar) to link service definitions to their implementations
+
+### 8.4 Output
+
+- **Nodes:** `(:APIEndpoint {method: "GRPC", path: "/greeter.Greeter/SayHello", framework: "grpc"})`
+- **Edges:** `(:Class)-[:EXPOSES]->(:APIEndpoint)`, `(:Method)-[:HANDLES]->(:APIEndpoint)`
+- **Layer assignments:** gRPC service classes → Presentation layer
+
+### 8.5 Estimated Accuracy: **~85%**
+
+The protobuf code generation follows strict conventions. The main challenge is linking `.proto` files to generated C# types (namespace resolution).
+
+---
+
+## 9. Cross-Cutting Concerns
+
+### 9.1 Layer Classification Rules
+
+All .NET plugins share these layer rules:
+
+| Pattern | Layer | Rule |
+|---------|-------|------|
+| Class inherits `ControllerBase` or `Controller` | Presentation | Name or attribute match |
+| Class has `[ApiController]` attribute | Presentation | Attribute match |
+| Class inherits `Hub` or `Hub<T>` | Presentation | SignalR hub |
+| Class inherits `*.GreeterBase` (gRPC) | Presentation | gRPC service |
+| Class name ends with `Service` | Business Logic | Convention |
+| Class name ends with `Repository` | Data Access | Convention |
+| Class inherits `DbContext` | Data Access | EF Core context |
+| Entity class (has `DbSet<T>` registration) | Data Access | EF entity |
+| Class implements `IEntityTypeConfiguration<T>` | Data Access | EF configuration |
+| Custom middleware class | Cross-Cutting | Has `Invoke/InvokeAsync` method |
+
+### 9.2 Detection Strategy (Shared)
+
+All plugins use `.csproj` package reference parsing + tree-sitter code scanning:
+
+| Plugin | Detection Signal | Confidence |
+|--------|-----------------|------------|
+| `aspnet-di` | `Microsoft.AspNetCore` in `.csproj` | HIGH |
+| `aspnet-web` | `[ApiController]` attribute OR `MapGet`/`MapPost` calls | HIGH |
+| `aspnet-middleware` | `Use*()` calls on `WebApplication` variable | HIGH |
+| `entity-framework` | `Microsoft.EntityFrameworkCore` in `.csproj` OR `DbContext` subclass | HIGH |
+| `aspnet-signalr` | `Microsoft.AspNetCore.SignalR` in `.csproj` OR `Hub` subclass | HIGH |
+| `aspnet-grpc` | `Grpc.AspNetCore` in `.csproj` OR `MapGrpcService` call | HIGH |
+
+### 9.3 Dependency Chain
+
+```
+aspnet-di (foundation — no dependencies)
+  ├── aspnet-web (needs DI map for controller constructor injection)
+  ├── aspnet-middleware (needs DI map for custom middleware injection)
+  ├── entity-framework (needs DI map for DbContext injection)
+  ├── aspnet-signalr (needs DI map for hub constructor injection)
+  └── aspnet-grpc (needs DI map for service constructor injection)
+```
+
+All five downstream plugins depend on `aspnet-di`. They are independent of each other and can run in parallel.
+
+### 9.4 Architecture View Contribution
+
+The .NET plugins should contribute to the Architecture View with these Technology nodes:
+
+- `ASP.NET Core` (Web framework)
+- `Entity Framework Core` (ORM)
+- `SignalR` (Real-time)
+- `gRPC` (RPC)
+- Plus any middleware technologies detected (Authentication, CORS, Rate Limiting, etc.)
+
+This follows the same `create_technology_nodes()` enrichment pattern designed for the Architecture View fix.
+
+### 9.5 Node Convention Mapping
+
+C# nodes from tree-sitter (stored in `node.properties["annotations"]`) follow these conventions:
+
+- **Attributes:** Stored as `["[ApiController]", "[Route(\"api/[controller]\")]", "[HttpGet(\"{id}\")]"]` — full attribute text including brackets and arguments
+- **Base types:** Available via `INHERITS` edges: `(:Class)-[:INHERITS]->(:Class {fqn: "ControllerBase"})`
+- **Properties:** `(:Field {name: "Users", properties: {type: "DbSet<User>"}})` — generic types preserved in type string
+- **Parameters:** `properties["params"]` on methods = `[{"name": "id", "type": "int"}, {"name": "dto", "type": "CreateUserDto"}]`
+- **Language marker:** `language = "csharp"` on all C# nodes
+
+---
+
+## 10. What Transfers from Existing Plugins (Reuse Before Rebuild)
+
+| Component | Reusable From | Notes |
+|-----------|--------------|-------|
+| `FrameworkPlugin` ABC | M6a (plugin base) | Identical contract — `detect()`, `analyze()`, `PluginResult` |
+| `PluginDetectionResult` | M6a | Same confidence levels |
+| `PluginResult` | M6a | Same nodes/edges/layers/entry_points output |
+| `LayerRules` | M6a | Same layer classification mechanism |
+| Neo4j node/edge types | M1 (foundation) | `APIEndpoint`, `Table`, `Column`, `MAPS_TO`, `HAS_COLUMN`, `REFERENCES`, `INJECTS`, `HANDLES`, `EXPOSES` — all exist |
+| DI resolution logic | Spring DI plugin (M6b) | Interface→implementation mapping + constructor param matching — same algorithm, different source patterns |
+| Route extraction | Spring Web plugin (M6b) | Controller scanning + route combining — nearly identical for controller-based APIs |
+| ORM extraction | Hibernate plugin (M6b) | Entity-to-table mapping + FK resolution — annotation path is very similar |
+| SQL parsing | SQL plugin (M6c) | Migration file schema operations — reuse sqlglot patterns if SQL strings found |
+| Test helpers | M6b/M6c/M6d | `_make_context`, `_add_class`, `_add_field` patterns — adapt for C# node conventions |
+
+---
+
+## 11. What's New / Different for .NET
+
+| Challenge | Impact | Mitigation |
+|-----------|--------|------------|
+| **Two API paradigms** (controllers + minimal APIs) | Web plugin needs dual extraction paths | Implement both, prefer controller detection first |
+| **Fluent API chaining** in EF Core | Harder to parse than Hibernate annotations | Walk `invocation_expression` chains, extract method names as semantic operators |
+| **Top-level statements** in `Program.cs` | No class/method wrapper for minimal APIs + middleware | Handle `global_statement` AST nodes |
+| **Generic type arguments** for DI | `AddScoped<IFoo, Foo>()` — need reliable generic extraction | Tree-sitter `type_argument_list` → `generic_name` parsing |
+| **Convention-based FK resolution** | Requires inference, not explicit declarations | Implement naming convention matcher (`{NavProp}Id` pattern) |
+| **`IEntityTypeConfiguration<T>`** pattern | Fluent config in separate files | Detect implementing classes, parse `Configure` method |
+| **Lambda expressions** in Fluent API | `u => u.Department` — need to resolve property name | Extract rightmost identifier from `member_access_expression` |
+| **File-scoped namespaces** | `namespace Foo;` instead of `namespace Foo { }` | Tree-sitter handles via `file_scoped_namespace_declaration` |
+
+---
+
+## 12. Deferred Items (Future Phases)
+
+| Item | Reason for Deferral |
+|------|-------------------|
+| **MediatR / CQRS plugin** | Requires understanding command/query handler dispatch — complex indirection. Good Phase 2 candidate. |
+| **AutoMapper plugin** | Profile configuration mapping is useful but not architecturally critical |
+| **Blazor plugin** | Component rendering and lifecycle extraction — different domain from API/ORM |
+| **Dapper plugin** | Micro-ORM with inline SQL — could leverage existing SQL plugin with C# string extraction |
+| **Azure Functions plugin** | Serverless trigger patterns — different hosting model |
+| **WCF / legacy ASP.NET** | Pre-.NET Core patterns — low priority for modern codebases |
+| **Open generic DI** | `AddScoped(typeof(IRepo<>), typeof(Repo<>))` — needs type substitution logic |
+| **Keyed services** | .NET 8+ feature — niche usage currently |
+
+---
+
+## 13. Implementation Roadmap
+
+### Phase 1: M6f — Core .NET Plugins (~8.5 days)
+
+| Task | Plugin | Days | Description |
+|------|--------|------|-------------|
+| Task 1 | `aspnet-di` | 2 | DI registration parsing, interface→impl map, INJECTS edges |
+| Task 2 | `aspnet-web` | 3 | Controller + Minimal API endpoint extraction, route resolution |
+| Task 3 | `entity-framework` | 3.5 | Data annotations + Fluent API + conventions + DbContext discovery |
+
+### Phase 2: M6g — Extended .NET Plugins (~4.5 days)
+
+| Task | Plugin | Days | Description |
+|------|--------|------|-------------|
+| Task 1 | `aspnet-middleware` | 1.5 | Middleware pipeline extraction, ordering, technology mapping |
+| Task 2 | `aspnet-signalr` | 1.5 | Hub class + MapHub endpoint + hub method extraction |
+| Task 3 | `aspnet-grpc` | 1.5 | gRPC service impl + MapGrpcService + proto file linking |
+
+### File Structure
+
+```
+cast-clone-backend/
+├── app/
+│   └── stages/
+│       └── plugins/
+│           ├── aspnet_di_plugin/
+│           │   ├── __init__.py
+│           │   └── di.py                  # ASPNetDIPlugin
+│           ├── aspnet_web_plugin/
+│           │   ├── __init__.py
+│           │   └── web.py                 # ASPNetWebPlugin
+│           ├── aspnet_middleware_plugin/
+│           │   ├── __init__.py
+│           │   └── middleware.py           # ASPNetMiddlewarePlugin
+│           ├── entity_framework_plugin/
+│           │   ├── __init__.py
+│           │   └── entity_framework.py     # EntityFrameworkPlugin
+│           ├── signalr_plugin/
+│           │   ├── __init__.py
+│           │   └── signalr.py             # SignalRPlugin
+│           └── grpc_plugin/
+│               ├── __init__.py
+│               └── grpc.py                # GRPCPlugin
+├── tests/
+│   └── unit/
+│       ├── test_aspnet_di_plugin.py
+│       ├── test_aspnet_web_plugin.py
+│       ├── test_aspnet_middleware_plugin.py
+│       ├── test_entity_framework_plugin.py
+│       ├── test_signalr_plugin.py
+│       └── test_grpc_plugin.py
+```
+
+### Build Order (Recommended)
+
+1. **`aspnet-di`** — Foundation, all others depend on it
+2. **`aspnet-web`** — Highest value, most common pattern
+3. **`entity-framework`** — Second highest value, complex but well-understood
+4. **`aspnet-middleware`** — Quick win, relatively simple
+5. **`aspnet-signalr`** — If real-time apps are in scope
+6. **`aspnet-grpc`** — If microservice architectures are in scope
+
+---
+
+## 14. Key Technical Decisions Needed
+
+1. **Convention-based FK resolution scope:** Should v1 implement EF Core naming conventions (inference-heavy, ~70% accuracy) or defer to data annotations + Fluent API only (~80-90% accuracy)?
+   - **Recommendation:** Implement conventions — they're the default path and many projects don't use explicit configuration.
+
+2. **Minimal API cross-file tracking depth:** Should we trace extension methods for endpoint registration? If so, how many hops?
+   - **Recommendation:** One hop (direct extension method call from Program.cs). Multi-hop requires full call graph analysis.
+
+3. **Migration file parsing priority:** Should migrations be a separate plugin or part of the EF plugin?
+   - **Recommendation:** Part of the EF plugin as an optional enrichment pass. Migration files provide ground truth that can validate the model-based analysis.
+
+4. **gRPC proto file parsing:** Should we parse `.proto` files or only analyze the generated C# code?
+   - **Recommendation:** Start with C# code only (the generated base classes contain all the type information). Proto file parsing can be added later for richer documentation.
+
+5. **Milestone split:** One milestone (M6f) or two (M6f + M6g)?
+   - **Recommendation:** Two milestones. M6f covers the P0 core plugins (DI + Web + EF = 8.5 days). M6g covers P1/P2 extended plugins (Middleware + SignalR + gRPC = 4.5 days). They can run sequentially or M6g can be deferred.
+
+---
+
+## 15. References
+
+- [tree-sitter-c-sharp grammar](https://github.com/tree-sitter/tree-sitter-c-sharp) — C# 1-13 support
+- [scip-dotnet](https://github.com/sourcegraph/scip-dotnet) — Roslyn-based SCIP indexer
+- [ASP.NET Core APIs overview](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/apis) — Microsoft's official comparison of Minimal vs Controller APIs
+- [ASP.NET Core Middleware](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/) — Pipeline architecture
+- [EF Core Relationships](https://www.learnentityframeworkcore.com/configuration/one-to-many-relationship-configuration) — Fluent API Has/With pattern
+- [EF Core Many-to-Many](https://dotnettutorials.net/lesson/many-to-many-relationships-in-entity-framework-core/) — Join entity configuration
+- [SignalR Hubs](https://learn.microsoft.com/en-us/aspnet/core/signalr/hubs) — Hub class pattern and MapHub registration
+- [gRPC in ASP.NET Core](https://deepwiki.com/grpc/grpc-dotnet/3.1-server-integration-with-asp.net-core) — Service integration pipeline

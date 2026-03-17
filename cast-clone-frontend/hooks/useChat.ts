@@ -7,13 +7,18 @@ import type {
   ChatRequest,
   ChatSSEEvent,
   ChatState,
+  ChatTone,
+  ContentSegment,
   HistoryEntry,
   PageContext,
   ToolCallDisplay,
 } from "@/lib/chat-types";
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL ??
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 const MAX_HISTORY_TURNS = 10;
 
@@ -74,6 +79,7 @@ interface UseChatReturn {
     message: string,
     pageContext: PageContext | null,
     includePageContext: boolean,
+    tone?: ChatTone,
   ) => Promise<void>;
   clearMessages: () => void;
   stopStreaming: () => void;
@@ -112,6 +118,7 @@ export function useChat(): UseChatReturn {
       message: string,
       pageContext: PageContext | null,
       includePageContext: boolean,
+      tone: ChatTone = "normal",
     ) => {
       // Cancel any in-flight stream
       abortRef.current?.abort();
@@ -135,6 +142,7 @@ export function useChat(): UseChatReturn {
         content: "",
         thinking: "",
         toolCalls: [],
+        contentSegments: [],
         isStreaming: true,
         timestamp: Date.now(),
       };
@@ -153,6 +161,7 @@ export function useChat(): UseChatReturn {
         history,
         page_context: pageContext,
         include_page_context: includePageContext,
+        tone,
       };
 
       try {
@@ -203,6 +212,10 @@ export function useChat(): UseChatReturn {
               const lastIdx = msgs.length - 1;
               const current = { ...msgs[lastIdx] };
 
+              const segments: ContentSegment[] = [
+                ...(current.contentSegments ?? []),
+              ];
+
               switch (event.type) {
                 case "thinking":
                   current.thinking =
@@ -217,6 +230,17 @@ export function useChat(): UseChatReturn {
                     status: "running",
                   };
                   current.toolCalls = [...current.toolCalls, tc];
+                  // Append to the last tool_group segment, or create one
+                  const lastSeg = segments[segments.length - 1];
+                  if (lastSeg?.type === "tool_group") {
+                    lastSeg.toolCallIds = [...lastSeg.toolCallIds, event.id];
+                  } else {
+                    segments.push({
+                      type: "tool_group",
+                      toolCallIds: [event.id],
+                    });
+                  }
+                  current.contentSegments = segments;
                   break;
                 }
 
@@ -233,9 +257,18 @@ export function useChat(): UseChatReturn {
                   break;
                 }
 
-                case "text":
+                case "text": {
                   current.content += event.content;
+                  // Append to the last text segment, or create one
+                  const lastTextSeg = segments[segments.length - 1];
+                  if (lastTextSeg?.type === "text") {
+                    lastTextSeg.text += event.content;
+                  } else {
+                    segments.push({ type: "text", text: event.content });
+                  }
+                  current.contentSegments = segments;
                   break;
+                }
 
                 case "done":
                   current.isStreaming = false;

@@ -82,7 +82,7 @@ function AssistantMessage({
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-900/30">
         <Bot className="size-3.5 text-violet-600 dark:text-violet-400" />
       </div>
-      <div className="min-w-0 max-w-[85%] space-y-1">
+      <div className="min-w-0 max-w-[85%] space-y-1 overflow-hidden">
         {/* Thinking block */}
         {(message.thinking || message.isStreaming) && message.thinking !== undefined && (
           <ThinkingBlock
@@ -91,15 +91,58 @@ function AssistantMessage({
           />
         )}
 
-        {/* Tool calls */}
-        {message.toolCalls.map((tc) => (
-          <ToolCallCard key={tc.id} toolCall={tc} />
-        ))}
+        {/* Interleaved tool calls and intermediate text segments */}
+        {message.contentSegments && message.contentSegments.length > 0 ? (
+          <>
+            {message.contentSegments.map((seg, idx) => {
+              if (seg.type === "tool_group") {
+                return seg.toolCallIds.map((tcId) => {
+                  const tc = message.toolCalls.find((t) => t.id === tcId);
+                  return tc ? <ToolCallCard key={tc.id} toolCall={tc} /> : null;
+                });
+              }
+              // text segment
+              return (
+                <div key={`seg-${idx}`} className="rounded-2xl rounded-tl-md bg-muted/50 px-4 py-2.5">
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed overflow-x-auto [&_pre]:bg-muted [&_pre]:text-foreground [&_pre]:overflow-x-auto [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:before:content-[''] [&_code]:after:content-[''] [&_table]:text-xs [&_table]:block [&_table]:overflow-x-auto">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        code: ({ children, className, ...props }) => {
+                          const isBlock = className?.includes("language-");
+                          if (isBlock) return <code className={className} {...props}>{children}</code>;
+                          const text = String(children);
+                          if (FQN_REGEX.test(text) && onNavigateToNode) {
+                            FQN_REGEX.lastIndex = 0;
+                            return (
+                              <button type="button" className="cursor-pointer rounded bg-violet-100 px-1 py-0.5 font-mono text-xs text-violet-700 underline decoration-violet-300 underline-offset-2 transition-colors hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:decoration-violet-700 dark:hover:bg-violet-900/50" onClick={() => onNavigateToNode(text)} title={`Navigate to ${text}`}>{children}</button>
+                            );
+                          }
+                          FQN_REGEX.lastIndex = 0;
+                          return <code {...props}>{children}</code>;
+                        },
+                        p: ({ children, ...props }) => <p {...props}>{processChildrenForFQNs(children, onNavigateToNode)}</p>,
+                        li: ({ children, ...props }) => <li {...props}>{processChildrenForFQNs(children, onNavigateToNode)}</li>,
+                      }}
+                    >
+                      {seg.text}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {/* Fallback: legacy single-content rendering */}
+            {message.toolCalls.map((tc) => (
+              <ToolCallCard key={tc.id} toolCall={tc} />
+            ))}
 
         {/* Response content */}
         {message.content && (
           <div className="rounded-2xl rounded-tl-md bg-muted/50 px-4 py-2.5">
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed [&_pre]:bg-muted [&_pre]:text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:before:content-[''] [&_code]:after:content-['']">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed overflow-x-auto [&_pre]:bg-muted [&_pre]:text-foreground [&_pre]:overflow-x-auto [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:before:content-[''] [&_code]:after:content-[''] [&_table]:text-xs [&_table]:block [&_table]:overflow-x-auto">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -176,6 +219,8 @@ function AssistantMessage({
               </div>
             )}
           </div>
+        )}
+          </>
         )}
 
         {/* Streaming cursor */}

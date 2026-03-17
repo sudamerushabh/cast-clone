@@ -107,6 +107,7 @@ async def chat(
         frameworks=frameworks,
         languages=languages,
         page_context=page_context,
+        tone=body.tone,
     )
 
     ctx = ChatToolContext(
@@ -114,6 +115,7 @@ async def chat(
         app_name=app_name,
         project_id=project_id,
         repo_path=repo_path,
+        db_session=session,
     )
 
     async def event_generator():

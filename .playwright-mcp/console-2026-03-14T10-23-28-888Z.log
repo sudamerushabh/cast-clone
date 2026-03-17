@@ -1,0 +1,11 @@
+[     535ms] Error: useChatContext must be used within a ChatProvider
+    at o (http://localhost:3000/_next/static/chunks/7bb90296e47621a3.js:3:2348)
+    at fm (http://localhost:3000/_next/static/chunks/c186d2aae19158c2.js:23:44159)
+    at av (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:63230)
+    at oY (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:83503)
+    at io (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:94935)
+    at sc (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:137956)
+    at http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:137801
+    at ss (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:137809)
+    at u9 (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:133734)
+    at sV (http://localhost:3000/_next/static/chunks/7de9141b1af425c3.js:1:159329)

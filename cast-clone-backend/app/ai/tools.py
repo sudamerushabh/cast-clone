@@ -41,7 +41,7 @@ async def list_applications(ctx: ChatToolContext) -> list[dict]:
     return await ctx.graph_store.query(
         "MATCH (n) WHERE n.app_name IS NOT NULL "
         "WITH DISTINCT n.app_name AS name "
-        "OPTIONAL MATCH (m {app_name: name, kind: 'Module'}) "
+        "OPTIONAL MATCH (m {app_name: name, kind: 'MODULE'}) "
         "RETURN name, count(m) AS module_count"
     )
 
@@ -69,30 +69,30 @@ async def get_architecture(
     """Get application architecture at module or class level."""
     if level == "module":
         nodes = await ctx.graph_store.query(
-            "MATCH (m) WHERE m.app_name = $name AND m.kind = 'Module' "
-            "RETURN m.fqn AS fqn, m.name AS name, 'Module' AS type, m.loc AS loc",
+            "MATCH (m) WHERE m.app_name = $name AND m.kind = 'MODULE' "
+            "RETURN m.fqn AS fqn, m.name AS name, 'MODULE' AS type, m.loc AS loc",
             {"name": ctx.app_name},
         )
         edges = await ctx.graph_store.query(
-            "MATCH (a)-[r:IMPORTS]->(b) "
+            "MATCH (a)-[r:IMPORTS|DEPENDS_ON]->(b) "
             "WHERE a.app_name = $name AND b.app_name = $name "
-            "AND a.kind = 'Module' AND b.kind = 'Module' "
+            "AND a.kind = 'MODULE' AND b.kind = 'MODULE' "
             "RETURN a.fqn AS source, b.fqn AS target, "
             "type(r) AS kind, r.weight AS weight",
             {"name": ctx.app_name},
         )
     else:
         nodes = await ctx.graph_store.query(
-            "MATCH (c) WHERE c.app_name = $name AND c.kind = 'Class' "
+            "MATCH (c) WHERE c.app_name = $name AND c.kind = 'CLASS' "
             "RETURN c.fqn AS fqn, c.name AS name, "
-            "'Class' AS type, c.loc AS loc "
+            "'CLASS' AS type, c.loc AS loc "
             "LIMIT 500",
             {"name": ctx.app_name},
         )
         edges = await ctx.graph_store.query(
             "MATCH (a)-[r:DEPENDS_ON]->(b) "
             "WHERE a.app_name = $name AND b.app_name = $name "
-            "AND a.kind = 'Class' AND b.kind = 'Class' "
+            "AND a.kind = 'CLASS' AND b.kind = 'CLASS' "
             "RETURN a.fqn AS source, b.fqn AS target, "
             "type(r) AS kind, r.weight AS weight "
             "LIMIT 2000",

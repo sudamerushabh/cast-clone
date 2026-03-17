@@ -68,13 +68,31 @@ _TOOL_HANDLERS = {
 }
 
 
+_TONE_INSTRUCTIONS = {
+    "detailed_technical": (
+        "\nResponse style: Provide detailed, technical answers. "
+        "Include code-level specifics, full FQNs, line numbers, metrics, "
+        "and thorough explanations of relationships and patterns. "
+        "Use technical terminology freely. Format with headers and bullet points."
+    ),
+    "normal": "",  # Default — no extra instructions
+    "concise": (
+        "\nResponse style: Be extremely concise. "
+        "Give short, direct answers — bullet points over paragraphs. "
+        "Skip preamble. Only include essential details. "
+        "One-liners where possible."
+    ),
+}
+
+
 def build_system_prompt(
     app_name: str,
     frameworks: list[str],
     languages: list[str],
     page_context: PageContext | None,
+    tone: str = "normal",
 ) -> str:
-    """Build the system prompt with optional page context."""
+    """Build the system prompt with optional page context and tone."""
     parts = [
         f'You are an expert software architect analyzing the application "{app_name}".',
     ]
@@ -115,6 +133,11 @@ def build_system_prompt(
         "- If a question is ambiguous, search first to find "
         "relevant nodes, then get details."
     )
+
+    tone_instruction = _TONE_INSTRUCTIONS.get(tone, "")
+    if tone_instruction:
+        parts.append(tone_instruction)
+
     return "\n".join(parts)
 
 

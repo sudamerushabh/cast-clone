@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import type cytoscape from "cytoscape"
-import { Activity, Filter, GitBranch, RefreshCw, Route } from "lucide-react"
+import { Activity, Bot, Filter, GitBranch, RefreshCw, Route } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
@@ -30,6 +30,7 @@ import { usePathFinder } from "@/hooks/usePathFinder"
 import { useAnalysisData } from "@/hooks/useAnalysisData"
 import { useSavedViews } from "@/hooks/useSavedViews"
 import { SaveViewModal } from "@/components/views/SaveViewModal"
+import { useChatContextSafe } from "@/components/chat/ChatProvider"
 import type { ViewMode, PathFinderResponse } from "@/lib/types"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
@@ -98,6 +99,8 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
     unknown
   > | null>(null)
   const [showFilterPanel, setShowFilterPanel] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const graphContainerRef = useRef<HTMLDivElement>(null)
   const [cyInstance, setCyInstance] = useState<cytoscape.Core | null>(null)
   const [codeViewerOpen, setCodeViewerOpen] = useState(false)
   const [codeViewerFile, setCodeViewerFile] = useState<string>("")
@@ -124,7 +127,14 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
   const pathFinder = usePathFinder()
   const analysisData = useAnalysisData()
   const savedViews = useSavedViews()
+  const chat = useChatContextSafe()
   const [showSaveViewModal, setShowSaveViewModal] = useState(false)
+
+  // Keep ChatProvider informed about the current graph view + selected node
+  useEffect(() => {
+    const level = drilldownPath.length === 0 ? "module" : drilldownPath.length === 1 ? "class" : "method"
+    chat?.setViewInfo(viewMode, level)
+  }, [viewMode, drilldownPath.length, chat]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load data based on view mode
   useEffect(() => {
@@ -156,10 +166,12 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
   const handleNodeSelect = useCallback((nodeData: Record<string, unknown>) => {
     if (Object.keys(nodeData).length === 0) {
       setSelectedNode(null)
+      chat?.setSelectedNodeFqn(null)
     } else {
       setSelectedNode(nodeData)
+      chat?.setSelectedNodeFqn((nodeData.id as string) ?? null)
     }
-  }, [])
+  }, [chat]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drill-down (disabled in transaction mode)
   const handleNodeDrillDown = useCallback(
@@ -227,6 +239,24 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
       // Layout may fail with 0 nodes
     }
   }, [viewMode, performanceTier])
+
+  // Fullscreen toggle
+  const handleToggleFullscreen = useCallback(() => {
+    const el = graphContainerRef.current
+    if (!el) return
+    if (!document.fullscreenElement) {
+      el.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {})
+    }
+  }, [])
+
+  // Sync state when user exits fullscreen via Escape
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener("fullscreenchange", handler)
+    return () => document.removeEventListener("fullscreenchange", handler)
+  }, [])
 
   // Code viewer
   const handleViewSource = useCallback(
@@ -418,10 +448,20 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
     [],
   )
 
+  // ─── Ask AI about node ─────────────────────────────────────────────────
+  const handleAskAI = useCallback(
+    (fqn: string) => {
+      chat?.setSelectedNodeFqn(fqn)
+      chat?.setOpen(true)
+      setContextMenu(null)
+    },
+    [chat],
+  )
+
   const handleNodeRightClick = useCallback(
     (fqn: string, position: { x: number; y: number }) => {
-      const MENU_WIDTH = 160
-      const MENU_HEIGHT = 120
+      const MENU_WIDTH = 180
+      const MENU_HEIGHT = 160
       const x = Math.min(position.x, window.innerWidth - MENU_WIDTH)
       const y = Math.min(position.y, window.innerHeight - MENU_HEIGHT)
       setContextMenu({ fqn, x, y })
@@ -480,7 +520,7 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
   const activeError = isTransactionView ? txnError : error
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={graphContainerRef} className="flex h-full flex-col bg-background">
       {/* Unified toolbar: filter + breadcrumbs (left) | zoom + export + analysis (right) */}
       <div className="flex items-center justify-between border-b bg-background px-3 py-1">
         <div className="flex items-center gap-2">
@@ -530,6 +570,8 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
           projectId={projectId}
           selectedNodeFqn={(selectedNode?.fqn as string) ?? undefined}
           onSaveView={() => setShowSaveViewModal(true)}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={handleToggleFullscreen}
         />
       </div>
 
@@ -722,6 +764,14 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
               >
                 <Route className="size-3.5 text-blue-500" />
                 Find Path From Here
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => handleAskAI(contextMenu.fqn)}
+              >
+                <Bot className="size-3.5 text-violet-500" />
+                Ask AI About This
               </button>
             </div>
           </div>

@@ -12,9 +12,10 @@ import {
 import type { ReactNode } from "react";
 import { useChat } from "@/hooks/useChat";
 import { usePageContext } from "@/hooks/usePageContext";
-import type { ChatMessage, PageContext } from "@/lib/chat-types";
+import type { ChatDrawerSize, ChatMessage, ChatTone, PageContext } from "@/lib/chat-types";
 
 const STORAGE_KEY_CONTEXT_AWARE = "codelens-chat-context-aware";
+const STORAGE_KEY_TONE = "codelens-chat-tone";
 
 interface ChatContextValue {
   // State
@@ -24,6 +25,8 @@ interface ChatContextValue {
   isOpen: boolean;
   includePageContext: boolean;
   pageContext: PageContext;
+  tone: ChatTone;
+  drawerSize: ChatDrawerSize;
 
   // Actions
   sendMessage: (message: string) => Promise<void>;
@@ -32,6 +35,8 @@ interface ChatContextValue {
   toggleOpen: () => void;
   setOpen: (open: boolean) => void;
   setIncludePageContext: (include: boolean) => void;
+  setTone: (tone: ChatTone) => void;
+  setDrawerSize: (size: ChatDrawerSize) => void;
 
   // Graph state setters (called by graph components)
   setSelectedNodeFqn: (fqn: string | null) => void;
@@ -55,6 +60,8 @@ export function ChatProvider({
   const [selectedNodeFqn, setSelectedNodeFqn] = useState<string | null>(null);
   const [view, setView] = useState<string | null>(null);
   const [level, setLevel] = useState<string | null>(null);
+  const [tone, setToneState] = useState<ChatTone>("normal");
+  const [drawerSize, setDrawerSize] = useState<ChatDrawerSize>("normal");
 
   const chat = useChat();
   const pageContext = usePageContext({
@@ -63,19 +70,26 @@ export function ChatProvider({
     level,
   });
 
-  // Restore context-aware toggle from localStorage
+  // Restore persisted settings
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY_CONTEXT_AWARE);
-    if (stored !== null) {
-      // Use setTimeout(0) to avoid "setState in effect" lint warning
-      const value = stored === "true";
-      setTimeout(() => setIncludePageContextState(value), 0);
+    const storedCtx = localStorage.getItem(STORAGE_KEY_CONTEXT_AWARE);
+    if (storedCtx !== null) {
+      setTimeout(() => setIncludePageContextState(storedCtx === "true"), 0);
+    }
+    const storedTone = localStorage.getItem(STORAGE_KEY_TONE);
+    if (storedTone) {
+      setTimeout(() => setToneState(storedTone as ChatTone), 0);
     }
   }, []);
 
   const setIncludePageContext = useCallback((include: boolean) => {
     setIncludePageContextState(include);
     localStorage.setItem(STORAGE_KEY_CONTEXT_AWARE, String(include));
+  }, []);
+
+  const setTone = useCallback((t: ChatTone) => {
+    setToneState(t);
+    localStorage.setItem(STORAGE_KEY_TONE, t);
   }, []);
 
   const setViewInfo = useCallback(
@@ -93,9 +107,10 @@ export function ChatProvider({
         message,
         includePageContext ? pageContext : null,
         includePageContext,
+        tone,
       );
     },
-    [chat, projectId, pageContext, includePageContext],
+    [chat, projectId, pageContext, includePageContext, tone],
   );
 
   const toggleOpen = useCallback(() => {
@@ -110,12 +125,16 @@ export function ChatProvider({
       isOpen,
       includePageContext,
       pageContext,
+      tone,
+      drawerSize,
       sendMessage,
       clearMessages: chat.clearMessages,
       stopStreaming: chat.stopStreaming,
       toggleOpen,
       setOpen: setIsOpen,
       setIncludePageContext,
+      setTone,
+      setDrawerSize,
       setSelectedNodeFqn,
       setViewInfo,
     }),
@@ -128,9 +147,12 @@ export function ChatProvider({
       isOpen,
       includePageContext,
       pageContext,
+      tone,
+      drawerSize,
       sendMessage,
       toggleOpen,
       setIncludePageContext,
+      setTone,
       setViewInfo,
     ],
   );
@@ -144,4 +166,12 @@ export function useChatContext(): ChatContextValue {
     throw new Error("useChatContext must be used within a ChatProvider");
   }
   return ctx;
+}
+
+/**
+ * Safe version that returns null when outside a ChatProvider.
+ * Use this in components that may render before the provider is ready.
+ */
+export function useChatContextSafe(): ChatContextValue | null {
+  return useContext(ChatContext);
 }

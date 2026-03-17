@@ -5,6 +5,7 @@ The GraphStore ABC allows swapping Neo4j for Memgraph/AGE in the future.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -111,11 +112,21 @@ class Neo4jGraphStore(GraphStore):
             batch = nodes[i : i + batch_size]
             records = []
             for node in batch:
-                # Neo4j node properties must be primitives or arrays — skip dicts
-                # (e.g. annotation_args is used in-memory by plugins, not stored)
-                serializable_props = {
-                    k: v for k, v in node.properties.items() if not isinstance(v, dict)
-                }
+                # Neo4j properties must be primitives or arrays of primitives.
+                # Serialize dicts and lists-of-dicts as JSON strings so data
+                # (e.g. parameters, annotation_args) is preserved.
+                serializable_props: dict[str, Any] = {}
+                for k, v in node.properties.items():
+                    if isinstance(v, dict):
+                        serializable_props[k] = json.dumps(v)
+                    elif (
+                        isinstance(v, list)
+                        and v
+                        and isinstance(v[0], dict)
+                    ):
+                        serializable_props[k] = json.dumps(v)
+                    else:
+                        serializable_props[k] = v
                 props: dict[str, Any] = {
                     "fqn": node.fqn,
                     "name": node.name,

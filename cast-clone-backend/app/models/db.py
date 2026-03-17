@@ -232,8 +232,7 @@ class Project(Base):
 
     @property
     def neo4j_app_name(self) -> str:
-        if self.repository_id and self.branch:
-            return f"{self.repository_id}:{self.branch}"
+        """The app_name used in Neo4j node properties — always the project UUID."""
         return self.id
 
 
