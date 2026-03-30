@@ -146,6 +146,7 @@ async def receive_webhook(
         api_token_encrypted=config.api_token_encrypted,
         platform=platform,
         secret_key=settings.secret_key,
+        post_pr_comments=config.post_pr_comments,
     )
 
     return WebhookResponse(
@@ -161,6 +162,7 @@ async def _run_analysis_background(
     api_token_encrypted: str,
     platform: str,
     secret_key: str,
+    post_pr_comments: bool = False,
 ) -> None:
     """Background task wrapper for PR analysis.
 
@@ -270,3 +272,26 @@ async def _run_analysis_background(
             app_name=app_name,
             source_repo_path=source_project.source_path,
         )
+
+        # Post comment on PR if enabled
+        if post_pr_comments and pr_record.status == "completed":
+            try:
+                from app.pr_analysis.commenter import post_analysis_comment
+
+                settings = get_settings()
+                comment_result = await post_analysis_comment(
+                    pr_record=pr_record,
+                    platform=platform,
+                    api_token=api_token,
+                    base_url=settings.base_url,
+                )
+                pr_record.comment_id = comment_result.comment_id
+                pr_record.comment_url = comment_result.comment_url
+                await session.commit()
+            except Exception as exc:
+                logger.warning(
+                    "pr_comment_failed",
+                    analysis_id=pr_analysis_id,
+                    error=str(exc),
+                    exc_info=True,
+                )
