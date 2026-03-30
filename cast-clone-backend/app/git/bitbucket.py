@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.git.base import GitPlatformClient
+from app.git.base import CommentResult, GitPlatformClient
 from app.git.diff_parser import parse_patch_hunks
 from app.pr_analysis.models import (
     FileDiff,
@@ -135,4 +135,30 @@ class BitbucketPlatformClient(GitPlatformClient):
             total_additions=total_add,
             total_deletions=total_del,
             total_files_changed=len(files),
+        )
+
+    async def post_comment(
+        self, repo_url: str, pr_number: int, token: str, body: str
+    ) -> CommentResult:
+        parsed = urlparse(repo_url)
+        path_parts = parsed.path.strip("/").removesuffix(".git").split("/")
+        workspace, repo = path_parts[0], path_parts[1]
+
+        url = (
+            f"https://api.bitbucket.org/2.0/repositories"
+            f"/{workspace}/{repo}/pullrequests/{pr_number}/comments"
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url, headers=headers, json={"content": {"raw": body}}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        return CommentResult(
+            comment_id=str(data["id"]),
+            comment_url=data["links"]["html"]["href"],
+            platform="bitbucket",
         )

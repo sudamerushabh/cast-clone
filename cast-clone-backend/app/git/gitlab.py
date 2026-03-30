@@ -8,7 +8,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from app.git.base import GitPlatformClient
+from app.git.base import CommentResult, GitPlatformClient
 from app.git.diff_parser import parse_patch_hunks
 from app.pr_analysis.models import (
     FileDiff,
@@ -135,4 +135,33 @@ class GitLabPlatformClient(GitPlatformClient):
             total_additions=total_add,
             total_deletions=total_del,
             total_files_changed=len(files),
+        )
+
+    async def post_comment(
+        self, repo_url: str, pr_number: int, token: str, body: str
+    ) -> CommentResult:
+        parsed = urlparse(repo_url)
+        project_path = parsed.path.strip("/").removesuffix(".git")
+        encoded_path = quote(project_path, safe="")
+
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        url = (
+            f"{base_url}/api/v4/projects/{encoded_path}"
+            f"/merge_requests/{pr_number}/notes"
+        )
+        headers = {"PRIVATE-TOKEN": token}
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=headers, json={"body": body})
+            resp.raise_for_status()
+            data = resp.json()
+
+        comment_url = (
+            f"{repo_url}/-/merge_requests/{pr_number}#note_{data['id']}"
+        )
+
+        return CommentResult(
+            comment_id=str(data["id"]),
+            comment_url=comment_url,
+            platform="gitlab",
         )
