@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from app.pr_analysis.models import PRDiff, PullRequestEvent
+
+
+@dataclass
+class CommentResult:
+    """Result of posting a comment on a pull request."""
+
+    comment_id: str
+    comment_url: str
+    platform: str
 
 
 class GitPlatformClient(ABC):
@@ -42,4 +52,20 @@ class GitPlatformClient(ABC):
 
         Returns:
             A PRDiff containing all file diffs.
+        """
+
+    @abstractmethod
+    async def post_comment(
+        self, repo_url: str, pr_number: int, token: str, body: str
+    ) -> CommentResult:
+        """Post a comment on a pull/merge request.
+
+        Args:
+            repo_url: The repository URL (e.g. https://github.com/owner/repo).
+            pr_number: The pull/merge request number.
+            token: Authentication token for the platform API.
+            body: The markdown comment body.
+
+        Returns:
+            A CommentResult with the comment ID and URL.
         """
