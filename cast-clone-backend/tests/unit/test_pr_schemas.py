@@ -198,6 +198,7 @@ class TestGitConfigResponse:
             repo_url="https://github.com/org/repo",
             monitored_branches=["main"],
             is_active=True,
+            post_pr_comments=False,
             created_at=now,
             updated_at=now,
         )

@@ -17,6 +17,7 @@ class GitConfigCreate(BaseModel):
     monitored_branches: list[str] = Field(
         default_factory=lambda: ["main", "master", "develop"]
     )
+    post_pr_comments: bool = False
 
 
 class GitConfigUpdate(BaseModel):
@@ -26,6 +27,7 @@ class GitConfigUpdate(BaseModel):
     repo_url: str | None = Field(default=None, max_length=500)
     api_token: str | None = Field(default=None, min_length=1)
     monitored_branches: list[str] | None = None
+    post_pr_comments: bool | None = None
 
 
 class GitConfigResponse(BaseModel):
@@ -37,6 +39,7 @@ class GitConfigResponse(BaseModel):
     repo_url: str
     monitored_branches: list[str] | None
     is_active: bool
+    post_pr_comments: bool
     created_at: datetime
     updated_at: datetime
 
@@ -56,6 +59,7 @@ class EnableWebhooksRequest(BaseModel):
     monitor_all_branches: bool = True
     monitored_branches: list[str] | None = None
     auto_register: bool = False
+    post_pr_comments: bool = False
 
 
 class EnableWebhooksResponse(BaseModel):
@@ -66,6 +70,7 @@ class EnableWebhooksResponse(BaseModel):
     platform: str
     monitored_branches: list[str] | None  # None = all branches
     is_active: bool
+    post_pr_comments: bool
     auto_registered: bool = False
     auto_register_error: str | None = None
 

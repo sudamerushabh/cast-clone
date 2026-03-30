@@ -278,6 +278,7 @@ class RepositoryGitConfig(Base):
         JSONB, default=lambda: ["main", "master", "develop"]
     )
     is_active: Mapped[bool] = mapped_column(default=True)
+    post_pr_comments: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -330,6 +331,8 @@ class PrAnalysis(Base):
     )
     analysis_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ai_summary_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comment_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    comment_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

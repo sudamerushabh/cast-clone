@@ -74,6 +74,7 @@ class PrAnalysisResponse(BaseModel):
     graph_analysis_run_id: str | None = None
     analysis_duration_ms: int | None = None
     ai_summary_tokens: int | None = None
+    comment_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
