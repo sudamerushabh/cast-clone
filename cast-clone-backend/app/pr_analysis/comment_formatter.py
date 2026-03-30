@@ -43,14 +43,16 @@ def format_pr_comment(pr_record, base_url: str | None = None) -> str:
     downstream = impact.get("downstream_count", 0)
     upstream = impact.get("upstream_count", 0)
     by_type = impact.get("by_type", {})
-    type_breakdown = ", ".join(f"{v} {k}" for k, v in by_type.items()) if by_type else ""
+    type_breakdown = (
+        ", ".join(f"{v} {k}" for k, v in by_type.items()) if by_type else ""
+    )
     changed = pr_record.changed_node_count or 0
     changed_line = f"**Changed nodes:** {changed}"
     if type_breakdown:
         changed_line += f" ({type_breakdown})"
 
     impact_lines = [
-        f"### Impact Summary\n",
+        "### Impact Summary\n",
         f"- {changed_line}",
         f"- **Downstream affected:** {downstream} nodes",
         f"- **Upstream dependents:** {upstream} nodes",
@@ -74,8 +76,10 @@ def format_pr_comment(pr_record, base_url: str | None = None) -> str:
     if drift.get("has_drift"):
         drift_lines = ["### Architecture Drift\n"]
         for dep in drift.get("potential_new_module_deps", []):
+            from_mod = dep["from_module"]
+            to_mod = dep["to_module"]
             drift_lines.append(
-                f"- New module dependency: `{dep['from_module']}` \u2192 `{dep['to_module']}`"
+                f"- New module dependency: `{from_mod}` \u2192 `{to_mod}`"
             )
         for cycle in drift.get("circular_deps_affected", []):
             drift_lines.append(
