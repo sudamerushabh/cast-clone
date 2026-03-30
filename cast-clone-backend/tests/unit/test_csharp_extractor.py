@@ -712,3 +712,124 @@ class TestDIRegistrations:
 
         product = _find_node(nodes, name="Product", kind=NodeKind.CLASS)
         assert product.properties.get("di_registrations") is None
+
+
+# ── MODULE node creation ──────────────────────────────────────────────────
+
+
+class TestModuleNodes:
+    """MODULE nodes are created from C# namespaces."""
+
+    def test_module_node_created_from_namespace(self, extractor):
+        """A MODULE node should exist for each namespace."""
+        source = b"""
+namespace MyApp.Models
+{
+    public class User { }
+}
+"""
+        nodes, edges = extractor.extract(source, "User.cs", "/src")
+        module = _find_node(nodes, fqn="MyApp.Models", kind=NodeKind.MODULE)
+        assert module.name == "Models"
+        assert module.language == "csharp"
+
+    def test_module_contains_class(self, extractor):
+        """MODULE should have a CONTAINS edge to its class."""
+        source = b"""
+namespace MyApp.Models
+{
+    public class User { }
+}
+"""
+        nodes, edges = extractor.extract(source, "User.cs", "/src")
+        _find_edge(
+            edges,
+            source_fqn="MyApp.Models",
+            target_fqn="MyApp.Models.User",
+            kind=EdgeKind.CONTAINS,
+        )
+
+    def test_module_contains_interface(self, extractor):
+        """MODULE should have a CONTAINS edge to its interface."""
+        source = b"""
+namespace MyApp.Services
+{
+    public interface IUserService { }
+}
+"""
+        nodes, edges = extractor.extract(source, "IUserService.cs", "/src")
+        _find_edge(
+            edges,
+            source_fqn="MyApp.Services",
+            target_fqn="MyApp.Services.IUserService",
+            kind=EdgeKind.CONTAINS,
+        )
+
+    def test_multiple_namespaces_create_multiple_modules(self, extractor):
+        """Each namespace in a file should create its own MODULE node."""
+        source = b"""
+namespace MyApp.Models
+{
+    public class User { }
+}
+namespace MyApp.Services
+{
+    public class UserService { }
+}
+"""
+        nodes, edges = extractor.extract(source, "Test.cs", "/src")
+        _find_node(nodes, fqn="MyApp.Models", kind=NodeKind.MODULE)
+        _find_node(nodes, fqn="MyApp.Services", kind=NodeKind.MODULE)
+
+    def test_file_scoped_namespace_creates_module(self, extractor):
+        """File-scoped namespaces should also create MODULE nodes."""
+        source = b"""
+namespace MyApp.Models;
+
+public class Product { }
+"""
+        nodes, edges = extractor.extract(source, "Product.cs", "/src")
+        module = _find_node(nodes, fqn="MyApp.Models", kind=NodeKind.MODULE)
+        assert module.name == "Models"
+        _find_edge(
+            edges,
+            source_fqn="MyApp.Models",
+            target_fqn="MyApp.Models.Product",
+            kind=EdgeKind.CONTAINS,
+        )
+
+    def test_nested_class_not_direct_module_child(self, extractor):
+        """Nested classes should NOT get a CONTAINS edge from the MODULE."""
+        source = b"""
+namespace MyApp.Models
+{
+    public class Outer
+    {
+        public class Inner { }
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "Outer.cs", "/src")
+        # Module contains Outer
+        _find_edge(
+            edges,
+            source_fqn="MyApp.Models",
+            target_fqn="MyApp.Models.Outer",
+            kind=EdgeKind.CONTAINS,
+        )
+        # Module should NOT directly contain Inner
+        module_to_inner = [
+            e
+            for e in edges
+            if e.source_fqn == "MyApp.Models"
+            and e.target_fqn == "MyApp.Models.Outer.Inner"
+            and e.kind == EdgeKind.CONTAINS
+        ]
+        assert len(module_to_inner) == 0
+
+    def test_ef_fixture_creates_modules(self, extractor):
+        """The EfAndDi.cs fixture should create MODULE nodes."""
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+        modules = [n for n in nodes if n.kind == NodeKind.MODULE]
+        assert len(modules) > 0
