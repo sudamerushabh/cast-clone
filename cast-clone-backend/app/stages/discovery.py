@@ -592,23 +592,66 @@ def _detect_frameworks_python(
     return frameworks
 
 
-def _detect_frameworks_dotnet(csproj_path: Path) -> list[DetectedFramework]:
-    """Detect .NET frameworks from .csproj files."""
+def _detect_frameworks_dotnet(config_path: Path) -> list[DetectedFramework]:
+    """Detect .NET frameworks from .csproj or .sln files.
+
+    For .sln files, scans all .csproj files under the same directory tree
+    since .sln files themselves don't contain package/SDK references.
+    For .csproj files, checks the file directly.
+    """
     frameworks: list[DetectedFramework] = []
 
-    try:
-        content = csproj_path.read_text(encoding="utf-8")
-    except OSError:
-        return frameworks
+    # Collect .csproj files to check
+    csproj_files: list[Path] = []
+    if config_path.suffix == ".sln":
+        # .sln files don't contain framework references — scan all .csproj
+        # files under the project root for ASP.NET / EF markers.
+        csproj_files = list(config_path.parent.rglob("*.csproj"))
+    else:
+        csproj_files = [config_path]
 
-    if "Microsoft.AspNetCore" in content or 'Sdk="Microsoft.NET.Sdk.Web"' in content:
-        frameworks.append(
-            DetectedFramework(
-                name="aspnet",
-                language="csharp",
-                confidence=Confidence.HIGH,
-                evidence=[f"{csproj_path.name} contains ASP.NET Core reference"],
+    aspnet_found = False
+    ef_found = False
+
+    for csproj_path in csproj_files:
+        try:
+            content = csproj_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        if not aspnet_found and (
+            "Microsoft.AspNetCore" in content
+            or 'Sdk="Microsoft.NET.Sdk.Web"' in content
+        ):
+            frameworks.append(
+                DetectedFramework(
+                    name="aspnet",
+                    language="csharp",
+                    confidence=Confidence.HIGH,
+                    evidence=[
+                        f"{csproj_path.name} contains ASP.NET Core reference"
+                    ],
+                )
             )
-        )
+            aspnet_found = True
+
+        if not ef_found and (
+            "Microsoft.EntityFrameworkCore" in content
+            or "EntityFramework" in content
+        ):
+            frameworks.append(
+                DetectedFramework(
+                    name="efcore",
+                    language="csharp",
+                    confidence=Confidence.HIGH,
+                    evidence=[
+                        f"{csproj_path.name} contains Entity Framework reference"
+                    ],
+                )
+            )
+            ef_found = True
+
+        if aspnet_found and ef_found:
+            break
 
     return frameworks

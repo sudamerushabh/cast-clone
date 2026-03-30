@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     git_clone_timeout: int = 600
 
     # Analysis defaults
-    scip_timeout: int = 600
+    scip_timeout: int = 1200
     total_analysis_timeout: int = 3600
     max_traversal_depth: int = 15
     treesitter_workers: int | None = None  # None = os.cpu_count()

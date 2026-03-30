@@ -428,6 +428,31 @@ class TestAspNetController:
         assert "Route" in annotation_args
         assert "api/[controller]" in annotation_args["Route"]
 
+    def test_base_class_property_set(self, extractor):
+        source = _read("UserController.cs")
+        nodes, edges = extractor.extract(source, "UserController.cs", "/src")
+
+        ctrl = _find_node(
+            nodes,
+            fqn="MyApp.Controllers.UsersController",
+            kind=NodeKind.CLASS,
+        )
+        assert ctrl.properties.get("base_class") == "ControllerBase"
+
+    def test_annotation_args_unnamed_key(self, extractor):
+        source = _read("UserController.cs")
+        nodes, edges = extractor.extract(source, "UserController.cs", "/src")
+
+        ctrl = _find_node(
+            nodes,
+            fqn="MyApp.Controllers.UsersController",
+            kind=NodeKind.CLASS,
+        )
+        annotation_args = ctrl.properties.get("annotation_args", {})
+        # The unnamed positional arg should be stored under ""
+        assert "" in annotation_args
+        assert "api/[controller]" in annotation_args[""]
+
 
 # ---------------------------------------------------------------------------
 # Test 8: Attribute argument extraction
@@ -577,3 +602,113 @@ namespace MyApp
         ]
         names = {n.name for n in class_nodes}
         assert {"Foo", "Bar", "IBaz"} <= names
+
+
+# ---------------------------------------------------------------------------
+# Test: base_class and implements properties
+# ---------------------------------------------------------------------------
+class TestBaseClassAndImplements:
+    def test_base_class_from_inheritance(self, extractor):
+        source = _read("SimpleClass.cs")
+        nodes, edges = extractor.extract(source, "SimpleClass.cs", "/src")
+        user = _find_node(nodes, name="User", kind=NodeKind.CLASS)
+        assert user.properties.get("base_class") == "BaseModel"
+
+    def test_implements_from_interface(self, extractor):
+        source = _read("SimpleClass.cs")
+        nodes, edges = extractor.extract(source, "SimpleClass.cs", "/src")
+        user = _find_node(nodes, name="User", kind=NodeKind.CLASS)
+        implements = user.properties.get("implements", [])
+        assert "IEntity" in implements
+
+    def test_dbcontext_base_class(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+        ctx = _find_node(nodes, name="AppDbContext", kind=NodeKind.CLASS)
+        assert ctx.properties.get("base_class") == "DbContext"
+
+
+# ---------------------------------------------------------------------------
+# Test: type_args on properties
+# ---------------------------------------------------------------------------
+class TestTypeArgs:
+    def test_dbset_type_args_extracted(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        # Find the DbSet<Product> property on AppDbContext (not IList<Product> on Category)
+        dbset_products = [
+            n for n in nodes
+            if n.name == "Products"
+            and n.kind == NodeKind.FIELD
+            and "DbSet" in n.properties.get("type", "")
+        ]
+        assert len(dbset_products) == 1
+        assert dbset_products[0].properties.get("type") == "DbSet<Product>"
+        assert dbset_products[0].properties.get("type_args") == ["Product"]
+
+    def test_collection_type_args(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        items = _find_node(nodes, name="OrderItems", kind=NodeKind.FIELD)
+        # This is on Product class: ICollection<OrderItem>
+        for n in nodes:
+            if n.name == "OrderItems" and n.kind == NodeKind.FIELD:
+                ta = n.properties.get("type_args", [])
+                if ta and "OrderItem" in ta[0]:
+                    assert True
+                    return
+        # The DbSet<OrderItem> should also have type_args
+        dbset_items = [
+            n for n in nodes
+            if n.name == "OrderItems" and "DbSet" in n.properties.get("type", "")
+        ]
+        assert len(dbset_items) >= 1
+        assert dbset_items[0].properties.get("type_args") == ["OrderItem"]
+
+    def test_simple_type_has_no_type_args(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        name = _find_node(nodes, name="Name", kind=NodeKind.FIELD)
+        assert name.properties.get("type_args") is None
+
+
+# ---------------------------------------------------------------------------
+# Test: DI registration extraction
+# ---------------------------------------------------------------------------
+class TestDIRegistrations:
+    def test_di_registrations_extracted(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        mi = _find_node(nodes, name="ModuleInitializer", kind=NodeKind.CLASS)
+        di_regs = mi.properties.get("di_registrations", [])
+        assert len(di_regs) >= 2
+
+        # Check AddScoped<IProductService, ProductService>
+        scoped = [r for r in di_regs if r.get("method") == "AddScoped"]
+        assert len(scoped) >= 1
+        assert scoped[0]["interface"] == "IProductService"
+        assert scoped[0]["implementation"] == "ProductService"
+
+    def test_self_registration_extracted(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        mi = _find_node(nodes, name="ModuleInitializer", kind=NodeKind.CLASS)
+        di_regs = mi.properties.get("di_registrations", [])
+
+        # Check AddTransient<AppDbContext> (self-registration)
+        transient = [r for r in di_regs if r.get("method") == "AddTransient"]
+        assert len(transient) >= 1
+        assert transient[0]["interface"] == "AppDbContext"
+        assert transient[0]["implementation"] == "AppDbContext"
+
+    def test_no_di_registrations_on_regular_class(self, extractor):
+        source = _read("EfAndDi.cs")
+        nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
+
+        product = _find_node(nodes, name="Product", kind=NodeKind.CLASS)
+        assert product.properties.get("di_registrations") is None

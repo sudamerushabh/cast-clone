@@ -10,8 +10,8 @@ const SETUP_SNIPPETS = [
     name: "Claude Code",
     icon: Terminal,
     description: "Add CodeLens as an MCP server in Claude Code CLI.",
-    command: `claude mcp add codelens -- http://localhost:8090/mcp`,
-    note: "Run this in your terminal. You'll be prompted for the API key.",
+    command: `claude mcp add --transport sse codelens http://localhost:8090/sse`,
+    note: "Run this in your terminal. The MCP server uses SSE transport.",
   },
   {
     id: "vscode",
@@ -22,7 +22,7 @@ const SETUP_SNIPPETS = [
   "servers": {
     "codelens": {
       "type": "sse",
-      "url": "http://localhost:8090/mcp",
+      "url": "http://localhost:8090/sse",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
       }
@@ -39,7 +39,7 @@ const SETUP_SNIPPETS = [
     command: `{
   "mcpServers": {
     "codelens": {
-      "url": "http://localhost:8090/mcp",
+      "url": "http://localhost:8090/sse",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
       }

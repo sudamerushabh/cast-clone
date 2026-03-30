@@ -42,7 +42,7 @@ class SCIPIndexerConfig:
     name: str
     command_template: list[str]
     output_file: str = "index.scip"
-    timeout_seconds: int = 600
+    timeout_seconds: int = 0  # 0 = use global scip_timeout from Settings
     needs_project_name: bool = False
     docker_image: str | None = None
 
@@ -53,14 +53,12 @@ SCIP_INDEXER_CONFIGS: dict[str, SCIPIndexerConfig] = {
         language="java",
         name="scip-java",
         command_template=["scip-java", "index"],
-        timeout_seconds=600,
         docker_image="sourcegraph/scip-java:latest",
     ),
     "typescript": SCIPIndexerConfig(
         language="typescript",
         name="scip-typescript",
         command_template=["npx", "@sourcegraph/scip-typescript", "index"],
-        timeout_seconds=600,
     ),
     "python": SCIPIndexerConfig(
         language="python",
@@ -71,14 +69,12 @@ SCIP_INDEXER_CONFIGS: dict[str, SCIPIndexerConfig] = {
             ".",
             "--project-name={project_name}",
         ],
-        timeout_seconds=600,
         needs_project_name=True,
     ),
     "csharp": SCIPIndexerConfig(
         language="csharp",
         name="scip-dotnet",
         command_template=["scip-dotnet", "index"],
-        timeout_seconds=600,
     ),
 }
 
@@ -200,12 +196,35 @@ async def _run_scip_in_directory(
         project_id=context.project_id,
     )
 
+    # Use per-indexer timeout if set, otherwise fall back to global config
+    timeout = indexer_config.timeout_seconds
+    if timeout <= 0:
+        from app.config import get_settings
+        timeout = get_settings().scip_timeout
+
     result = await run_subprocess(
         command=command,
         cwd=cwd,
-        timeout=indexer_config.timeout_seconds,
+        timeout=timeout,
         env=env_overrides,
     )
+
+    # Log stdout/stderr regardless of exit code for observability
+    if result.stdout.strip():
+        logger.info(
+            "scip.indexer.stdout",
+            language=indexer_config.language,
+            output=result.stdout[:2000],
+            project_id=context.project_id,
+        )
+    if result.stderr.strip():
+        log_fn = logger.warning if result.returncode != 0 else logger.info
+        log_fn(
+            "scip.indexer.stderr",
+            language=indexer_config.language,
+            output=result.stderr[:2000],
+            project_id=context.project_id,
+        )
 
     if result.returncode != 0:
         raise RuntimeError(
@@ -309,6 +328,16 @@ async def run_single_scip_indexer(
         RuntimeError: If all indexer attempts fail.
     """
     root_path = context.manifest.root_path
+    indexer_start = time.perf_counter()
+
+    logger.info(
+        "scip.indexer.single.start",
+        language=indexer_config.language,
+        indexer=indexer_config.name,
+        root=str(root_path),
+        timeout=indexer_config.timeout_seconds,
+        project_id=context.project_id,
+    )
 
     # Detect build tool for scip-java when multiple build tools are present
     build_tool: str | None = None

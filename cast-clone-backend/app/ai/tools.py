@@ -38,12 +38,51 @@ class ChatToolContext:
 
 async def list_applications(ctx: ChatToolContext) -> list[dict]:
     """List all analyzed applications in CodeLens."""
-    return await ctx.graph_store.query(
+    from sqlalchemy import select
+
+    from app.models.db import Project, Repository
+    from app.services.postgres import get_background_session
+
+    # Get module counts from Neo4j
+    graph_results = await ctx.graph_store.query(
         "MATCH (n) WHERE n.app_name IS NOT NULL "
         "WITH DISTINCT n.app_name AS name "
         "OPTIONAL MATCH (m {app_name: name, kind: 'MODULE'}) "
         "RETURN name, count(m) AS module_count"
     )
+
+    # Enrich with repository name and branch from PostgreSQL
+    app_ids = [r["name"] for r in graph_results]
+    repo_lookup: dict[str, dict] = {}
+    if app_ids:
+        try:
+            async with get_background_session() as session:
+                result = await session.execute(
+                    select(
+                        Project.id,
+                        Project.branch,
+                        Repository.repo_full_name,
+                    )
+                    .join(Repository, Project.repository_id == Repository.id)
+                    .where(Project.id.in_(app_ids))
+                )
+                for row in result.all():
+                    repo_lookup[row.id] = {
+                        "repository": row.repo_full_name,
+                        "branch": row.branch,
+                    }
+        except Exception as exc:
+            logger.warning("list_applications_pg_enrichment_failed", error=str(exc))
+
+    return [
+        {
+            "app_name": r["name"],
+            "repository": repo_lookup.get(r["name"], {}).get("repository", "unknown"),
+            "branch": repo_lookup.get(r["name"], {}).get("branch", "unknown"),
+            "module_count": r["module_count"],
+        }
+        for r in graph_results
+    ]
 
 
 async def application_stats(ctx: ChatToolContext, app_name: str | None = None) -> dict:

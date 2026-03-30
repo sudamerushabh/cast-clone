@@ -113,7 +113,8 @@ class EntityFrameworkPlugin(FrameworkPlugin):
 
         # Fallback: check for DbContext subclasses in graph
         for node in context.graph.nodes.values():
-            if node.properties.get("base_class") == "DbContext":
+            base_class = node.properties.get("base_class", "")
+            if base_class and "DbContext" in base_class:
                 return PluginDetectionResult(
                     confidence=Confidence.MEDIUM,
                     reason="DbContext subclass found in graph",
@@ -149,7 +150,8 @@ class EntityFrameworkPlugin(FrameworkPlugin):
         for node in graph.nodes.values():
             if node.kind != NodeKind.CLASS:
                 continue
-            if node.properties.get("base_class") != "DbContext":
+            base_class = node.properties.get("base_class", "")
+            if not base_class or "DbContext" not in base_class:
                 continue
 
             ctx_info = _DbContextInfo(fqn=node.fqn, name=node.name)

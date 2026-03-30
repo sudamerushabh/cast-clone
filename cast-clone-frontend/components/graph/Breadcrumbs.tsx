@@ -38,7 +38,7 @@ export function Breadcrumbs({ path, onNavigateHome }: BreadcrumbsProps) {
       {path.map((segment, index) => {
         const isLast = index === path.length - 1
         return (
-          <React.Fragment key={segment.fqn}>
+          <React.Fragment key={`${index}-${segment.fqn}`}>
             <ChevronRight className="size-3 shrink-0 text-muted-foreground/50" />
             <span
               className={cn(

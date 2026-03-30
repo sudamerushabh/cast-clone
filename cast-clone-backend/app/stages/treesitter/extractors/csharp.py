@@ -64,6 +64,56 @@ _SQL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# DI registration method names we recognise
+_DI_METHODS: frozenset[str] = frozenset({
+    "AddScoped", "AddTransient", "AddSingleton",
+    "AddDbContext", "AddDbContextPool",
+    "AddKeyedScoped", "AddKeyedTransient", "AddKeyedSingleton",
+})
+
+# Pattern to extract generic type args from an invocation like AddScoped<IFoo, Bar>
+_GENERIC_ARGS_RE = re.compile(r"<\s*([^>]+)\s*>")
+
+
+def _parse_type_args(type_str: str) -> list[str]:
+    """Parse generic type arguments from a type string.
+
+    Examples:
+        "DbSet<Brand>"           -> ["Brand"]
+        "ICollection<OrderItem>" -> ["OrderItem"]
+        "Dictionary<string, int>" -> ["string", "int"]
+        "string"                  -> []
+    """
+    lt = type_str.find("<")
+    if lt == -1:
+        return []
+    gt = type_str.rfind(">")
+    if gt == -1:
+        return []
+    inner = type_str[lt + 1 : gt].strip()
+    if not inner:
+        return []
+    # Split on comma, strip whitespace, handle nested generics simply
+    # by only splitting on top-level commas
+    depth = 0
+    parts: list[str] = []
+    current: list[str] = []
+    for ch in inner:
+        if ch == "<":
+            depth += 1
+            current.append(ch)
+        elif ch == ">":
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current).strip())
+    return [p for p in parts if p]
+
 
 def _query_matches(query: Query, node: Node) -> list[tuple[int, dict[str, list[Node]]]]:
     """Run a tree-sitter query against a node and return matches.
@@ -101,7 +151,11 @@ def _get_attributes(node: Node, source: bytes) -> tuple[list[str], dict[str, str
     """Extract attributes (annotations) and their arguments from a declaration.
 
     Returns:
-        Tuple of (attribute_names, {attr_name: argument_string}).
+        Tuple of (attribute_names, {attr_name: argument_string, "": first_unnamed_arg}).
+
+    The unnamed first positional argument is stored under the empty-string key
+    ``""`` so that framework plugins can read it without knowing the attribute
+    name.  Named arguments (``key = "value"``) are stored under their key.
     """
     attr_names: list[str] = []
     attr_args: dict[str, str] = {}
@@ -122,7 +176,12 @@ def _get_attributes(node: Node, source: bytes) -> tuple[list[str], dict[str, str
                                 arg_text = arg_text.strip("()")
                                 # Remove surrounding quotes from simple string args
                                 clean = arg_text.strip().strip('"')
+                                # Store under attr name for direct lookup
                                 attr_args[attr_name] = clean
+                                # Store first positional arg under "" for
+                                # plugins that expect unnamed args
+                                if "=" not in clean:
+                                    attr_args[""] = clean
 
     return attr_names, attr_args
 
@@ -356,6 +415,12 @@ class CSharpExtractor:
                 file_ns=file_ns,
             )
 
+        # Create MODULE nodes from namespaces (analogous to Java packages).
+        # Group top-level classes/interfaces by their namespace and create
+        # MODULE -> CONTAINS -> CLASS/INTERFACE edges so the dependencies
+        # view can aggregate cross-module relationships.
+        self._create_module_nodes(nodes, edges, file_path)
+
         log.debug(
             "csharp_extract_complete",
             file=file_path,
@@ -375,6 +440,65 @@ class CSharpExtractor:
         for _idx, captures in _query_matches(Q_USING_QUALIFIED, root):
             usings.append(_node_text(captures["name"][0], source))
         return usings
+
+    # -- Module (namespace) node creation ----------------------------------------
+
+    def _create_module_nodes(
+        self,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+        file_path: str,
+    ) -> None:
+        """Create MODULE nodes from C# namespaces.
+
+        Groups top-level CLASS and INTERFACE nodes by their namespace and
+        creates a MODULE node per namespace with CONTAINS edges to each
+        direct child class/interface.  Nested classes are skipped (they are
+        already contained by their outer class).
+
+        The MODULE FQN is the namespace string (e.g.
+        ``SimplCommerce.Module.Core.Models``), matching Java's use of the
+        package name as MODULE FQN.
+        """
+        # Collect namespace -> [class/interface FQNs]
+        ns_to_children: dict[str, list[str]] = {}
+        for node in nodes:
+            if node.kind not in (NodeKind.CLASS, NodeKind.INTERFACE):
+                continue
+            # Derive namespace: strip the last dotted component (the class name)
+            dot_idx = node.fqn.rfind(".")
+            if dot_idx <= 0:
+                continue
+            namespace = node.fqn[:dot_idx]
+            # Only direct children — skip nested classes (those whose
+            # relative part after the namespace still contains a dot)
+            relative = node.fqn[dot_idx + 1 :]
+            if "." in relative:
+                continue
+            ns_to_children.setdefault(namespace, []).append(node.fqn)
+
+        for namespace, child_fqns in ns_to_children.items():
+            module_name = namespace.rsplit(".", 1)[-1]
+            module_node = GraphNode(
+                fqn=namespace,
+                name=module_name,
+                kind=NodeKind.MODULE,
+                language="csharp",
+                path=file_path,
+                line=1,
+            )
+            nodes.append(module_node)
+
+            for child_fqn in child_fqns:
+                edges.append(
+                    GraphEdge(
+                        source_fqn=namespace,
+                        target_fqn=child_fqn,
+                        kind=EdgeKind.CONTAINS,
+                        confidence=Confidence.HIGH,
+                        evidence="tree-sitter",
+                    )
+                )
 
     # -- Class extraction -------------------------------------------------------
 
@@ -416,6 +540,17 @@ class CSharpExtractor:
             props["is_sealed"] = True
         if usings:
             props["usings"] = usings
+
+        # Classify base types into base_class and implements list
+        interfaces: list[str] = []
+        for bt in base_types:
+            bare_name = bt.split("<")[0]
+            if self._looks_like_interface(bare_name):
+                interfaces.append(bt)
+            elif "base_class" not in props:
+                props["base_class"] = bare_name
+        if interfaces:
+            props["implements"] = interfaces
 
         node = GraphNode(
             fqn=fqn,
@@ -460,6 +595,16 @@ class CSharpExtractor:
         body = class_node.child_by_field_name("body")
         if body:
             self._extract_members(body, fqn, namespace, source, file_path, nodes, edges)
+
+            # Scan all method bodies in the class for DI registrations
+            di_regs: list[dict[str, str]] = []
+            for child in body.children:
+                if child.type in ("method_declaration", "constructor_declaration"):
+                    mbody = child.child_by_field_name("body")
+                    if mbody:
+                        di_regs.extend(self._extract_di_registrations(mbody, source))
+            if di_regs:
+                node.properties["di_registrations"] = di_regs
 
     # -- Interface extraction ---------------------------------------------------
 
@@ -769,6 +914,10 @@ class CSharpExtractor:
         props: dict[str, Any] = {"is_property": True}
         if type_str:
             props["type"] = type_str
+            # Parse generic type arguments: DbSet<Brand> -> ["Brand"]
+            type_args = _parse_type_args(type_str)
+            if type_args:
+                props["type_args"] = type_args
         if attr_names:
             props["annotations"] = attr_names
         if attr_args:
@@ -946,6 +1095,67 @@ class CSharpExtractor:
                 if n.fqn == method_fqn:
                     n.properties["sql_strings"] = sql_strings
                     break
+
+    # -- DI registration extraction ---------------------------------------------
+
+    def _extract_di_registrations(
+        self,
+        body: Node,
+        source: bytes,
+    ) -> list[dict[str, str]]:
+        """Extract DI service registrations from a method body.
+
+        Detects patterns like:
+        - services.AddScoped<IFoo, Bar>()
+        - builder.Services.AddTransient<Baz>()
+        - services.AddDbContext<AppDbContext>(...)
+
+        Returns a list of registration dicts with keys:
+        ``method``, ``interface``, ``implementation``.
+        """
+        registrations: list[dict[str, str]] = []
+
+        for _idx, captures in _query_matches(Q_INVOCATION, body):
+            # Match member access ending with a DI method:
+            # e.g. "services.AddScoped<IFoo, Bar>" or "builder.Services.AddTransient<X>"
+            # The func_node may be a member_access_expression or generic_name
+            # We need the full text including generic args.
+            call_text = _node_text(captures["call"][0], source)
+
+            # Find the DI method name in the call text
+            method_name: str | None = None
+            for dm in _DI_METHODS:
+                if dm in call_text:
+                    method_name = dm
+                    break
+
+            if method_name is None:
+                continue
+
+            # Extract generic type arguments from the call
+            m = _GENERIC_ARGS_RE.search(call_text)
+            if m is None:
+                continue
+
+            type_args = [t.strip() for t in m.group(1).split(",")]
+            if not type_args:
+                continue
+
+            reg: dict[str, str] = {"method": method_name}
+            if len(type_args) == 2:
+                # AddScoped<IService, ServiceImpl>()
+                reg["interface"] = type_args[0]
+                reg["implementation"] = type_args[1]
+            elif len(type_args) == 1:
+                # AddScoped<Service>() — self-registration
+                reg["interface"] = type_args[0]
+                reg["implementation"] = type_args[0]
+            else:
+                continue
+
+            registrations.append(reg)
+
+        return registrations
 
     # -- Helpers ----------------------------------------------------------------
 

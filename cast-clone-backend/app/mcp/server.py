@@ -29,7 +29,8 @@ from app.services.postgres import close_postgres, get_background_session, init_p
 
 logger = structlog.get_logger(__name__)
 
-mcp = FastMCP("codelens")
+_settings = get_settings()
+mcp = FastMCP("codelens", host="0.0.0.0", port=_settings.mcp_port)
 
 # Module-level state initialized during server startup
 _graph_store: Neo4jGraphStore | None = None
@@ -257,7 +258,7 @@ async def run_server() -> None:
         # For FastMCP >=1.25, use mcp.run() with transport params.
         # If FastMCP doesn't support auth natively, wrap with a FastAPI
         # app that validates Bearer tokens before proxying to MCP.
-        await mcp.run_async(transport="sse")
+        await mcp.run_sse_async()
     finally:
         flush_task.cancel()
         try:

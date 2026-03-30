@@ -306,6 +306,53 @@ class TestDetectFrameworks:
         frameworks = detect_frameworks(tmp_path, [])
         assert frameworks == []
 
+    def test_detects_aspnet_from_sln_with_nested_csproj(self, tmp_path: Path):
+        """When a .sln file is at root and .csproj files are nested deeper,
+        the framework detection should recursively scan all .csproj files."""
+        # Create .sln at root
+        sln = tmp_path / "MySolution.sln"
+        sln.write_text("Microsoft Visual Studio Solution File\n")
+
+        # Create nested .csproj with ASP.NET reference (2 levels deep)
+        web_dir = tmp_path / "src" / "MyApp.WebHost"
+        web_dir.mkdir(parents=True)
+        csproj = web_dir / "MyApp.WebHost.csproj"
+        csproj.write_text(
+            '<Project Sdk="Microsoft.NET.Sdk.Web">\n'
+            "  <ItemGroup>\n"
+            '    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />\n'
+            "  </ItemGroup>\n"
+            "</Project>\n"
+        )
+
+        tools = detect_build_tools(tmp_path)
+        frameworks = detect_frameworks(tmp_path, tools)
+        aspnet = [f for f in frameworks if f.name == "aspnet"]
+        assert len(aspnet) == 1
+        assert aspnet[0].language == "csharp"
+        assert aspnet[0].confidence == Confidence.HIGH
+
+    def test_detects_efcore_from_sln_with_nested_csproj(self, tmp_path: Path):
+        """EF Core detection via recursive .csproj scanning."""
+        sln = tmp_path / "MySolution.sln"
+        sln.write_text("Microsoft Visual Studio Solution File\n")
+
+        data_dir = tmp_path / "src" / "MyApp.Data"
+        data_dir.mkdir(parents=True)
+        csproj = data_dir / "MyApp.Data.csproj"
+        csproj.write_text(
+            '<Project Sdk="Microsoft.NET.Sdk">\n'
+            "  <ItemGroup>\n"
+            '    <PackageReference Include="Microsoft.EntityFrameworkCore" />\n'
+            "  </ItemGroup>\n"
+            "</Project>\n"
+        )
+
+        tools = detect_build_tools(tmp_path)
+        frameworks = detect_frameworks(tmp_path, tools)
+        ef = [f for f in frameworks if f.name == "efcore"]
+        assert len(ef) == 1
+
 
 # -- Full Discovery Integration ───────────────────────────────────
 
