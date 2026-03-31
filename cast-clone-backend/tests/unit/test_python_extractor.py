@@ -17,7 +17,7 @@ class TestFQNDerivation:
     """Task 1: FQN derivation and MODULE node creation."""
 
     def test_module_fqn_from_file_path(self, extractor):
-        source = b"x = 1\n"
+        source = b"def do_work(): pass\n"
         nodes, edges = extractor.extract(source, "/code/mypackage/service.py", "/code")
         module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
         assert len(module_nodes) == 1
@@ -27,17 +27,24 @@ class TestFQNDerivation:
         assert module_nodes[0].path == "/code/mypackage/service.py"
 
     def test_module_fqn_init_file(self, extractor):
-        source = b""
+        source = b"def init(): pass\n"
         nodes, edges = extractor.extract(source, "/code/mypackage/__init__.py", "/code")
         module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
         assert len(module_nodes) == 1
         assert module_nodes[0].fqn == "mypackage"
 
     def test_module_fqn_top_level_file(self, extractor):
-        source = b"pass\n"
+        source = b"def main(): pass\n"
         nodes, edges = extractor.extract(source, "/code/main.py", "/code")
         module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
         assert module_nodes[0].fqn == "main"
+
+    def test_empty_file_skips_module(self, extractor):
+        """Empty files (e.g. __init__.py) should not create MODULE nodes."""
+        source = b""
+        nodes, edges = extractor.extract(source, "/code/mypackage/__init__.py", "/code")
+        module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
+        assert len(module_nodes) == 0
 
 
 class TestClassExtraction:

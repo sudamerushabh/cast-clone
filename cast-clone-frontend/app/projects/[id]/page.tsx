@@ -261,21 +261,24 @@ export default function ProjectDashboardPage() {
                       {analysisStatus.current_stage}
                     </span>
                   </p>
-                  {analysisStatus.progress !== undefined && (
-                    <div className="mt-2">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all duration-500"
-                          style={{
-                            width: `${Math.round(analysisStatus.progress * 100)}%`,
-                          }}
-                        />
+                  {analysisStatus.stages && analysisStatus.stages.length > 0 && (() => {
+                    const completed = analysisStatus.stages.filter(s => s.status === "completed").length;
+                    const total = analysisStatus.stages.length;
+                    const pct = Math.round((completed / total) * 100);
+                    return (
+                      <div className="mt-2">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className="h-full rounded-full bg-primary transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {pct}% complete ({completed}/{total} stages)
+                        </p>
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {Math.round(analysisStatus.progress * 100)}% complete
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
 
@@ -298,10 +301,8 @@ export default function ProjectDashboardPage() {
                           <div className="size-4 rounded-full border" />
                         )}
                         <span className="font-mono text-xs">{stage.name}</span>
-                        {stage.duration_ms !== undefined && (
-                          <span className="text-xs text-muted-foreground">
-                            ({(stage.duration_ms / 1000).toFixed(1)}s)
-                          </span>
+                        {stage.status === "completed" && (
+                          <CheckCircle2 className="ml-auto size-3 text-green-600" />
                         )}
                       </li>
                     ))}

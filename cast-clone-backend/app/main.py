@@ -66,6 +66,47 @@ def _configure_logging(log_level: str) -> None:
 logger = structlog.get_logger()
 
 
+async def _cleanup_stale_analyses() -> None:
+    """Mark any analyses stuck in running/pending state as failed.
+
+    This handles the case where the server was restarted (or crashed) while
+    an analysis was in progress.  Without this, the project stays in
+    'analyzing' state forever and can never be re-triggered.
+    """
+    from sqlalchemy import text
+
+    from app.services.postgres import get_engine
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            text(
+                "UPDATE analysis_runs SET status='failed', "
+                "error_message='Server restarted during analysis', "
+                "completed_at=NOW() "
+                "WHERE status IN ('running', 'pending') "
+                "RETURNING id"
+            )
+        )
+        stale_runs = result.fetchall()
+
+        result2 = await conn.execute(
+            text(
+                "UPDATE projects SET status='failed' "
+                "WHERE status='analyzing' "
+                "RETURNING id"
+            )
+        )
+        stale_projects = result2.fetchall()
+
+    if stale_runs or stale_projects:
+        await logger.awarning(
+            "startup.cleanup_stale_analyses",
+            stale_runs=len(stale_runs),
+            stale_projects=len(stale_projects),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
@@ -74,6 +115,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_postgres(settings)
     await init_neo4j(settings)
     await init_redis(settings)
+
+    # Clean up any analyses left in "running" state from a previous crash/restart
+    await _cleanup_stale_analyses()
+
     await logger.ainfo("All services initialized")
     yield
     # Shutdown

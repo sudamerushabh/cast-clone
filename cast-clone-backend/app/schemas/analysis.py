@@ -16,12 +16,23 @@ class AnalysisTriggerResponse(BaseModel):
     message: str
 
 
+class AnalysisStageStatus(BaseModel):
+    """Status of a single pipeline stage."""
+
+    name: str
+    label: str
+    status: str  # pending | running | completed | skipped
+    description: str
+    progress: int | None = None  # 0-100, only set for running stage
+
+
 class AnalysisStatusResponse(BaseModel):
     """GET /api/v1/projects/{id}/status response."""
 
     project_id: str
     status: str
     current_stage: str | None = None
+    stages: list[AnalysisStageStatus] = []
     started_at: datetime | None = None
     completed_at: datetime | None = None
 

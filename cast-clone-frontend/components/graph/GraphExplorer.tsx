@@ -14,6 +14,7 @@ import { FilterPanel } from "@/components/graph/FilterPanel"
 import { Breadcrumbs } from "@/components/graph/Breadcrumbs"
 import { TransactionSelector } from "@/components/graph/TransactionSelector"
 import { SearchDialog } from "@/components/search/SearchDialog"
+import { GraphSearchBar } from "@/components/search/GraphSearchBar"
 import { CodeViewer } from "@/components/code/CodeViewer"
 import { ImpactPanel, applyImpactOverlay, clearImpactOverlay } from "@/components/analysis/ImpactPanel"
 import { PathFinderPanel, applyPathOverlay, clearPathOverlay } from "@/components/analysis/PathFinderPanel"
@@ -31,7 +32,8 @@ import { useAnalysisData } from "@/hooks/useAnalysisData"
 import { useSavedViews } from "@/hooks/useSavedViews"
 import { SaveViewModal } from "@/components/views/SaveViewModal"
 import { useChatContextSafe } from "@/components/chat/ChatProvider"
-import type { ViewMode, PathFinderResponse } from "@/lib/types"
+import type { ViewMode, PathFinderResponse, GraphSearchHit } from "@/lib/types"
+import { getNodeAncestry } from "@/lib/api"
 
 const LAYOUT_CONFIGS: Record<ViewMode, cytoscape.LayoutOptions> = {
   architecture: {
@@ -207,6 +209,67 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
       setSelectedNode(node.data())
     }
   }, [])
+
+  // Search with drill-down: fetch ancestry, expand modules/classes, then focus
+  const handleGraphSearchSelect = useCallback(
+    async (hit: GraphSearchHit) => {
+      // If already visible in the graph, just navigate to it
+      const cy = cyInstanceRef.current
+      if (cy) {
+        const existing = cy.getElementById(hit.fqn)
+        if (existing.length > 0) {
+          cy.nodes().unselect()
+          existing.select()
+          cy.animate({ center: { eles: existing }, zoom: cy.zoom(), duration: 300 })
+          setSelectedNode(existing.data())
+          return
+        }
+      }
+
+      // Switch to dependency view for drill-down (architecture view uses different structure)
+      if (viewMode === "architecture" || viewMode === "transaction") {
+        setViewMode("dependency")
+        // Wait for modules to load before proceeding
+        await loadModules(projectId)
+      }
+
+      try {
+        const ancestry = await getNodeAncestry(projectId, hit.fqn)
+        const ancestors = ancestry.ancestors
+
+        // Find the module ancestor and drill into it
+        const moduleAncestor = ancestors.find((a) => a.kind === "MODULE")
+        if (moduleAncestor && hit.kind !== "MODULE") {
+          await drillIntoModule(projectId, moduleAncestor.fqn, moduleAncestor.name)
+
+          // If the target is a FUNCTION, also drill into the class
+          const classAncestor = ancestors.find(
+            (a) => a.kind === "CLASS" || a.kind === "INTERFACE"
+          )
+          if (classAncestor && hit.kind === "FUNCTION") {
+            await drillIntoClass(projectId, classAncestor.fqn, classAncestor.name)
+          }
+        }
+
+        // Wait a tick for Cytoscape to render the new elements, then navigate
+        setTimeout(() => {
+          const cy2 = cyInstanceRef.current
+          if (!cy2) return
+          const node = cy2.getElementById(hit.fqn)
+          if (node.length > 0) {
+            cy2.nodes().unselect()
+            node.select()
+            cy2.animate({ center: { eles: node }, zoom: 1.5, duration: 400 })
+            setSelectedNode(node.data())
+          }
+        }, 500)
+      } catch {
+        // Fallback: just try to navigate to whatever is visible
+        handleSearchNavigate(hit.fqn)
+      }
+    },
+    [projectId, viewMode, loadModules, drillIntoModule, drillIntoClass, handleSearchNavigate],
+  )
 
   // Zoom controls
   const handleZoomIn = useCallback(() => {
@@ -533,6 +596,13 @@ export function GraphExplorer({ projectId, defaultViewMode = "architecture" }: G
           >
             <Filter className="size-4" />
           </Button>
+
+          <div className="mx-1 h-4 w-px bg-border" />
+
+          <GraphSearchBar
+            projectId={projectId}
+            onSelect={handleGraphSearchSelect}
+          />
 
           <div className="mx-1 h-4 w-px bg-border" />
 

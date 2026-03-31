@@ -269,6 +269,7 @@ async def enable_webhooks(
             platform=existing.platform,
             monitored_branches=existing.monitored_branches,
             is_active=existing.is_active,
+            post_pr_comments=existing.post_pr_comments,
         )
 
     # Look up repository + connector
@@ -301,6 +302,7 @@ async def enable_webhooks(
         api_token_encrypted=connector.encrypted_token,
         webhook_secret=webhook_secret,
         monitored_branches=monitored,
+        post_pr_comments=body.post_pr_comments,
     )
     session.add(config)
     await session.commit()
@@ -336,6 +338,7 @@ async def enable_webhooks(
         platform=platform,
         monitored_branches=monitored,
         is_active=True,
+        post_pr_comments=body.post_pr_comments,
         auto_registered=auto_registered,
         auto_register_error=auto_register_error,
     )

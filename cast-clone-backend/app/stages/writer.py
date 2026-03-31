@@ -17,6 +17,7 @@ GraphStore abstraction. Steps:
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import structlog
@@ -180,9 +181,13 @@ def _create_stub_hierarchy(
     return stub_nodes, stub_edges
 
 
+ProgressCallback = Callable[[int], Awaitable[None]]
+
+
 async def write_to_neo4j(
     context: AnalysisContext,
     store: GraphStore,
+    on_progress: ProgressCallback | None = None,
 ) -> None:
     """Write the entire SymbolGraph to Neo4j.
 
@@ -192,12 +197,17 @@ async def write_to_neo4j(
     Args:
         context: The shared pipeline state containing the graph to persist.
         store: The GraphStore implementation (injected for testability).
+        on_progress: Optional async callback receiving percentage (0-100).
 
     Raises:
         Any exception from the store — this stage does not swallow errors.
     """
     start = time.monotonic()
     project_id = context.project_id
+
+    async def _report(pct: int) -> None:
+        if on_progress:
+            await on_progress(min(pct, 100))
 
     logger.info(
         "writer.start",
@@ -206,43 +216,54 @@ async def write_to_neo4j(
         edge_count=context.graph.edge_count,
     )
 
-    # Step 1: Clear existing data for this project
+    # Step 1: Clear existing data for this project (5%)
     logger.info("writer.clear_project", project_id=project_id)
     await store.clear_project(project_id)
+    await _report(5)
 
-    # Step 2: Ensure indexes exist
+    # Step 2: Ensure indexes exist (8%)
     logger.info("writer.ensure_indexes")
     await store.ensure_indexes()
+    await _report(8)
 
     # Step 3: Write Application root node first
     app_node = _build_application_node(context)
     logger.info("writer.write_application_node", fqn=app_node.fqn)
     nodes_written = await store.write_nodes_batch([app_node], project_id)
+    await _report(10)
 
-    # Step 4: Write all graph nodes
+    # Step 4: Write all graph nodes (10-35%)
     all_nodes = list(context.graph.nodes.values())
     if all_nodes:
         logger.info("writer.write_nodes", count=len(all_nodes))
         nodes_written += await store.write_nodes_batch(all_nodes, project_id)
-    else:
-        logger.info("writer.write_nodes", count=0)
+    await _report(35)
 
-    # Step 4b: Create stub nodes for CALLS edge targets that don't exist
+    # Step 4b: Create stub nodes for CALLS edge targets that don't exist (35-45%)
     stub_nodes, stub_edges = _create_stub_hierarchy(context)
     if stub_nodes:
         logger.info("writer.write_stub_nodes", count=len(stub_nodes))
         nodes_written += await store.write_nodes_batch(stub_nodes, project_id)
     if stub_edges:
         logger.info("writer.write_stub_edges", count=len(stub_edges))
+    await _report(45)
 
-    # Step 5: Write all graph edges (nodes must exist first — edges reference by FQN)
+    # Step 5: Write all graph edges — slowest part (45-95%)
     all_edges = context.graph.edges + stub_edges
     logger.info("writer.write_edges", count=len(all_edges))
-    edges_written = await store.write_edges_batch(all_edges)
+    batch_size = 1000
+    total_edges = len(all_edges)
+    edges_written = 0
+    for i in range(0, total_edges, batch_size):
+        batch = all_edges[i : i + batch_size]
+        edges_written += await store.write_edges_batch(batch)
+        pct = 45 + int(50 * min(i + batch_size, total_edges) / max(total_edges, 1))
+        await _report(pct)
 
-    # Step 6: Create full-text search index
+    # Step 6: Create full-text search index (95-100%)
     logger.info("writer.create_fulltext_index")
     await store.query(FULLTEXT_INDEX_CYPHER)
+    await _report(100)
 
     duration = time.monotonic() - start
     logger.info(

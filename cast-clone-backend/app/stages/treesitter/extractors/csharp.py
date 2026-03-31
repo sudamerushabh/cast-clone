@@ -1027,33 +1027,57 @@ class CSharpExtractor:
         edges: list[GraphEdge],
     ) -> None:
         """Extract method invocations and object creations from a method body."""
+        seen_targets: set[str] = set()
+
         # Method invocations
         for _idx, captures in _query_matches(Q_INVOCATION, body):
             func_node = captures["func"][0]
             call_node = captures["call"][0]
 
-            callee_name = self._resolve_callee_name(func_node, source)
-            if callee_name:
-                target_fqn = callee_name
+            callee_name = self._resolve_callee_name(
+                func_node, source
+            )
+            if not callee_name:
+                continue
+            target_fqn = callee_name
 
-                edges.append(
-                    GraphEdge(
-                        source_fqn=caller_fqn,
-                        target_fqn=target_fqn,
-                        kind=EdgeKind.CALLS,
-                        confidence=Confidence.LOW,
-                        evidence="tree-sitter",
-                        properties={"line": call_node.start_point[0] + 1},
-                    )
+            # Deduplicate within the same method
+            dedup_key = target_fqn
+            if dedup_key in seen_targets:
+                continue
+            seen_targets.add(dedup_key)
+
+            edges.append(
+                GraphEdge(
+                    source_fqn=caller_fqn,
+                    target_fqn=target_fqn,
+                    kind=EdgeKind.CALLS,
+                    confidence=Confidence.LOW,
+                    evidence="tree-sitter",
+                    properties={
+                        "line": call_node.start_point[0] + 1,
+                    },
                 )
+            )
 
         # Object creation: `new Foo()`
+        # Try to resolve the type using usings + namespace
         for _idx, captures in _query_matches(Q_OBJECT_CREATION, body):
             type_node = captures["type"][0]
             creation_node = captures["creation"][0]
             type_name = _node_text(type_node, source)
             bare_type = type_name.split("<")[0]
-            target_fqn = f"{bare_type}.{bare_type}"
+
+            # Try to resolve to a fully-qualified constructor
+            resolved = self._resolve_new_type(
+                bare_type, namespace
+            )
+            target_fqn = f"{resolved}.{bare_type}"
+
+            dedup_key = target_fqn
+            if dedup_key in seen_targets:
+                continue
+            seen_targets.add(dedup_key)
 
             edges.append(
                 GraphEdge(
@@ -1165,13 +1189,16 @@ class CSharpExtractor:
         Handles:
         - Simple: ``DoSomething()``            -> "DoSomething"
         - Member access: ``_repo.FindById()``  -> "_repo.FindById"
-        - Chained: ``a.b.c()``                 -> "a.b.c"
+        - Chained: ``a.Query().Where()``       -> "Query.Where" (not full chain)
+        - Static: ``CsvConverter.Export()``     -> "CsvConverter.Export"
         - Await: ``await _repo.FindById()``    -> "_repo.FindById"
         """
         if func_node.type == "identifier":
             return _node_text(func_node, source)
         elif func_node.type == "member_access_expression":
-            return _node_text(func_node, source)
+            return self._decompose_member_access(
+                func_node, source
+            )
         elif func_node.type == "generic_name":
             name = func_node.child_by_field_name("name")
             if name:
@@ -1180,6 +1207,78 @@ class CSharpExtractor:
         elif func_node.type == "member_binding_expression":
             return _node_text(func_node, source)
         return None
+
+    def _decompose_member_access(
+        self, node: Node, source: bytes
+    ) -> str | None:
+        """Decompose a member_access_expression into receiver.method.
+
+        For simple access like ``_repo.FindById``, returns as-is.
+        For chained calls like ``_repo.Query().Include().Where``,
+        returns only ``Include.Where`` (the last two parts) instead
+        of dumping the entire multi-line LINQ chain.
+        """
+        name_child = node.child_by_field_name("name")
+        expr_child = node.child_by_field_name("expression")
+        if not name_child:
+            return None
+        method_name = _node_text(name_child, source)
+
+        if expr_child is None:
+            return method_name
+
+        # Simple: _repo.Method or CsvConverter.Export
+        if expr_child.type == "identifier":
+            receiver = _node_text(expr_child, source)
+            return f"{receiver}.{method_name}"
+
+        # Nested member access without invocation: a.b.Method
+        if expr_child.type == "member_access_expression":
+            inner = expr_child.child_by_field_name("name")
+            inner_expr = expr_child.child_by_field_name(
+                "expression"
+            )
+            # If the inner expression is a simple identifier:
+            # e.g. x.Customer.FullName -> Customer.FullName
+            if inner and inner_expr:
+                if inner_expr.type == "identifier":
+                    recv = _node_text(inner_expr, source)
+                    mid = _node_text(inner, source)
+                    return f"{recv}.{mid}.{method_name}"
+            if inner:
+                return (
+                    f"{_node_text(inner, source)}.{method_name}"
+                )
+            return method_name
+
+        # Chained invocation: prev().Method (LINQ chain)
+        # Only keep the method name — the receiver is the
+        # result of a previous call, not a named type.
+        if expr_child.type == "invocation_expression":
+            return None
+
+        # Fallback: keep short, single-line results only
+        text = _node_text(node, source)
+        if "\n" in text or len(text) > 100:
+            return None
+        return text
+
+    @staticmethod
+    def _resolve_new_type(
+        bare_type: str,
+        namespace: str,
+    ) -> str:
+        """Best-effort FQN prefix for a type in a ``new`` expression.
+
+        Returns bare type name so the global resolver in parser.py
+        can match it against ALL known classes (not just same-namespace).
+        For ``new OrderDetailGot()``, returns ``OrderDetailGot`` so
+        the target becomes ``OrderDetailGot.OrderDetailGot`` which
+        Strategy 0c in the resolver will match to the correct class.
+        """
+        if "." in bare_type:
+            return bare_type
+        return bare_type
 
     @staticmethod
     def _looks_like_interface(name: str) -> bool:

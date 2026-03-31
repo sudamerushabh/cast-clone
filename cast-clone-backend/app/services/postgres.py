@@ -36,6 +36,12 @@ async def close_postgres() -> None:
     _session_factory = None
 
 
+def get_engine() -> AsyncEngine:
+    """Return the current async engine. Must be called after init_postgres."""
+    assert _engine is not None, "PostgreSQL not initialized"
+    return _engine
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency that yields an async session."""
     assert _session_factory is not None, "PostgreSQL not initialized"

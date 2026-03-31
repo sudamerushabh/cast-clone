@@ -202,7 +202,57 @@ class TypeScriptExtractor:
         exports = self._extract_exports(tree.root_node)
         export_names = {e["name"] for e in exports if "name" in e}
 
-        # --- Module node ---
+        # --- Extract children first, create MODULE only if file has content ---
+        class_fqns: dict[str, str] = {}
+        self._extract_classes(
+            tree.root_node,
+            module_path,
+            file_path,
+            language,
+            export_names,
+            nodes,
+            edges,
+            class_fqns,
+            is_tsx,
+        )
+
+        self._extract_interfaces(
+            tree.root_node,
+            module_path,
+            file_path,
+            language,
+            export_names,
+            nodes,
+        )
+
+        self._extract_functions(
+            tree.root_node,
+            module_path,
+            file_path,
+            language,
+            export_names,
+            nodes,
+            edges,
+            is_tsx,
+        )
+
+        self._extract_arrow_functions(
+            tree.root_node,
+            module_path,
+            file_path,
+            language,
+            export_names,
+            nodes,
+            edges,
+            is_tsx,
+        )
+
+        # --- Create MODULE node only if the file produced children ---
+        # Files with zero extracted declarations (e.g. AngularJS scripts
+        # with only angular.module() calls) don't get a MODULE node.
+        if not nodes:
+            return nodes, edges
+
         module_node = GraphNode(
             fqn=module_path,
             name=module_name,
@@ -224,54 +274,6 @@ class TypeScriptExtractor:
             },
         )
         nodes.append(module_node)
-
-        # --- Classes ---
-        class_fqns: dict[str, str] = {}
-        self._extract_classes(
-            tree.root_node,
-            module_path,
-            file_path,
-            language,
-            export_names,
-            nodes,
-            edges,
-            class_fqns,
-            is_tsx,
-        )
-
-        # --- Interfaces ---
-        self._extract_interfaces(
-            tree.root_node,
-            module_path,
-            file_path,
-            language,
-            export_names,
-            nodes,
-        )
-
-        # --- Top-level functions ---
-        self._extract_functions(
-            tree.root_node,
-            module_path,
-            file_path,
-            language,
-            export_names,
-            nodes,
-            edges,
-            is_tsx,
-        )
-
-        # --- Top-level arrow functions ---
-        self._extract_arrow_functions(
-            tree.root_node,
-            module_path,
-            file_path,
-            language,
-            export_names,
-            nodes,
-            edges,
-            is_tsx,
-        )
 
         # --- CONTAINS edges from module to top-level declarations ---
         for n in nodes:

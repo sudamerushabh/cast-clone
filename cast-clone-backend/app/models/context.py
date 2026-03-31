@@ -62,3 +62,6 @@ class AnalysisContext:
 
     # Warnings from non-fatal stage failures
     warnings: list[str] = field(default_factory=list)
+
+    # Progress callback — set by pipeline to persist stage_progress to DB
+    report_progress: Any = None  # async (int) -> None

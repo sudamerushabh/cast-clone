@@ -142,3 +142,21 @@ class ArchitectureResponse(BaseModel):
     frameworks: list[str] = Field(default_factory=list)
     layers: list[ArchitectureLayerResponse] = Field(default_factory=list)
     links: list[ArchitectureLinkResponse] = Field(default_factory=list)
+
+
+# ── Node Ancestry schemas ──────────────────────────────────────────────────
+
+
+class NodeAncestorResponse(BaseModel):
+    """A single ancestor in the containment path."""
+
+    fqn: str
+    name: str
+    kind: str
+
+
+class NodeAncestryResponse(BaseModel):
+    """The full containment path from root to a target node."""
+
+    fqn: str
+    ancestors: list[NodeAncestorResponse]

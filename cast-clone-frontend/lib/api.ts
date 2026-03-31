@@ -26,6 +26,7 @@ import type {
   MethodListResponse,
   MetricsResponse,
   ModuleListResponse,
+  NodeAncestryResponse,
   NodeDetailResponse,
   NodeWithNeighborsResponse,
   PathFinderResponse,
@@ -199,6 +200,15 @@ export async function searchGraph(
 ): Promise<GraphSearchResponse> {
   return apiFetch<GraphSearchResponse>(
     `/api/v1/graphs/${projectId}/search?q=${encodeURIComponent(query)}`,
+  );
+}
+
+export async function getNodeAncestry(
+  projectId: string,
+  fqn: string,
+): Promise<NodeAncestryResponse> {
+  return apiFetch<NodeAncestryResponse>(
+    `/api/v1/graph-views/${projectId}/ancestry/${encodeURIComponent(fqn)}`,
   );
 }
 
@@ -812,6 +822,7 @@ export interface EnableWebhooksResponse {
   platform: string;
   monitored_branches: string[] | null;
   is_active: boolean;
+  post_pr_comments: boolean;
   auto_registered: boolean;
   auto_register_error: string | null;
 }
@@ -822,6 +833,7 @@ export async function enableWebhooks(
     monitorAll?: boolean;
     monitoredBranches?: string[];
     autoRegister?: boolean;
+    postPrComments?: boolean;
   } = {},
 ): Promise<EnableWebhooksResponse> {
   return apiFetch<EnableWebhooksResponse>(
@@ -832,7 +844,21 @@ export async function enableWebhooks(
         monitor_all_branches: opts.monitorAll ?? true,
         monitored_branches: opts.monitoredBranches ?? null,
         auto_register: opts.autoRegister ?? false,
+        post_pr_comments: opts.postPrComments ?? false,
       }),
+    },
+  );
+}
+
+export async function updateGitConfig(
+  repoId: string,
+  updates: { post_pr_comments?: boolean },
+): Promise<GitConfig> {
+  return apiFetch<GitConfig>(
+    `/api/v1/repositories/${repoId}/git-config`,
+    {
+      method: "PUT",
+      body: JSON.stringify(updates),
     },
   );
 }

@@ -6,6 +6,7 @@ import {
   enableWebhooks,
   disableWebhooks,
   fetchGitConfig,
+  updateGitConfig,
   type EnableWebhooksResponse,
 } from "@/lib/api";
 import type { GitConfig } from "@/lib/types";
@@ -25,6 +26,7 @@ export function WebhookSetup({ repoId, defaultBranch }: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [monitorAll, setMonitorAll] = useState(true);
   const [branches, setBranches] = useState(defaultBranch);
+  const [postPrComments, setPostPrComments] = useState(false);
   const [enabling, setEnabling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalData, setModalData] = useState<EnableWebhooksResponse | null>(null);
@@ -51,6 +53,7 @@ export function WebhookSetup({ repoId, defaultBranch }: Props) {
       const data = await enableWebhooks(repoId, {
         monitorAll,
         monitoredBranches,
+        postPrComments,
       });
       setModalData(data);
       // Reload config in background so UI updates after modal closes
@@ -140,6 +143,22 @@ export function WebhookSetup({ repoId, defaultBranch }: Props) {
                 )}
               </div>
 
+              {/* PR comment toggle */}
+              <div className="mt-3">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={postPrComments}
+                    onChange={(e) => setPostPrComments(e.target.checked)}
+                    className="accent-blue-600"
+                  />
+                  Post analysis comment on PR
+                </label>
+                <p className="text-xs text-gray-400 mt-1 ml-5">
+                  Automatically post architecture impact summary as a comment on each analyzed PR.
+                </p>
+              </div>
+
               <div className="mt-3">
                 <button
                   onClick={handleEnable}
@@ -174,6 +193,24 @@ export function WebhookSetup({ repoId, defaultBranch }: Props) {
                   ? `Branches: ${state.config.monitored_branches.join(", ")}`
                   : "All branches"}
               </span>
+              <span className="text-gray-400">|</span>
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={state.config.post_pr_comments}
+                  onChange={async (e) => {
+                    const newVal = e.target.checked;
+                    try {
+                      const updated = await updateGitConfig(repoId, { post_pr_comments: newVal });
+                      setState({ kind: "configured", config: { ...state.config, post_pr_comments: updated.post_pr_comments } });
+                    } catch {
+                      // revert on failure
+                    }
+                  }}
+                  className="accent-blue-600"
+                />
+                <span className="text-gray-500">PR comments</span>
+              </label>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -188,6 +225,7 @@ export function WebhookSetup({ repoId, defaultBranch }: Props) {
                       platform: state.config.platform,
                       monitored_branches: state.config.monitored_branches,
                       is_active: state.config.is_active,
+                      post_pr_comments: state.config.post_pr_comments,
                       auto_registered: false,
                       auto_register_error: null,
                     });

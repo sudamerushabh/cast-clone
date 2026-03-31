@@ -249,6 +249,7 @@ class AnalysisRun(Base):
         String(50), default="pending"
     )  # pending | running | completed | failed
     stage: Mapped[str | None] = mapped_column(String(50))
+    stage_progress: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)

@@ -21,7 +21,7 @@ import {
   triggerAnalysis,
   getAnalysisStatus,
 } from "@/lib/api";
-import type { RepositoryResponse, ProjectBranchResponse, AnalysisStatusResponse } from "@/lib/types";
+import type { RepositoryResponse, ProjectBranchResponse, AnalysisStatusResponse, AnalysisStageStatus } from "@/lib/types";
 
 // ─── Status helpers ─────────────────────────────────────────────────────────
 
@@ -114,7 +114,7 @@ export default function BranchPage() {
     setTriggering(true);
     try {
       const resp = await triggerAnalysis(project.id);
-      setAnalysisStatus({ project_id: project.id, status: "analyzing", current_stage: null, started_at: null, completed_at: null });
+      setAnalysisStatus({ project_id: project.id, status: "analyzing", current_stage: null, stages: [], started_at: null, completed_at: null });
       setProject((prev) => prev ? { ...prev, status: "analyzing" } : prev);
       startPolling(project.id);
     } catch (err) {
@@ -186,23 +186,74 @@ export default function BranchPage() {
         </div>
       )}
 
-      {/* Analyzing progress */}
+      {/* Analyzing progress — stage stepper */}
       {isAnalyzing && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-sm">
               <Activity className="size-4 text-blue-500" />
               Analysis in progress
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {currentStage ? (
-                <>Current stage: <span className="font-medium text-foreground">{stageLabel(currentStage)}</span></>
-              ) : (
-                "Starting pipeline…"
-              )}
-            </p>
+            {analysisStatus?.stages && analysisStatus.stages.length > 0 ? (
+              <div className="space-y-0">
+                {analysisStatus.stages.map((stage, idx) => (
+                  <div key={stage.name} className="flex items-start gap-3 relative">
+                    {/* Vertical connector line */}
+                    {idx < analysisStatus.stages.length - 1 && (
+                      <div
+                        className={`absolute left-[11px] top-[24px] w-[2px] h-[calc(100%-8px)] ${
+                          stage.status === "completed"
+                            ? "bg-green-500/40"
+                            : "bg-border"
+                        }`}
+                      />
+                    )}
+                    {/* Stage icon */}
+                    <div className="relative z-10 mt-0.5 shrink-0">
+                      {stage.status === "completed" ? (
+                        <CheckCircle2 className="size-6 text-green-500" />
+                      ) : stage.status === "running" ? (
+                        <Loader2 className="size-6 text-blue-500 animate-spin" />
+                      ) : (
+                        <div className="size-6 rounded-full border-2 border-muted-foreground/30 bg-background" />
+                      )}
+                    </div>
+                    {/* Stage text */}
+                    <div className={`pb-4 min-w-0 ${stage.status === "pending" ? "opacity-40" : ""}`}>
+                      <p className={`text-sm font-medium leading-6 ${
+                        stage.status === "running" ? "text-blue-600 dark:text-blue-400" : ""
+                      }`}>
+                        {stage.label}
+                      </p>
+                      {stage.status === "running" && (
+                        <>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {stage.description}
+                          </p>
+                          {stage.progress != null && stage.progress > 0 && (
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-950">
+                                <div
+                                  className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+                                  style={{ width: `${stage.progress}%` }}
+                                />
+                              </div>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {stage.progress}%
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Starting pipeline…</p>
+            )}
           </CardContent>
         </Card>
       )}

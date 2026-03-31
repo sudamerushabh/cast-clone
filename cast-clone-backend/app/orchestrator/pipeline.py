@@ -123,7 +123,9 @@ async def _stage_writing(context: AnalysisContext, services: PipelineServices) -
     """Stage 8: Write graph to Neo4j."""
     from app.stages.writer import write_to_neo4j
 
-    await write_to_neo4j(context, services.graph_store)
+    await write_to_neo4j(
+        context, services.graph_store, on_progress=context.report_progress
+    )
 
 
 async def _stage_transactions(
@@ -273,12 +275,25 @@ async def run_analysis_pipeline(
         # Initialize context
         context = AnalysisContext(project_id=project_id)
 
+        # Progress callback for stages that support it (e.g. writer)
+        async def _on_progress(pct: int) -> None:
+            run.stage_progress = pct
+            await session.commit()
+
+        context.report_progress = _on_progress
+
         # Run each stage
         for stage_def in PIPELINE_STAGES:
             stage_func = _STAGE_FUNCS[stage_def.name]
             stage_start = time.monotonic()
 
             try:
+                # Persist current stage BEFORE running so the polling
+                # status API can report it immediately.
+                run.stage = stage_def.name
+                run.stage_progress = None
+                await session.commit()
+
                 await ws.emit(stage_def.name, "running", stage_def.description)
                 logger.info(
                     "pipeline.stage.start",
@@ -300,9 +315,6 @@ async def run_analysis_pipeline(
                     stage=stage_def.name,
                     duration=round(elapsed, 2),
                 )
-
-                # Track current stage in run record
-                run.stage = stage_def.name
 
             except Exception as e:
                 elapsed = time.monotonic() - stage_start

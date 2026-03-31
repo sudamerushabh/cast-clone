@@ -34,16 +34,17 @@ export interface AnalysisTriggerResponse {
 
 export interface AnalysisStageStatus {
   name: string;
-  status: "pending" | "running" | "completed" | "failed";
-  duration_ms?: number;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  description: string;
+  progress?: number | null; // 0-100, only set for running stage
 }
 
 export interface AnalysisStatusResponse {
   project_id: string;
   status: string;
   current_stage: string | null;
-  progress?: number;
-  stages?: AnalysisStageStatus[];
+  stages: AnalysisStageStatus[];
   error?: string;
   started_at: string | null;
   completed_at: string | null;
@@ -107,6 +108,19 @@ export interface GraphSearchResponse {
   query: string;
   hits: GraphSearchHit[];
   total: number;
+}
+
+// ─── Node Ancestry types ─────────────────────────────────────────────────────
+
+export interface NodeAncestor {
+  fqn: string;
+  name: string;
+  kind: string;
+}
+
+export interface NodeAncestryResponse {
+  fqn: string;
+  ancestors: NodeAncestor[];
 }
 
 // ─── Phase 2 M1: Module / Drill-down types ──────────────────────────────────
@@ -655,6 +669,7 @@ export interface GitConfig {
   repo_url: string;
   monitored_branches: string[] | null;
   is_active: boolean;
+  post_pr_comments: boolean;
   created_at: string;
   updated_at: string;
 }

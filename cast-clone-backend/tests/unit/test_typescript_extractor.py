@@ -610,3 +610,29 @@ export class UserService {
         )
         # 1 module + 1 class + 4 methods = 6 minimum
         assert len(nodes) >= 6
+
+
+class TestEmptyFileSkipsModule:
+    """Files with no extractable content should not create MODULE nodes."""
+
+    def test_empty_js_file(self, extractor: TypeScriptExtractor):
+        source = b"// just a comment\n"
+        nodes, edges = extractor.extract(source, "src/empty.js", "/project")
+        assert len(nodes) == 0
+        assert len(edges) == 0
+
+    def test_imports_only_file(self, extractor: TypeScriptExtractor):
+        source = b"import { foo } from './bar';\n"
+        nodes, edges = extractor.extract(source, "src/reexport.ts", "/project")
+        module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
+        assert len(module_nodes) == 0
+
+    def test_angularjs_module_no_classes(self, extractor: TypeScriptExtractor):
+        source = b"""
+angular.module('app.catalog', [])
+    .controller('ProductCtrl', function($scope) { $scope.name = 'test'; })
+    .service('ProductService', function($http) { this.get = function() {}; });
+"""
+        nodes, edges = extractor.extract(source, "src/catalog.module.js", "/project")
+        module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
+        assert len(module_nodes) == 0

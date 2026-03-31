@@ -84,7 +84,7 @@ services:
       AUTH_DISABLED: "true"
       LOG_LEVEL: "info"
     volumes:
-      - repo_storage:/home/ubuntu/repos
+      - /home/ubuntu/repos:/home/ubuntu/repos
     depends_on:
       postgres:
         condition: service_healthy
@@ -136,4 +136,3 @@ volumes:
   neo4j_data:
   redis_data:
   minio_data:
-  repo_storage:

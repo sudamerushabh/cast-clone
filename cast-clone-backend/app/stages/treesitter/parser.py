@@ -120,10 +120,55 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
                     edge.target_fqn
                 )
 
+    # Field name -> type name lookup per class (for dotted target resolution)
+    # e.g. class_fqn -> {"_workContext": "IWorkContext", "_repo": "IRepository"}
+    class_field_types: dict[str, dict[str, str]] = {}
+    for fqn, node in fqn_index.items():
+        if node.kind == NodeKind.FIELD:
+            parent_class = containment.get(fqn)
+            if parent_class:
+                field_type = node.properties.get("type", "")
+                if field_type:
+                    # Strip generics: IRepository<Order> -> IRepository
+                    bare_type = field_type.split("<")[0].strip()
+                    fields = class_field_types.setdefault(
+                        parent_class, {}
+                    )
+                    fields[node.name] = bare_type
+
+    # Per-class usings index (C# using directives stored in class properties)
+    class_usings: dict[str, list[str]] = {}
+    for fqn, node in fqn_index.items():
+        if node.kind == NodeKind.CLASS:
+            usings = node.properties.get("usings", [])
+            if usings:
+                class_usings[fqn] = usings
+
     def _get_package(fqn: str) -> str:
         """Extract the package prefix from a fully-qualified name."""
         parts = fqn.rsplit(".", 1)
         return parts[0] if len(parts) > 1 else ""
+
+    def _resolve_type_name(type_name: str, caller_class: str | None) -> str | None:
+        """Resolve a short type name to a FQN using usings and short_name_index."""
+        # Try usings first
+        if caller_class and caller_class in class_usings:
+            for using_ns in class_usings[caller_class]:
+                candidate = f"{using_ns}.{type_name}"
+                if candidate in fqn_index:
+                    return candidate
+        # Try same namespace
+        if caller_class:
+            caller_ns = _get_package(caller_class)
+            if caller_ns:
+                candidate = f"{caller_ns}.{type_name}"
+                if candidate in fqn_index:
+                    return candidate
+        # Unique global match
+        candidates = short_name_index.get(type_name, [])
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
     for i, edge in enumerate(graph.edges):
         # Only resolve LOW-confidence CALLS with unresolved targets
@@ -142,7 +187,16 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
 
         # Strategy 0: Dotted target resolution (e.g. "UserRepository.save")
         if "." in target_short:
+            # Split only on the LAST dot to handle chained calls
             receiver_part, method_part = target_short.rsplit(".", 1)
+            # Also try splitting on first dot for field-based calls like _repo.FindById
+            first_dot = receiver_part.find(".")
+            if first_dot != -1:
+                first_receiver = receiver_part[:first_dot]
+            else:
+                first_receiver = receiver_part
+
+            # 0a: Direct class name match (existing logic)
             receiver_candidates = short_name_index.get(receiver_part, [])
             for rc in receiver_candidates:
                 rc_node = fqn_index.get(rc)
@@ -151,8 +205,61 @@ def _resolve_symbols(graph: SymbolGraph) -> None:
                     if candidate in fqn_index:
                         resolved_fqn = candidate
                         break
+
+            # 0b: Field-type-based resolution (new for C#)
+            # If receiver_part is a field name like "_workContext",
+            # look up its type
+            if resolved_fqn is None and caller_class:
+                field_types = class_field_types.get(
+                    caller_class, {}
+                )
+                field_type = field_types.get(first_receiver)
+                if field_type:
+                    type_fqn = _resolve_type_name(
+                        field_type, caller_class
+                    )
+                    if type_fqn:
+                        candidate = f"{type_fqn}.{method_part}"
+                        if candidate in fqn_index:
+                            resolved_fqn = candidate
+
+            # 0c: Implicit constructor resolution
+            # For `new Foo()` the extractor produces `Foo.Foo`.
+            # If class Foo exists but has no explicit constructor,
+            # resolve to the class itself (not the missing ctor).
+            if resolved_fqn is None and method_part == receiver_part:
+                # This looks like a constructor call
+                candidates = short_name_index.get(
+                    receiver_part, []
+                )
+                for rc in candidates:
+                    rc_node = fqn_index.get(rc)
+                    if rc_node and rc_node.kind in (
+                        NodeKind.CLASS,
+                        NodeKind.INTERFACE,
+                    ):
+                        # Class exists — use the class FQN as
+                        # target even though no ctor node exists
+                        resolved_fqn = rc
+                        break
+
+            # 0d: Using-based class resolution for dotted targets
+            # For targets like `Type.Method` where Type isn't a
+            # known class, try resolving via usings
+            if resolved_fqn is None and caller_class:
+                type_fqn = _resolve_type_name(
+                    receiver_part, caller_class
+                )
+                if type_fqn:
+                    candidate = f"{type_fqn}.{method_part}"
+                    if candidate in fqn_index:
+                        resolved_fqn = candidate
+                    elif method_part == receiver_part:
+                        # Constructor of resolved type
+                        resolved_fqn = type_fqn
+
             if resolved_fqn is None:
-                continue  # existing strategies can't handle dotted targets
+                continue  # can't resolve dotted targets further
 
         # Strategy 1: Import-based resolution
         if caller_class and caller_class in import_index:

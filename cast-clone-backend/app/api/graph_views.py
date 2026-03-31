@@ -25,6 +25,8 @@ from app.schemas.graph_views import (
     MethodListResponse,
     ModuleListResponse,
     ModuleResponse,
+    NodeAncestorResponse,
+    NodeAncestryResponse,
     TechnologyNodeResponse,
     TransactionDetailResponse,
     TransactionListResponse,
@@ -614,3 +616,59 @@ async def get_code(
         highlight_line=line,
         total_lines=total_lines,
     )
+
+
+# ── Endpoint 9: Node Ancestry ─────────────────────────────────────────────
+
+
+@router.get(
+    "/{project_id}/ancestry/{fqn:path}",
+    response_model=NodeAncestryResponse,
+)
+async def get_node_ancestry(project_id: str, fqn: str) -> NodeAncestryResponse:
+    """Return the containment path from the root module down to a node.
+
+    This is used by the graph search to know which modules/classes to
+    drill into in order to reveal a search result in the graph.
+    """
+    store = get_graph_store()
+
+    # Walk up CONTAINS edges to find ancestor chain
+    cypher = (
+        "MATCH path = (ancestor)-[:CONTAINS*]->(n {fqn: $fqn, app_name: $app_name}) "
+        "WHERE ancestor.app_name = $app_name AND NOT ()-[:CONTAINS]->(ancestor) "
+        "RETURN [node IN nodes(path) | {fqn: node.fqn, name: node.name, kind: node.kind}] AS chain "
+        "LIMIT 1"
+    )
+    result = await store.query_single(cypher, {"fqn": fqn, "app_name": project_id})
+
+    if result is None:
+        # Node exists but has no parent — it might be a top-level module itself
+        node_result = await store.query_single(
+            "MATCH (n {fqn: $fqn, app_name: $app_name}) "
+            "RETURN n.fqn AS fqn, n.name AS name, n.kind AS kind",
+            {"fqn": fqn, "app_name": project_id},
+        )
+        if node_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Node {fqn} not found in project {project_id}",
+            )
+        return NodeAncestryResponse(
+            fqn=fqn,
+            ancestors=[
+                NodeAncestorResponse(
+                    fqn=node_result["fqn"],
+                    name=node_result["name"],
+                    kind=node_result["kind"],
+                )
+            ],
+        )
+
+    chain = result["chain"]
+    ancestors = [
+        NodeAncestorResponse(fqn=item["fqn"], name=item["name"], kind=item["kind"])
+        for item in chain
+    ]
+
+    return NodeAncestryResponse(fqn=fqn, ancestors=ancestors)

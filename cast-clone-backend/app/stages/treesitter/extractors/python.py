@@ -148,19 +148,7 @@ class PythonExtractor:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
 
-        # MODULE node for the file itself
-        nodes.append(
-            GraphNode(
-                fqn=module_fqn,
-                name=module_name,
-                kind=NodeKind.MODULE,
-                language="python",
-                path=file_path,
-                line=1,
-            )
-        )
-
-        # Extract each category
+        # Extract children first — MODULE is only created if the file has content
         self._extract_imports(tree, source, module_fqn, nodes, edges)
         self._extract_classes(tree, source, file_path, module_fqn, nodes, edges)
         self._extract_module_functions(
@@ -168,6 +156,24 @@ class PythonExtractor:
         )
         self._extract_call_edges(tree, source, module_fqn, nodes, edges)
         self._extract_sql_strings(tree, source, module_fqn, nodes, edges)
+
+        # Only create MODULE node if the file produced at least one child
+        # (class, function, or other declaration).  Empty __init__.py files
+        # and config-only files don't need MODULE nodes.
+        has_children = any(
+            n.kind in (NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.FUNCTION)
+            for n in nodes
+        )
+        if has_children:
+            module_node = GraphNode(
+                fqn=module_fqn,
+                name=module_name,
+                kind=NodeKind.MODULE,
+                language="python",
+                path=file_path,
+                line=1,
+            )
+            nodes.append(module_node)
 
         logger.debug(
             "python_extract_done",

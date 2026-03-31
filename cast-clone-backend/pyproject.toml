@@ -28,6 +28,8 @@ dependencies = [
     "python-multipart>=0.0.22",
     "anthropic[bedrock]>=0.40",
     "mcp[cli]>=1.25,<2",
+    "alembic>=1.18.4",
+    "psycopg2-binary>=2.9.11",
 ]
 
 [dependency-groups]
@@ -38,6 +40,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "httpx",
     "testcontainers>=4.14.1",
+    "respx>=0.22.0",
 ]
 
 [tool.pytest.ini_options]

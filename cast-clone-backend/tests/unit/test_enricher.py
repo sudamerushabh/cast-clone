@@ -13,6 +13,7 @@ from app.stages.enricher import (
     compute_fan_metrics,
     create_technology_nodes,
     enrich_graph,
+    prune_orphan_modules,
     resolve_virtual_dispatch,
 )
 
@@ -891,3 +892,84 @@ class TestVirtualDispatch:
         assert len(dispatch) == 1
         assert dispatch[0].source_fqn == "com.UserService.createUser"
         assert dispatch[0].target_fqn == "com.UserServiceImpl.createUser"
+
+
+# ── Step 0: Prune Orphan Modules ───────────────────────────
+
+
+class TestPruneOrphanModules:
+    """Test that MODULE nodes with no CONTAINS children are removed."""
+
+    def test_orphan_module_removed(self):
+        """A MODULE with no CONTAINS edges should be pruned."""
+        g = SymbolGraph()
+        g.add_node(GraphNode(fqn="orphan-mod", name="orphan", kind=NodeKind.MODULE))
+        assert "orphan-mod" in g.nodes
+
+        pruned = prune_orphan_modules(g)
+        assert pruned == 1
+        assert "orphan-mod" not in g.nodes
+
+    def test_module_with_children_kept(self):
+        """A MODULE with CONTAINS edges should NOT be pruned."""
+        g = SymbolGraph()
+        g.add_node(GraphNode(fqn="com.models", name="models", kind=NodeKind.MODULE))
+        g.add_node(GraphNode(fqn="com.models.User", name="User", kind=NodeKind.CLASS))
+        g.add_edge(GraphEdge(
+            source_fqn="com.models",
+            target_fqn="com.models.User",
+            kind=EdgeKind.CONTAINS,
+        ))
+
+        pruned = prune_orphan_modules(g)
+        assert pruned == 0
+        assert "com.models" in g.nodes
+
+    def test_mixed_orphan_and_healthy(self):
+        """Only orphan modules are removed; healthy ones stay."""
+        g = SymbolGraph()
+        # Healthy module
+        g.add_node(GraphNode(fqn="pkg.core", name="core", kind=NodeKind.MODULE))
+        g.add_node(GraphNode(fqn="pkg.core.Svc", name="Svc", kind=NodeKind.CLASS))
+        g.add_edge(GraphEdge(
+            source_fqn="pkg.core",
+            target_fqn="pkg.core.Svc",
+            kind=EdgeKind.CONTAINS,
+        ))
+        # Orphan module
+        g.add_node(GraphNode(fqn="empty-mod", name="empty", kind=NodeKind.MODULE))
+
+        pruned = prune_orphan_modules(g)
+        assert pruned == 1
+        assert "pkg.core" in g.nodes
+        assert "empty-mod" not in g.nodes
+
+    def test_edges_referencing_orphans_removed(self):
+        """Edges pointing to/from orphan modules should also be removed."""
+        g = SymbolGraph()
+        g.add_node(GraphNode(fqn="orphan", name="orphan", kind=NodeKind.MODULE))
+        g.add_node(GraphNode(fqn="other", name="other", kind=NodeKind.MODULE))
+        g.add_node(GraphNode(fqn="other.Cls", name="Cls", kind=NodeKind.CLASS))
+        g.add_edge(GraphEdge(
+            source_fqn="other",
+            target_fqn="other.Cls",
+            kind=EdgeKind.CONTAINS,
+        ))
+        # An IMPORTS edge from orphan -> other (should be removed)
+        g.add_edge(GraphEdge(
+            source_fqn="orphan",
+            target_fqn="other",
+            kind=EdgeKind.IMPORTS,
+        ))
+
+        pruned = prune_orphan_modules(g)
+        assert pruned == 1
+        # IMPORTS edge should be gone, CONTAINS should remain
+        assert len(g.edges) == 1
+        assert g.edges[0].kind == EdgeKind.CONTAINS
+
+    def test_no_modules_returns_zero(self):
+        """Graph with no MODULE nodes returns 0."""
+        g = SymbolGraph()
+        g.add_node(GraphNode(fqn="Cls", name="Cls", kind=NodeKind.CLASS))
+        assert prune_orphan_modules(g) == 0

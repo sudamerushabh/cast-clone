@@ -56,6 +56,16 @@ async def enrich_graph(context: AnalysisContext) -> None:
         edge_count=graph.edge_count,
     )
 
+    # Step 0: Prune orphan MODULE nodes (no CONTAINS edges to children)
+    try:
+        pruned = prune_orphan_modules(graph)
+        if pruned:
+            logger.info("enricher.prune_orphan_modules.done", pruned=pruned)
+    except Exception as exc:
+        msg = f"Orphan module pruning failed: {exc}"
+        context.warnings.append(msg)
+        logger.warning("enricher.prune_orphan_modules.failed", error=str(exc))
+
     # Step 1: Fan metrics
     try:
         compute_fan_metrics(graph)
@@ -64,6 +74,15 @@ async def enrich_graph(context: AnalysisContext) -> None:
         msg = f"Fan metrics computation failed: {exc}"
         context.warnings.append(msg)
         logger.warning("enricher.fan_metrics.failed", error=str(exc))
+
+    # Step 1b: Resolve using-based dependencies (C# / languages with usings)
+    try:
+        using_deps = resolve_using_based_dependencies(graph)
+        logger.info("enricher.using_deps.done", edges_created=using_deps)
+    except Exception as exc:
+        msg = f"Using-based dependency resolution failed: {exc}"
+        context.warnings.append(msg)
+        logger.warning("enricher.using_deps.failed", error=str(exc))
 
     # Step 2: Class-level DEPENDS_ON
     try:
@@ -124,6 +143,263 @@ async def enrich_graph(context: AnalysisContext) -> None:
         node_count=graph.node_count,
         edge_count=graph.edge_count,
     )
+
+
+# ── Step 0: Prune Orphan MODULE Nodes ──────────────────
+
+
+def prune_orphan_modules(graph: SymbolGraph) -> int:
+    """Remove MODULE nodes that have no CONTAINS edges to any child.
+
+    Extractors should only create MODULE nodes when a file has extractable
+    content, but as a safety net this step removes any that slipped through
+    (e.g. AngularJS scripts, empty ``__init__.py`` files).
+
+    Returns the number of MODULE nodes removed.
+    """
+    module_fqns = {
+        fqn for fqn, node in graph.nodes.items() if node.kind == NodeKind.MODULE
+    }
+
+    if not module_fqns:
+        return 0
+
+    # Collect modules that have at least one outgoing CONTAINS edge
+    modules_with_children: set[str] = set()
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CONTAINS and edge.source_fqn in module_fqns:
+            modules_with_children.add(edge.source_fqn)
+
+    orphans = module_fqns - modules_with_children
+    if not orphans:
+        return 0
+
+    # Remove orphan MODULE nodes from the graph
+    for fqn in orphans:
+        del graph.nodes[fqn]
+
+    # Remove any edges referencing orphan modules (e.g. IMPORTS edges
+    # created by the extractor pointing to/from the orphan)
+    graph.edges = [
+        e
+        for e in graph.edges
+        if e.source_fqn not in orphans and e.target_fqn not in orphans
+    ]
+    graph._index_dirty = True
+
+    return len(orphans)
+
+
+# ── Step 1b: Using-Based Dependency Resolution ──────────
+
+
+def resolve_using_based_dependencies(graph: SymbolGraph) -> int:
+    """Create class-level DEPENDS_ON from using directives + types.
+
+    For languages like C# where method CALLS targets are often unresolved
+    (e.g. ``_repo.FindById`` can't be traced to the declaring class without
+    semantic analysis), this step uses three complementary strategies:
+
+    1. **Constructor parameter types**: Resolve DI-injected types via usings.
+       If class A has constructor param ``IWorkContext workContext`` and a using
+       ``SimplCommerce.Module.Core.Extensions``, check if
+       ``SimplCommerce.Module.Core.Extensions.IWorkContext`` exists in the graph.
+
+    2. **Field types**: Same resolution for readonly fields (backing fields
+       for constructor injection).
+
+    3. **Base type resolution**: Improve INHERITS/IMPLEMENTS edge targets by
+       resolving bare type names through usings to full FQNs.
+
+    This runs BEFORE ``aggregate_class_depends_on()`` so its DEPENDS_ON edges
+    feed into module-level IMPORTS aggregation.
+
+    Returns the number of new DEPENDS_ON edges created.
+    """
+    # Build indexes
+    class_nodes: dict[str, GraphNode] = {}
+    interface_nodes: dict[str, GraphNode] = {}
+    for fqn, node in graph.nodes.items():
+        if node.kind == NodeKind.CLASS:
+            class_nodes[fqn] = node
+        elif node.kind == NodeKind.INTERFACE:
+            interface_nodes[fqn] = node
+
+    if not class_nodes:
+        return 0
+
+    # Short name -> list of FQNs (for classes and interfaces)
+    short_name_index: dict[str, list[str]] = {}
+    for fqn, node in graph.nodes.items():
+        if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
+            short_name_index.setdefault(node.name, []).append(fqn)
+
+    # Build method -> owning class lookup (for finding constructors)
+    method_to_class: dict[str, str] = {}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CONTAINS:
+            source_node = graph.get_node(edge.source_fqn)
+            target_node = graph.get_node(edge.target_fqn)
+            if (
+                source_node is not None
+                and source_node.kind == NodeKind.CLASS
+                and target_node is not None
+                and target_node.kind == NodeKind.FUNCTION
+            ):
+                method_to_class[edge.target_fqn] = edge.source_fqn
+
+    # Existing DEPENDS_ON pairs
+    existing_depends: set[tuple[str, str]] = set()
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.DEPENDS_ON:
+            existing_depends.add((edge.source_fqn, edge.target_fqn))
+
+    created = 0
+
+    # For each class, resolve dependencies from usings + type references
+    for class_fqn, class_node in class_nodes.items():
+        usings: list[str] = class_node.properties.get("usings", [])
+        if not usings:
+            continue
+
+        # Collect type names referenced by this class
+        referenced_types: set[str] = set()
+
+        # Strategy 1: Constructor parameter types
+        for func_fqn, owner_fqn in method_to_class.items():
+            if owner_fqn != class_fqn:
+                continue
+            func_node = graph.get_node(func_fqn)
+            if func_node is None:
+                continue
+            if not func_node.properties.get("is_constructor"):
+                continue
+            params = func_node.properties.get("parameters", [])
+            for param in params:
+                ptype = param.get("type", "")
+                # Strip generic wrapper: IRepository<Order> -> IRepository, Order
+                bare = ptype.split("<")[0].strip()
+                if bare:
+                    referenced_types.add(bare)
+                # Also extract generic args
+                lt = ptype.find("<")
+                gt = ptype.rfind(">")
+                if lt != -1 and gt != -1:
+                    inner = ptype[lt + 1 : gt]
+                    for part in inner.split(","):
+                        clean = part.strip().split("<")[0].strip()
+                        if clean:
+                            referenced_types.add(clean)
+
+        # Strategy 2: Field types
+        for edge in graph.edges:
+            if edge.kind == EdgeKind.CONTAINS and edge.source_fqn == class_fqn:
+                field_node = graph.get_node(edge.target_fqn)
+                if field_node is None or field_node.kind != NodeKind.FIELD:
+                    continue
+                field_type = field_node.properties.get("type", "")
+                if not field_type:
+                    continue
+                bare = field_type.split("<")[0].strip()
+                if bare:
+                    referenced_types.add(bare)
+                # Generic args
+                lt = field_type.find("<")
+                gt = field_type.rfind(">")
+                if lt != -1 and gt != -1:
+                    inner = field_type[lt + 1 : gt]
+                    for part in inner.split(","):
+                        clean = part.strip().split("<")[0].strip()
+                        if clean:
+                            referenced_types.add(clean)
+
+        # Strategy 3: Base class / implements types
+        base_class = class_node.properties.get("base_class")
+        if base_class:
+            referenced_types.add(base_class.split("<")[0])
+        implements = class_node.properties.get("implements", [])
+        for impl in implements:
+            referenced_types.add(impl.split("<")[0])
+
+        # Discard common framework types that aren't in our graph
+        referenced_types -= {
+            "string", "int", "long", "bool", "float", "double", "decimal",
+            "void", "object", "byte", "char", "short", "uint", "ulong",
+            "DateTime", "DateTimeOffset", "Guid", "Task", "IDisposable",
+            "IEnumerable", "IList", "ICollection", "IDictionary",
+            "List", "Dictionary", "HashSet", "CancellationToken",
+            "ILogger", "IOptions", "IConfiguration", "IServiceProvider",
+            "IMediator", "IMapper",
+        }
+
+        if not referenced_types:
+            continue
+
+        # Resolve type names to FQNs using usings
+        for type_name in referenced_types:
+            resolved_fqn = _resolve_type_via_usings(
+                type_name, usings, class_fqn, short_name_index, graph
+            )
+            if resolved_fqn is None:
+                continue
+            # Don't create self-dependency
+            if resolved_fqn == class_fqn:
+                continue
+            # Check if target is a class or interface
+            target = graph.get_node(resolved_fqn)
+            target_kinds = (NodeKind.CLASS, NodeKind.INTERFACE)
+            if target is None or target.kind not in target_kinds:
+                continue
+            if (class_fqn, resolved_fqn) not in existing_depends:
+                graph.add_edge(
+                    GraphEdge(
+                        source_fqn=class_fqn,
+                        target_fqn=resolved_fqn,
+                        kind=EdgeKind.DEPENDS_ON,
+                        confidence=Confidence.MEDIUM,
+                        evidence="using-resolution",
+                        properties={"weight": 1},
+                    )
+                )
+                existing_depends.add((class_fqn, resolved_fqn))
+                created += 1
+
+    return created
+
+
+def _resolve_type_via_usings(
+    type_name: str,
+    usings: list[str],
+    class_fqn: str,
+    short_name_index: dict[str, list[str]],
+    graph: SymbolGraph,
+) -> str | None:
+    """Resolve a short type name to a full FQN using using directives.
+
+    Tries these strategies in order:
+    1. Check each using namespace: ``{using}.{type_name}``
+    2. Same namespace as the caller class
+    3. Unique global match by short name
+    """
+    # Strategy 1: Using-based
+    for using_ns in usings:
+        candidate = f"{using_ns}.{type_name}"
+        if candidate in graph.nodes:
+            return candidate
+
+    # Strategy 2: Same namespace
+    caller_ns = class_fqn.rsplit(".", 1)[0] if "." in class_fqn else ""
+    if caller_ns:
+        candidate = f"{caller_ns}.{type_name}"
+        if candidate in graph.nodes:
+            return candidate
+
+    # Strategy 3: Unique global match
+    candidates = short_name_index.get(type_name, [])
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None
 
 
 # ── Step 1: Fan-In / Fan-Out Metrics ────────────────────
