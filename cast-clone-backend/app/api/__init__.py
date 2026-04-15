@@ -10,6 +10,7 @@ from app.api.api_keys import router as api_keys_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.connectors import router as connectors_router
+from app.api.email import router as email_router
 from app.api.export import router as export_router
 from app.api.git_config import router as git_config_router
 from app.api.graph import router as graph_router
@@ -31,6 +32,7 @@ from app.api.websocket import router as websocket_router
 __all__ = [
     "activity_router",
     "ai_usage_router",
+    "email_router",
     "api_keys_router",
     "annotations_project_router",
     "chat_router",
