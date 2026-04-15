@@ -30,6 +30,7 @@ dependencies = [
     "mcp[cli]>=1.25,<2",
     "alembic>=1.18.4",
     "psycopg2-binary>=2.9.11",
+    "pyjwt[crypto]>=2.12.1",
 ]
 
 [dependency-groups]
