@@ -114,17 +114,22 @@ def decode_and_verify(
     except jwt.ExpiredSignatureError:
         # Expiration does NOT raise here -- state machine will classify as
         # GRACE/BLOCKED. Re-decode without exp verification to retrieve claims.
-        claims = jwt.decode(
-            token,
-            public_key_pem,
-            algorithms=["EdDSA"],
-            audience=expected_aud,
-            issuer=ISSUER,
-            options={
-                "require": ["iss", "aud", "exp", "nbf", "iat", "jti", "sub"],
-                "verify_exp": False,
-            },
-        )
+        try:
+            claims = jwt.decode(
+                token,
+                public_key_pem,
+                algorithms=["EdDSA"],
+                audience=expected_aud,
+                issuer=ISSUER,
+                options={
+                    "require": ["iss", "aud", "exp", "nbf", "iat", "jti", "sub"],
+                    "verify_exp": False,
+                },
+            )
+        except jwt.PyJWTError as exc:
+            raise LicenseVerificationError(
+                f"license signature/format invalid: {exc}"
+            ) from exc
     except jwt.PyJWTError as exc:
         raise LicenseVerificationError(
             f"license signature/format invalid: {exc}"

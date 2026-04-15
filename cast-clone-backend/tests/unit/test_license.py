@@ -16,6 +16,7 @@ from app.services.license import (
     LicenseVerificationError,
     decode_and_verify,
     evaluate_state,
+    get_current_license,
     get_license_state,
     load_license,
 )
@@ -109,6 +110,15 @@ class TestDecodeAndVerify:
         token = _make_token(priv, aud="install-123")
         with pytest.raises(LicenseVerificationError):
             decode_and_verify(token, "", "install-123")
+
+    def test_expired_with_wrong_audience_rejected(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """Regression: expired + wrong aud must raise LicenseVerificationError."""
+        priv, pub = keypair
+        token = _make_token(priv, aud="install-123", exp_offset=-3600)
+        with pytest.raises(LicenseVerificationError):
+            decode_and_verify(token, pub, "install-WRONG")
 
     def test_wrong_issuer_rejected(self, keypair: tuple[str, str]) -> None:
         priv, pub = keypair
@@ -277,6 +287,21 @@ class TestLoadLicense:
 
 
 # -------- get_license_state --------
+
+
+class TestGetCurrentLicense:
+    def test_returns_none_when_no_cache(self) -> None:
+        license_module._current_license = None
+        assert get_current_license() is None
+
+    def test_returns_cached_license(self, keypair: tuple[str, str]) -> None:
+        priv, pub = keypair
+        token = _make_token(priv, aud="install-123")
+        info = decode_and_verify(token, pub, "install-123")
+        license_module._current_license = info
+        assert get_current_license() is not None
+        assert get_current_license() is info
+        license_module._current_license = None
 
 
 class TestGetLicenseState:
