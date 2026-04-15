@@ -303,6 +303,12 @@ async def run_analysis_pipeline(
 
                 await stage_func(context, services)
 
+                # Persist total_loc after discovery so license enforcement and email
+                # reporting have a single source of truth (CHAN-12).
+                if stage_def.name == "discovery" and context.manifest is not None:
+                    run.total_loc = context.manifest.total_loc
+                    await session.commit()
+
                 elapsed = time.monotonic() - stage_start
                 await ws.emit(
                     stage_def.name,
