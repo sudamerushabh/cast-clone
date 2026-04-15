@@ -23,6 +23,7 @@ from app.api import (
     graph_router,
     graph_views_router,
     health_router,
+    license_router,
     projects_router,
     pull_requests_router,
     repositories_router,
@@ -198,6 +199,7 @@ def create_app() -> FastAPI:
     application.include_router(annotations_router)
     application.include_router(auth_router)
     application.include_router(health_router)
+    application.include_router(license_router)
     application.include_router(projects_router)
     application.include_router(analysis_router)
     application.include_router(graph_router)

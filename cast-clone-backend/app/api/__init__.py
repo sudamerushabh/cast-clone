@@ -1,7 +1,7 @@
 """API router registry."""
 
-from app.api.ai_usage import router as ai_usage_router
 from app.api.activity import router as activity_router
+from app.api.ai_usage import router as ai_usage_router
 from app.api.analysis import router as analysis_router
 from app.api.analysis_views import router as analysis_views_router
 from app.api.annotations import annotation_router as annotations_router
@@ -15,6 +15,7 @@ from app.api.git_config import router as git_config_router
 from app.api.graph import router as graph_router
 from app.api.graph_views import router as graph_views_router
 from app.api.health import router as health_router
+from app.api.license import router as license_router
 from app.api.projects import router as projects_router
 from app.api.pull_requests import router as pull_requests_router
 from app.api.repositories import router as repositories_router
@@ -43,6 +44,7 @@ __all__ = [
     "graph_router",
     "graph_views_router",
     "health_router",
+    "license_router",
     "projects_router",
     "pull_requests_router",
     "repositories_router",
