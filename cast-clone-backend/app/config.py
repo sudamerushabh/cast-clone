@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     auth_disabled: bool = True  # Set AUTH_DISABLED=true to bypass auth (dev/testing)
     base_url: str = "http://localhost:3000"
 
+    # Licensing (CHAN-15)
+    license_file_path: str = "/app/license.jwt"
+    # PEM-encoded Ed25519 public key; empty => validation fails
+    license_public_key_v1: str = ""
+    # Set LICENSE_DISABLED=true to bypass license checks (dev)
+    license_disabled: bool = False
+
     # Repository storage
     repo_storage_path: str = "/home/ubuntu/repos"
     git_clone_timeout: int = 600
