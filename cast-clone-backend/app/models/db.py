@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -444,3 +445,78 @@ class AiUsageLog(Base):
         if "id" not in kwargs:
             kwargs["id"] = str(uuid4())
         super().__init__(**kwargs)
+
+
+class EmailConfig(Base):
+    """Singleton row holding SMTP + email-reporting configuration."""
+
+    __tablename__ = "email_config"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    singleton: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), unique=True, default=True
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    smtp_host: Mapped[str] = mapped_column(Text, server_default=text("''"), default="")
+    smtp_port: Mapped[int] = mapped_column(
+        Integer, server_default=text("587"), default=587
+    )
+    smtp_username: Mapped[str] = mapped_column(
+        Text, server_default=text("''"), default=""
+    )
+    smtp_password_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    smtp_use_tls: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True
+    )
+    from_address: Mapped[str] = mapped_column(
+        Text, server_default=text("''"), default=""
+    )
+    from_name: Mapped[str] = mapped_column(
+        Text, server_default=text("'ChangeSafe'"), default="ChangeSafe"
+    )
+    recipients: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), default=list
+    )
+    flentas_bcc_enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), default=False
+    )
+    cadence: Mapped[str] = mapped_column(
+        Text, server_default=text("'off'"), default="off"
+    )
+    cadence_day: Mapped[int] = mapped_column(
+        Integer, server_default=text("1"), default=1
+    )
+    cadence_hour_utc: Mapped[int] = mapped_column(
+        Integer, server_default=text("9"), default=9
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SentEmail(Base):
+    """Audit log + dedup record for every outgoing email."""
+
+    __tablename__ = "sent_email"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    trigger_type: Mapped[str] = mapped_column(Text, nullable=False)
+    license_jti: Mapped[str] = mapped_column(Text, nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    recipients: Mapped[list] = mapped_column(JSONB, nullable=False)
+    delivery_status: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
