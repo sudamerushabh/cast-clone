@@ -33,7 +33,10 @@ class SigningApiStack(cdk.Stack):
             "LicenseSigningKey",
             secret_name="changesafe/license-signing-key",
             description="Ed25519 private key (PEM) for license JWT signing",
-            secret_string_value=cdk.SecretValue.unsafe_plain_text(""),
+            # Auto-generate a placeholder; replace with actual Ed25519 PEM via CLI
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                password_length=32,
+            ),
         )
 
         # ------------------------------------------------------------------ #
