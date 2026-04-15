@@ -796,3 +796,42 @@ export interface LicenseStatusResponse {
 export interface InstallationIdResponse {
   installation_id: string;
 }
+
+// ─── Email config types ─────────────────────────────────────────────────────
+
+export interface EmailConfigResponse {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string; // "***" if stored, "" if not
+  smtp_use_tls: boolean;
+  from_address: string;
+  from_name: string;
+  recipients: string[];
+  flentas_bcc_enabled: boolean;
+  cadence: string; // "off" | "weekly" | "monthly"
+  cadence_day: number;
+  cadence_hour_utc: number;
+}
+
+export interface EmailConfigUpdateRequest {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_use_tls: boolean;
+  from_address: string;
+  from_name: string;
+  recipients: string[];
+  flentas_bcc_enabled: boolean;
+  cadence: string;
+  cadence_day: number;
+  cadence_hour_utc: number;
+}
+
+export interface TestSendResponse {
+  status: string;
+  error: string | null;
+}

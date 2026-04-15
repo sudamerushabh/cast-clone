@@ -16,6 +16,8 @@ import type {
   CreateProjectRequest,
   CreateRepositoryRequest,
   DeadCodeResponse,
+  EmailConfigResponse,
+  EmailConfigUpdateRequest,
   EvolutionTimelineResponse,
   GitConfig,
   GitConfigCreateResponse,
@@ -41,6 +43,7 @@ import type {
   RemoteRepoResponse,
   RepositoryListResponse,
   RepositoryResponse,
+  TestSendResponse,
   TransactionDetailResponse,
   TransactionListResponse,
   LoginResponse,
@@ -921,5 +924,25 @@ export async function uploadLicense(file: File): Promise<LicenseStatusResponse> 
   return apiFetch<LicenseStatusResponse>("/api/v1/license/upload", {
     method: "POST",
     body: formData,
+  });
+}
+
+// ── Email Config ──
+
+export async function getEmailConfig(): Promise<EmailConfigResponse> {
+  return apiFetch<EmailConfigResponse>("/api/v1/email/config");
+}
+
+export async function updateEmailConfig(data: EmailConfigUpdateRequest): Promise<EmailConfigResponse> {
+  return apiFetch<EmailConfigResponse>("/api/v1/email/config", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testSendEmail(to: string): Promise<TestSendResponse> {
+  return apiFetch<TestSendResponse>("/api/v1/email/test-send", {
+    method: "POST",
+    body: JSON.stringify({ to }),
   });
 }
