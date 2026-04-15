@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,6 +19,7 @@ from app.api import (
     auth_router,
     chat_router,
     connectors_router,
+    email_router,
     export_router,
     git_config_router,
     graph_router,
@@ -125,10 +127,36 @@ async def _license_state_refresher(app: FastAPI) -> None:
                     from_state=old_state.value,
                     to_state=new_state.value,
                 )
+                from app.services.license import (
+                    _notify_state_change,
+                    get_current_license,
+                )
+                lic = get_current_license()
+                await _notify_state_change(old_state, new_state, lic)
         except asyncio.CancelledError:
             break
         except Exception as exc:  # noqa: BLE001
             await logger.aerror("license.state_refresher_failed", error=str(exc))
+
+
+async def _run_scheduled_report_tick() -> None:
+    """Wrapper for email scheduled report tick with error handling."""
+    try:
+        from app.services.email import scheduled_report_tick
+
+        await scheduled_report_tick()
+    except Exception:
+        await logger.aexception("scheduler.scheduled_report_tick_failed")
+
+
+async def _run_expiry_reminder_tick() -> None:
+    """Wrapper for email expiry reminder tick with error handling."""
+    try:
+        from app.services.email import expiry_reminder_tick
+
+        await expiry_reminder_tick()
+    except Exception:
+        await logger.aexception("scheduler.expiry_reminder_tick_failed")
 
 
 @asynccontextmanager
@@ -155,15 +183,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.license_state = license_state
         refresher_task = asyncio.create_task(_license_state_refresher(app))
 
+        # Register email service as listener for license state transitions
+        from app.services.email import on_license_state_change
+        from app.services.license import register_state_change_listener
+        register_state_change_listener(on_license_state_change)
+
     await init_neo4j(settings)
     await init_redis(settings)
 
     # Clean up any analyses left in "running" state from a previous crash/restart
     await _cleanup_stale_analyses()
 
+    # APScheduler — email report + expiry reminder jobs
+    scheduler = AsyncIOScheduler()
+
+    # Hourly tick: check if now matches configured cadence for scheduled reports
+    scheduler.add_job(
+        _run_scheduled_report_tick,
+        "cron",
+        minute=0,  # top of every hour
+        id="email_scheduled_report",
+        replace_existing=True,
+    )
+
+    # Daily tick at 08:00 UTC: check for expiry reminders
+    scheduler.add_job(
+        _run_expiry_reminder_tick,
+        "cron",
+        hour=8,
+        minute=0,
+        id="email_expiry_reminder",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    await logger.ainfo(
+        "scheduler.started",
+        jobs=["email_scheduled_report", "email_expiry_reminder"],
+    )
+
     await logger.ainfo("All services initialized")
     yield
     # Shutdown
+    scheduler.shutdown(wait=False)
+    await logger.ainfo("scheduler.stopped")
     if refresher_task is not None:
         refresher_task.cancel()
         try:
@@ -221,6 +284,7 @@ def create_app() -> FastAPI:
     application.include_router(summary_router)
     application.include_router(api_keys_router)
     application.include_router(ai_usage_router)
+    application.include_router(email_router)
 
     return application
 

@@ -1,0 +1,62 @@
+{% if trigger_type == "scheduled" -%}
+ChangeSafe — Monthly LOC Usage Report
+================================================
+
+Here is your Lines of Code consumption summary for {{ month | default('this month') }}.
+
+{% elif trigger_type == "threshold_warn" -%}
+ChangeSafe — Warning: Approaching LOC Limit
+================================================
+
+Your organization has used {{ pct | default(0) }}% of the licensed LOC capacity.
+Consider upgrading your plan to avoid analysis disruptions.
+
+{% elif trigger_type == "threshold_grace" -%}
+ChangeSafe — Alert: LOC Limit Reached (Grace Period Active)
+================================================
+
+Your organization has reached its licensed LOC limit. A grace period is
+currently active, but new analyses may be restricted soon.
+
+{% elif trigger_type == "threshold_blocked" -%}
+ChangeSafe — Critical: Analyses Disabled
+================================================
+
+Your organization has exceeded its LOC limit and the grace period has ended.
+New analyses are disabled until you upgrade your plan or reduce LOC usage.
+
+{% elif trigger_type.startswith("expiry_") -%}
+ChangeSafe — License Expires in {{ expiry.days_remaining | default('?') }} Day{{ 's' if expiry.days_remaining | default(0) != 1 else '' }}
+================================================
+
+Your ChangeSafe license {% if expiry.at %}expires on {{ expiry.at.strftime('%Y-%m-%d') }}{% endif %}.
+Please renew to maintain uninterrupted access to code analysis.
+
+{% elif trigger_type == "test" -%}
+ChangeSafe — Test Email
+================================================
+
+This is a test email confirming that your ChangeSafe email
+notifications are configured correctly.
+
+{% endif -%}
+
+LOC Usage
+---------
+Used:    {{ loc.used | default(0) }} / {{ loc.limit | default(0) }} ({{ pct | default(0) }}%)
+Tier:    {{ tier.label | default('N/A') }}
+State:   {{ state | default('') }}
+{% if expiry.at -%}
+Expires: {{ expiry.at.strftime('%Y-%m-%d') }} ({{ expiry.days_remaining | default('?') }} days remaining)
+{% endif -%}
+
+Organization: {{ customer.organization | default('') }}
+Customer:     {{ customer.name | default('') }}
+Deployment:   {{ deployment_label | default('') }}
+
+{% if trigger_type in ['threshold_warn', 'threshold_grace', 'threshold_blocked'] or trigger_type.startswith('expiry_') -%}
+To upgrade or renew your license, contact: {{ renewal_contact | default('sales@flentas.com') }}
+
+{% endif -%}
+---
+This is an automated email from ChangeSafe. Please do not reply directly to this message.

@@ -76,6 +76,33 @@ class LicenseInfo(BaseModel):
 _current_license: LicenseInfo | None = None
 _load_lock = asyncio.Lock()
 
+# State-change listener registry
+_state_change_listeners: list = []
+
+
+def register_state_change_listener(
+    callback,  # async callable(old_state, new_state, license_info)
+) -> None:
+    """Register a callback to be invoked on license state transitions."""
+    _state_change_listeners.append(callback)
+
+
+async def _notify_state_change(
+    old_state: LicenseState,
+    new_state: LicenseState,
+    license_info: LicenseInfo | None,
+) -> None:
+    """Fire all registered state-change listeners. Errors are logged, not raised."""
+    for listener in _state_change_listeners:
+        try:
+            await listener(old_state, new_state, license_info)
+        except Exception:
+            await logger.aexception(
+                "license.state_change_listener_error",
+                old_state=old_state.value,
+                new_state=new_state.value,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Exceptions

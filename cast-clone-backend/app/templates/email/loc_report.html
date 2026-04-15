@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChangeSafe LOC Report</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#1e293b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;">
+    <tr>
+      <td align="center" style="padding:24px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#2563eb;padding:24px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="font-size:24px;font-weight:bold;color:#ffffff;letter-spacing:-0.5px;">
+                    ChangeSafe
+                  </td>
+                  <td align="right" style="font-size:13px;color:#bfdbfe;">
+                    {{ deployment_label | default('') }}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Trigger-specific banner -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              {% if trigger_type == "scheduled" %}
+              <h1 style="margin:0 0 8px 0;font-size:20px;color:#1e293b;">Monthly LOC Usage Report</h1>
+              <p style="margin:0;font-size:14px;color:#64748b;">
+                Here is your Lines of Code consumption summary for <strong>{{ month | default('this month') }}</strong>.
+              </p>
+              {% elif trigger_type == "threshold_warn" %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#fefce8;border-left:4px solid #f59e0b;padding:16px;border-radius:4px;">
+                    <strong style="color:#92400e;font-size:16px;">Warning: Approaching LOC Limit</strong>
+                    <p style="margin:8px 0 0 0;font-size:14px;color:#78350f;">
+                      Your organization has used <strong>{{ pct | default(0) }}%</strong> of the licensed LOC capacity.
+                      Consider upgrading your plan to avoid analysis disruptions.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              {% elif trigger_type == "threshold_grace" %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#fff7ed;border-left:4px solid #f59e0b;padding:16px;border-radius:4px;">
+                    <strong style="color:#92400e;font-size:16px;">Alert: LOC Limit Reached &mdash; Grace Period Active</strong>
+                    <p style="margin:8px 0 0 0;font-size:14px;color:#78350f;">
+                      Your organization has reached its licensed LOC limit. A grace period is currently active,
+                      but new analyses may be restricted soon.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              {% elif trigger_type == "threshold_blocked" %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#fef2f2;border-left:4px solid #ef4444;padding:16px;border-radius:4px;">
+                    <strong style="color:#991b1b;font-size:16px;">Critical: Analyses Disabled</strong>
+                    <p style="margin:8px 0 0 0;font-size:14px;color:#991b1b;">
+                      Your organization has exceeded its LOC limit and the grace period has ended.
+                      New analyses are disabled until you upgrade your plan or reduce LOC usage.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              {% elif trigger_type.startswith("expiry_") %}
+              {% set severity_color = "#ef4444" if expiry.days_remaining | default(30) <= 7 else "#f59e0b" %}
+              {% set severity_bg = "#fef2f2" if expiry.days_remaining | default(30) <= 7 else "#fefce8" %}
+              {% set severity_text = "#991b1b" if expiry.days_remaining | default(30) <= 7 else "#92400e" %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:{{ severity_bg }};border-left:4px solid {{ severity_color }};padding:16px;border-radius:4px;">
+                    <strong style="color:{{ severity_text }};font-size:16px;">
+                      License Expires in {{ expiry.days_remaining | default('?') }} Day{{ 's' if expiry.days_remaining | default(0) != 1 else '' }}
+                    </strong>
+                    <p style="margin:8px 0 0 0;font-size:14px;color:{{ severity_text }};">
+                      Your ChangeSafe license
+                      {% if expiry.at %}expires on <strong>{{ expiry.at.strftime('%B %d, %Y') }}</strong>{% endif %}.
+                      Please renew to maintain uninterrupted access to code analysis.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              {% elif trigger_type == "test" %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#f0f9ff;border-left:4px solid #2563eb;padding:16px;border-radius:4px;">
+                    <strong style="color:#1e40af;font-size:16px;">Test Email</strong>
+                    <p style="margin:8px 0 0 0;font-size:14px;color:#1e40af;">
+                      This is a test email confirming that your ChangeSafe email notifications are configured correctly.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+              {% endif %}
+            </td>
+          </tr>
+
+          <!-- LOC Progress Bar -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="font-size:13px;font-weight:bold;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;padding-bottom:8px;">
+                    LOC Usage
+                  </td>
+                  <td align="right" style="font-size:14px;font-weight:bold;color:#1e293b;padding-bottom:8px;">
+                    {{ "{:,}".format(loc.used | default(0)) }} / {{ "{:,}".format(loc.limit | default(0)) }}
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2">
+                    {% set pct_clamped = [pct | default(0), 100] | min %}
+                    {% set bar_color = "#22c55e" if pct | default(0) < 80 else ("#f59e0b" if pct | default(0) < 100 else "#ef4444") %}
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="background-color:#e2e8f0;border-radius:4px;height:12px;overflow:hidden;">
+                          <table role="presentation" width="{{ pct_clamped }}%" cellpadding="0" cellspacing="0">
+                            <tr>
+                              <td style="background-color:{{ bar_color }};height:12px;border-radius:4px;">&nbsp;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2" align="right" style="padding-top:4px;font-size:13px;color:#64748b;">
+                    {{ pct | default(0) }}%
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Details Section -->
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e2e8f0;">
+                <tr>
+                  <td style="padding:16px 0 8px 0;font-size:13px;font-weight:bold;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">
+                    License Details
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="padding:6px 0;font-size:14px;color:#64748b;width:40%;">Organization</td>
+                        <td style="padding:6px 0;font-size:14px;color:#1e293b;font-weight:600;">{{ customer.organization | default('') }}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;font-size:14px;color:#64748b;">Tier</td>
+                        <td style="padding:6px 0;font-size:14px;color:#1e293b;font-weight:600;">{{ tier.label | default('N/A') }}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;font-size:14px;color:#64748b;">LOC Used / Limit</td>
+                        <td style="padding:6px 0;font-size:14px;color:#1e293b;font-weight:600;">
+                          {{ "{:,}".format(loc.used | default(0)) }} / {{ "{:,}".format(loc.limit | default(0)) }}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:6px 0;font-size:14px;color:#64748b;">License State</td>
+                        <td style="padding:6px 0;font-size:14px;color:#1e293b;font-weight:600;">{{ state | default('') }}</td>
+                      </tr>
+                      {% if expiry.at %}
+                      <tr>
+                        <td style="padding:6px 0;font-size:14px;color:#64748b;">Expires</td>
+                        <td style="padding:6px 0;font-size:14px;color:#1e293b;font-weight:600;">
+                          {{ expiry.at.strftime('%B %d, %Y') }} ({{ expiry.days_remaining | default('?') }} days remaining)
+                        </td>
+                      </tr>
+                      {% endif %}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA for threshold/expiry triggers -->
+          {% if trigger_type in ['threshold_warn', 'threshold_grace', 'threshold_blocked'] or trigger_type.startswith('expiry_') %}
+          <tr>
+            <td style="padding:24px 32px 0 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding:16px;background-color:#f0f9ff;border-radius:8px;">
+                    <p style="margin:0 0 12px 0;font-size:14px;color:#1e293b;">
+                      To upgrade or renew your license, contact our team:
+                    </p>
+                    <a href="mailto:{{ renewal_contact | default('sales@flentas.com') }}"
+                       style="display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:600;">
+                      {{ renewal_contact | default('sales@flentas.com') }}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e2e8f0;">
+                <tr>
+                  <td style="padding-top:16px;font-size:12px;color:#94a3b8;text-align:center;">
+                    This is an automated email from ChangeSafe. Please do not reply directly to this message.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
