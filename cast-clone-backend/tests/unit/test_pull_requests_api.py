@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings, get_settings
 from app.main import app
 from app.models.db import PrAnalysis, User
@@ -46,9 +46,13 @@ async def client(mock_session, admin_user):
     def _override_settings():
         return Settings(auth_disabled=False, secret_key="test-key")
 
+    async def _override_license_writable() -> None:
+        return None
+
     app.dependency_overrides[get_session] = _override_session
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_settings] = _override_settings
+    app.dependency_overrides[require_license_writable] = _override_license_writable
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
