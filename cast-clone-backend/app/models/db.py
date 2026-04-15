@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
@@ -29,6 +30,23 @@ from sqlalchemy.orm import (
 
 class Base(DeclarativeBase):
     pass
+
+
+class Deployment(Base):
+    __tablename__ = "deployment"  # singular — singleton
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    singleton: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), unique=True, default=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class User(Base):

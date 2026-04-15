@@ -35,6 +35,7 @@ from app.api import (
     websocket_router,
 )
 from app.config import Settings
+from app.services.deployment import init_deployment_id
 from app.services.neo4j import close_neo4j, init_neo4j
 from app.services.postgres import close_postgres, init_postgres
 from app.services.redis import close_redis, init_redis
@@ -113,6 +114,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _configure_logging(settings.log_level)
     # Startup
     await init_postgres(settings)
+    installation_id = await init_deployment_id()
+    app.state.installation_id = installation_id
     await init_neo4j(settings)
     await init_redis(settings)
 
