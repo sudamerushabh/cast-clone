@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings, get_settings
 from app.models.db import PrAnalysis, RepositoryGitConfig, User
 from app.schemas.pull_requests import (
@@ -131,7 +131,11 @@ async def delete_pr_analysis(
     await session.commit()
 
 
-@router.post("/{pr_analysis_id}/reanalyze", status_code=202)
+@router.post(
+    "/{pr_analysis_id}/reanalyze",
+    status_code=202,
+    dependencies=[Depends(require_license_writable)],
+)
 async def reanalyze_pr(
     repo_id: str,
     pr_analysis_id: str,
