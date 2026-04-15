@@ -258,6 +258,7 @@ class AnalysisRun(Base):
     report: Mapped[dict | None] = mapped_column(JSON)
     snapshot: Mapped[dict | None] = mapped_column(JSON)
     commit_sha: Mapped[str | None] = mapped_column(String(40))
+    total_loc: Mapped[int | None] = mapped_column(Integer)
 
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
 
