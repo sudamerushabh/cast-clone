@@ -95,7 +95,7 @@ async function apiFetch<T>(
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
   const { headers: callerHeaders, ...restOptions } = options;
-  const needsContentType = options.body !== undefined && options.body !== null;
+  const needsContentType = options.body !== undefined && options.body !== null && !(options.body instanceof FormData);
   const res = await fetch(url, {
     headers: {
       ...(needsContentType ? { "Content-Type": "application/json" } : {}),
@@ -921,6 +921,5 @@ export async function uploadLicense(file: File): Promise<LicenseStatusResponse> 
   return apiFetch<LicenseStatusResponse>("/api/v1/license/upload", {
     method: "POST",
     body: formData,
-    headers: {},  // Let browser set Content-Type with boundary
   });
 }

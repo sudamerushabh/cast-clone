@@ -781,7 +781,7 @@ export interface LicenseStatusResponse {
   state: LicenseState;
   installation_id: string;
   license_disabled: boolean;
-  tier: number | null;
+  tier: number | string | null;
   loc_limit: number | null;
   loc_used: number | null;
   customer_name: string | null;
