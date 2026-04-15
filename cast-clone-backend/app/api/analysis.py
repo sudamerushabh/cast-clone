@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import require_license_writable
 from app.models.db import AnalysisRun, Project
 from app.orchestrator.pipeline import PipelineServices, run_analysis_pipeline
 from app.schemas.analysis import (
@@ -88,6 +89,7 @@ router = APIRouter(prefix="/api/v1/projects", tags=["analysis"])
     "/{project_id}/analyze",
     response_model=AnalysisTriggerResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def trigger_analysis(
     project_id: str,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import require_license_writable
 from app.models.db import Project
 from app.schemas.projects import (
     ProjectCreate,
@@ -17,7 +18,12 @@ from app.services.postgres import get_session
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 
-@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
+)
 async def create_project(
     body: ProjectCreate,
     session: AsyncSession = Depends(get_session),
