@@ -1,20 +1,35 @@
-"""License status and installation-id endpoints.
+"""License status, installation-id, and upload endpoints.
 
-Both endpoints are always reachable — no auth, no license gate — because
-the UNLICENSED onboarding flow needs them (the user must see their
-installation_id and current state before uploading a license).
+GET /status and GET /installation-id are always reachable — no auth, no
+license gate — because the UNLICENSED onboarding flow needs them.
+
+POST /upload is admin-only but NOT gated by ``require_license_writable``
+so that an UNLICENSED user can upload a license to escape that state.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+import structlog
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 
+from app.api.dependencies import require_admin
 from app.config import Settings, get_settings
-from app.services.license import LicenseInfo, LicenseState
+from app.models.db import User
+from app.services.license import (
+    LicenseInfo,
+    LicenseState,
+    LicenseVerificationError,
+    decode_and_verify,
+    load_license,
+)
 from app.services.loc_usage import cumulative_loc
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/license", tags=["license"])
 
@@ -45,11 +60,42 @@ class InstallationIdResponse(BaseModel):
     installation_id: str
 
 
-@router.get("/status", response_model=LicenseStatusResponse)
-async def get_license_status(
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def atomic_write_text(target: Path, content: str) -> None:
+    """Atomically replace *target* with *content*.
+
+    Uses a sibling tempfile + ``os.replace()``.  On any error the
+    original *target* is preserved.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except Exception:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise
+
+
+async def _build_status_response(
     request: Request,
-    settings: Settings = Depends(get_settings),
+    settings: Settings,
 ) -> LicenseStatusResponse:
+    """Build a ``LicenseStatusResponse`` from current app state.
+
+    Shared by ``GET /status`` and ``POST /upload`` to avoid duplication.
+    """
     state: LicenseState = getattr(
         request.app.state, "license_state", LicenseState.UNLICENSED
     )
@@ -80,8 +126,90 @@ async def get_license_status(
     )
 
 
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/status", response_model=LicenseStatusResponse)
+async def get_license_status(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> LicenseStatusResponse:
+    return await _build_status_response(request, settings)
+
+
 @router.get("/installation-id", response_model=InstallationIdResponse)
 async def get_installation_id(request: Request) -> InstallationIdResponse:
     return InstallationIdResponse(
         installation_id=getattr(request.app.state, "installation_id", ""),
     )
+
+
+@router.post("/upload", response_model=LicenseStatusResponse)
+async def upload_license(
+    request: Request,
+    file: UploadFile = File(...),
+    _admin: User = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> LicenseStatusResponse:
+    """Admin-only: upload a new license JWT, validate, atomically replace, reload state.
+
+    On validation failure the existing license file is preserved.
+    """
+    installation_id: str = getattr(request.app.state, "installation_id", "")
+    if not installation_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Installation ID not initialized",
+        )
+
+    # Read uploaded content (license JWTs are under 4 KB)
+    raw = await file.read()
+    if len(raw) > 16_384:  # 16 KB sanity ceiling
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="License file too large",
+        )
+    try:
+        token = raw.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"License file is not valid UTF-8: {exc}",
+        ) from exc
+
+    # Verify BEFORE writing — if it's bad, the existing file stays put
+    try:
+        decode_and_verify(token, settings.license_public_key_v1, installation_id)
+    except LicenseVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "license_invalid",
+                "message": str(exc),
+            },
+        ) from exc
+
+    # Atomic replace
+    target = Path(settings.license_file_path)
+    try:
+        atomic_write_text(target, token)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to write license file: {exc}",
+        ) from exc
+
+    # Reload state — populates module cache AND returns fresh state
+    info, state = await load_license(settings, installation_id)
+    request.app.state.license_info = info
+    request.app.state.license_state = state
+
+    await logger.ainfo(
+        "license.uploaded",
+        admin=_admin.username,
+        state=state.value,
+    )
+
+    return await _build_status_response(request, settings)
