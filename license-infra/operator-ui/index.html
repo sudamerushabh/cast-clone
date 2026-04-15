@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChangeSafe License Portal</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1e293b;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    header .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: #94a3b8;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: #1d4ed8;
+    }
+
+    .btn-secondary {
+      background: #e2e8f0;
+      color: #1e293b;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #cbd5e1;
+    }
+
+    .btn-logout {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid #475569;
+      padding: 6px 12px;
+      font-size: 13px;
+    }
+
+    .btn-logout:hover {
+      color: #fff;
+      border-color: #94a3b8;
+    }
+
+    .btn-success {
+      background: #16a34a;
+      color: #fff;
+    }
+
+    .btn-success:hover:not(:disabled) {
+      background: #15803d;
+    }
+
+    .container {
+      max-width: 640px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+      padding: 24px;
+    }
+
+    .card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: #1e293b;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #1e293b;
+      background: #fff;
+      transition: border-color 0.15s;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 64px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .form-actions {
+      margin-top: 20px;
+    }
+
+    .form-actions .btn {
+      width: 100%;
+      padding: 10px 16px;
+    }
+
+    .error-message {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #dc2626;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .success-message {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #16a34a;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    /* Login form */
+    .login-card {
+      max-width: 400px;
+      margin: 80px auto;
+    }
+
+    .login-card h2 {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    /* Result section */
+    .result-section {
+      margin-top: 24px;
+    }
+
+    .result-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #1e293b;
+    }
+
+    .result-meta {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 12px;
+    }
+
+    .result-meta div {
+      margin-bottom: 2px;
+    }
+
+    .result-meta strong {
+      color: #475569;
+    }
+
+    .result-token {
+      width: 100%;
+      min-height: 120px;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+      color: #1e293b;
+      background: #f8fafc;
+      resize: vertical;
+      word-break: break-all;
+    }
+
+    .result-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .divider {
+      height: 1px;
+      background: #e2e8f0;
+      margin: 20px 0;
+    }
+
+    /* Force password change form */
+    .new-password-note {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>ChangeSafe License Portal</h1>
+    <div class="user-info" id="headerUserInfo">
+      <span id="headerUsername"></span>
+      <button class="btn btn-logout" id="logoutBtn" onclick="handleLogout()">Sign Out</button>
+    </div>
+  </header>
+
+  <!-- Login Form -->
+  <div id="loginView" class="container hidden">
+    <div class="card login-card">
+      <h2>Operator Sign In</h2>
+      <div id="loginError" class="error-message hidden"></div>
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="loginUsername">Username</label>
+          <input type="text" id="loginUsername" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" required autocomplete="current-password" />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="loginSubmitBtn">Sign In</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Force New Password Form -->
+  <div id="newPasswordView" class="container hidden">
+    <div class="card login-card">
+      <h2>Set New Password</h2>
+      <p class="new-password-note">Your account requires a password change before you can continue.</p>
+      <div id="newPasswordError" class="error-message hidden"></div>
+      <form id="newPasswordForm" onsubmit="handleNewPassword(event)">
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <input type="password" id="newPassword" required autocomplete="new-password" />
+        </div>
+        <div class="form-group">
+          <label for="confirmNewPassword">Confirm New Password</label>
+          <input type="password" id="confirmNewPassword" required autocomplete="new-password" />
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="newPasswordSubmitBtn">Set Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- License Signing Form -->
+  <div id="signingView" class="container hidden">
+    <div class="card">
+      <h2>Sign License</h2>
+      <div id="signingError" class="error-message hidden"></div>
+      <div id="signingSuccess" class="success-message hidden"></div>
+
+      <form id="signingForm" onsubmit="handleSign(event)">
+        <div class="form-group">
+          <label for="installationId">Installation ID</label>
+          <input type="text" id="installationId" required
+            pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            title="Must be a valid UUID" />
+        </div>
+
+        <div class="form-group">
+          <label for="customerName">Customer Name</label>
+          <input type="text" id="customerName" required />
+        </div>
+
+        <div class="form-group">
+          <label for="customerEmail">Customer Email</label>
+          <input type="email" id="customerEmail" required />
+        </div>
+
+        <div class="form-group">
+          <label for="customerOrg">Customer Organization</label>
+          <input type="text" id="customerOrg" required />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="tier">Tier</label>
+            <select id="tier" required>
+              <option value="trial">Trial</option>
+              <option value="tier-1">Tier 1</option>
+              <option value="tier-2">Tier 2</option>
+              <option value="tier-3">Tier 3</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="locLimit">LOC Limit</label>
+            <input type="number" id="locLimit" required min="0" value="500000" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="expiresInDays">Expires In Days</label>
+          <input type="number" id="expiresInDays" required min="1" value="365" />
+        </div>
+
+        <div class="form-group">
+          <label for="notes">Notes <span style="color: #94a3b8; font-weight: 400;">(optional)</span></label>
+          <textarea id="notes" rows="2" placeholder="Internal notes about this license..."></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="signBtn">Sign License</button>
+        </div>
+      </form>
+
+      <!-- Result -->
+      <div id="resultSection" class="result-section hidden">
+        <div class="divider"></div>
+        <h3>Signed License Token</h3>
+        <div class="result-meta" id="resultMeta"></div>
+        <textarea class="result-token" id="resultToken" readonly></textarea>
+        <div class="result-actions">
+          <button class="btn btn-success" onclick="downloadToken()">Download license.jwt</button>
+          <button class="btn btn-secondary" id="copyBtn" onclick="copyToken()">Copy to Clipboard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6/dist/amazon-cognito-identity.min.js"></script>
+  <script>
+    // ---------------------------------------------------------------------------
+    // Configuration — replaced during deployment via CDK / sed / envsubst
+    // ---------------------------------------------------------------------------
+    const CONFIG = {
+      COGNITO_USER_POOL_ID: "PLACEHOLDER_USER_POOL_ID",
+      COGNITO_CLIENT_ID: "PLACEHOLDER_CLIENT_ID",
+      API_URL: "PLACEHOLDER_API_URL",
+      COGNITO_REGION: "us-east-1",
+    };
+
+    // ---------------------------------------------------------------------------
+    // Cognito helpers
+    // ---------------------------------------------------------------------------
+    const userPool = new AmazonCognitoIdentity.CognitoUserPool({
+      UserPoolId: CONFIG.COGNITO_USER_POOL_ID,
+      ClientId: CONFIG.COGNITO_CLIENT_ID,
+    });
+
+    let currentCognitoUser = null;
+    let pendingNewPasswordChallenge = null;
+
+    function getIdToken() {
+      return new Promise((resolve, reject) => {
+        const user = userPool.getCurrentUser();
+        if (!user) return reject(new Error("No current user"));
+        user.getSession((err, session) => {
+          if (err) return reject(err);
+          if (!session.isValid()) return reject(new Error("Session expired"));
+          resolve(session.getIdToken().getJwtToken());
+        });
+      });
+    }
+
+    function getCurrentUsername() {
+      const user = userPool.getCurrentUser();
+      return user ? user.getUsername() : null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // View management
+    // ---------------------------------------------------------------------------
+    function showView(viewId) {
+      document.getElementById("loginView").classList.add("hidden");
+      document.getElementById("newPasswordView").classList.add("hidden");
+      document.getElementById("signingView").classList.add("hidden");
+
+      document.getElementById(viewId).classList.remove("hidden");
+
+      const isAuthenticated = viewId === "signingView";
+      document.getElementById("headerUserInfo").style.visibility = isAuthenticated ? "visible" : "hidden";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Button loading state helpers
+    // ---------------------------------------------------------------------------
+    function setButtonLoading(btn, text) {
+      btn.disabled = true;
+      btn.textContent = "";
+      var spinner = document.createElement("span");
+      spinner.className = "spinner";
+      btn.appendChild(spinner);
+      btn.appendChild(document.createTextNode(text));
+    }
+
+    function resetButton(btn, text) {
+      btn.disabled = false;
+      btn.textContent = text;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Login
+    // ---------------------------------------------------------------------------
+    function handleLogin(e) {
+      e.preventDefault();
+      var username = document.getElementById("loginUsername").value.trim();
+      var password = document.getElementById("loginPassword").value;
+      var btn = document.getElementById("loginSubmitBtn");
+      var errorEl = document.getElementById("loginError");
+
+      errorEl.classList.add("hidden");
+      setButtonLoading(btn, "Signing in...");
+
+      var authDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+        Username: username,
+        Password: password,
+      });
+
+      var cognitoUser = new AmazonCognitoIdentity.CognitoUser({
+        Username: username,
+        Pool: userPool,
+      });
+
+      cognitoUser.authenticateUser(authDetails, {
+        onSuccess: function (result) {
+          resetButton(btn, "Sign In");
+          document.getElementById("headerUsername").textContent = username;
+          showView("signingView");
+        },
+        onFailure: function (err) {
+          resetButton(btn, "Sign In");
+          errorEl.textContent = err.message || "Authentication failed";
+          errorEl.classList.remove("hidden");
+        },
+        newPasswordRequired: function (userAttributes, requiredAttributes) {
+          resetButton(btn, "Sign In");
+          currentCognitoUser = cognitoUser;
+          pendingNewPasswordChallenge = { userAttributes: userAttributes, requiredAttributes: requiredAttributes };
+          showView("newPasswordView");
+        },
+      });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Force new password
+    // ---------------------------------------------------------------------------
+    function handleNewPassword(e) {
+      e.preventDefault();
+      var newPw = document.getElementById("newPassword").value;
+      var confirmPw = document.getElementById("confirmNewPassword").value;
+      var btn = document.getElementById("newPasswordSubmitBtn");
+      var errorEl = document.getElementById("newPasswordError");
+
+      errorEl.classList.add("hidden");
+
+      if (newPw !== confirmPw) {
+        errorEl.textContent = "Passwords do not match";
+        errorEl.classList.remove("hidden");
+        return;
+      }
+
+      setButtonLoading(btn, "Setting password...");
+
+      currentCognitoUser.completeNewPasswordChallenge(newPw, {}, {
+        onSuccess: function (result) {
+          resetButton(btn, "Set Password");
+          document.getElementById("headerUsername").textContent = currentCognitoUser.getUsername();
+          showView("signingView");
+        },
+        onFailure: function (err) {
+          resetButton(btn, "Set Password");
+          errorEl.textContent = err.message || "Failed to set password";
+          errorEl.classList.remove("hidden");
+        },
+      });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Logout
+    // ---------------------------------------------------------------------------
+    function handleLogout() {
+      var user = userPool.getCurrentUser();
+      if (user) user.signOut();
+      document.getElementById("loginForm").reset();
+      document.getElementById("loginError").classList.add("hidden");
+      document.getElementById("resultSection").classList.add("hidden");
+      document.getElementById("signingForm").reset();
+      // Restore defaults after reset
+      document.getElementById("locLimit").value = "500000";
+      document.getElementById("expiresInDays").value = "365";
+      showView("loginView");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Sign license
+    // ---------------------------------------------------------------------------
+    async function handleSign(e) {
+      e.preventDefault();
+      var btn = document.getElementById("signBtn");
+      var errorEl = document.getElementById("signingError");
+      var successEl = document.getElementById("signingSuccess");
+      var resultSection = document.getElementById("resultSection");
+
+      errorEl.classList.add("hidden");
+      successEl.classList.add("hidden");
+      resultSection.classList.add("hidden");
+
+      setButtonLoading(btn, "Signing...");
+
+      try {
+        var idToken = await getIdToken();
+
+        var body = {
+          installation_id: document.getElementById("installationId").value.trim(),
+          customer_name: document.getElementById("customerName").value.trim(),
+          customer_email: document.getElementById("customerEmail").value.trim(),
+          customer_organization: document.getElementById("customerOrg").value.trim(),
+          tier: document.getElementById("tier").value,
+          loc_limit: parseInt(document.getElementById("locLimit").value, 10),
+          expires_in_days: parseInt(document.getElementById("expiresInDays").value, 10),
+          notes: document.getElementById("notes").value.trim() || undefined,
+        };
+
+        var resp = await fetch(CONFIG.API_URL + "/sign", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + idToken,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!resp.ok) {
+          var errData = await resp.json().catch(function () { return {}; });
+          throw new Error(errData.message || errData.detail || "Request failed (" + resp.status + ")");
+        }
+
+        var data = await resp.json();
+
+        // Display result
+        document.getElementById("resultToken").value = data.token;
+
+        // Build metadata using safe DOM methods
+        var metaEl = document.getElementById("resultMeta");
+        while (metaEl.firstChild) metaEl.removeChild(metaEl.firstChild);
+
+        if (data.jti) {
+          var jtiRow = document.createElement("div");
+          var jtiLabel = document.createElement("strong");
+          jtiLabel.textContent = "JTI: ";
+          jtiRow.appendChild(jtiLabel);
+          jtiRow.appendChild(document.createTextNode(data.jti));
+          metaEl.appendChild(jtiRow);
+        }
+
+        if (data.expires_at) {
+          var expiryRow = document.createElement("div");
+          var expiryLabel = document.createElement("strong");
+          expiryLabel.textContent = "Expires: ";
+          expiryRow.appendChild(expiryLabel);
+          expiryRow.appendChild(document.createTextNode(data.expires_at));
+          metaEl.appendChild(expiryRow);
+        }
+
+        resultSection.classList.remove("hidden");
+        successEl.textContent = "License signed successfully.";
+        successEl.classList.remove("hidden");
+      } catch (err) {
+        if (err.message === "No current user" || err.message === "Session expired") {
+          handleLogout();
+          return;
+        }
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+      } finally {
+        resetButton(btn, "Sign License");
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Result actions
+    // ---------------------------------------------------------------------------
+    function downloadToken() {
+      var token = document.getElementById("resultToken").value;
+      if (!token) return;
+      var blob = new Blob([token], { type: "application/jwt" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "license.jwt";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    async function copyToken() {
+      var token = document.getElementById("resultToken").value;
+      if (!token) return;
+      var btn = document.getElementById("copyBtn");
+      try {
+        await navigator.clipboard.writeText(token);
+        var original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(function () { btn.textContent = original; }, 1500);
+      } catch (e) {
+        // Fallback for older browsers
+        var textarea = document.getElementById("resultToken");
+        textarea.select();
+        document.execCommand("copy");
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Init — check for existing session
+    // ---------------------------------------------------------------------------
+    (function init() {
+      var user = userPool.getCurrentUser();
+      if (user) {
+        user.getSession(function (err, session) {
+          if (!err && session && session.isValid()) {
+            document.getElementById("headerUsername").textContent = user.getUsername();
+            showView("signingView");
+          } else {
+            showView("loginView");
+          }
+        });
+      } else {
+        showView("loginView");
+      }
+    })();
+  </script>
+</body>
+</html>
