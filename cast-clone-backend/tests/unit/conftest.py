@@ -29,8 +29,10 @@ async def app_client(mock_session):
     """Async test client with mocked database session.
 
     Patches get_session to yield the mock session, so API endpoint tests
-    don't need a real PostgreSQL connection.
+    don't need a real PostgreSQL connection. Also bypasses the license
+    gate so pre-existing API tests don't need to know about licensing.
     """
+    from app.api.dependencies import require_license_writable
     from app.main import create_app
     from app.services.postgres import get_session
 
@@ -39,7 +41,13 @@ async def app_client(mock_session):
     async def override_get_session():
         yield mock_session
 
+    async def override_require_license_writable() -> None:
+        return None
+
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[require_license_writable] = (
+        override_require_license_writable
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
