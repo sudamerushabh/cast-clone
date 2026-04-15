@@ -1,0 +1,148 @@
+{
+  "/ChangeSafe-StaticSite/Custom::S3AutoDeleteObjectsCustomResourceProvider": [
+    {
+      "type": "aws:cdk:is-custom-resource-handler-customResourceProvider",
+      "data": true
+    }
+  ],
+  "/ChangeSafe-StaticSite/SiteBucketName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SiteBucketName"
+    }
+  ],
+  "/ChangeSafe-StaticSite/DistributionUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DistributionUrl"
+    }
+  ],
+  "/ChangeSafe-StaticSite/UserPoolId": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "UserPoolId"
+    }
+  ],
+  "/ChangeSafe-StaticSite/UserPoolClientId": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "UserPoolClientId"
+    }
+  ],
+  "/ChangeSafe-StaticSite/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    }
+  ],
+  "/ChangeSafe-StaticSite/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiBucket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUiBucketE836B3D4"
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketAutoDeleteObjects"
+      }
+    }
+  ],
+  "/ChangeSafe-StaticSite/Custom::S3AutoDeleteObjectsCustomResourceProvider/Role": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092"
+    }
+  ],
+  "/ChangeSafe-StaticSite/Custom::S3AutoDeleteObjectsCustomResourceProvider/Handler": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiDistribution/Origin1": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "When the origin with AccessLevel.LIST is associated to the default behavior, it is strongly recommended to ensure the distribution's defaultRootObject is specified,\nSee the \"Setting up OAC with LIST permission\" section of module's README for more info. [ack: @aws-cdk/aws-cloudfront-origins:listBucketSecurityRisk]",
+      "trace": [
+        "Annotations.addMessage (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2399)",
+        "Annotations.addWarningV2 (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/core/lib/annotations.js:1:1087)",
+        "S3BucketOriginWithOAC.bind (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/aws-cloudfront-origins/lib/s3-bucket-origin.js:1:3501)",
+        "WrappedClass.addOrigin (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/aws-cloudfront/lib/distribution.js:1:24175)",
+        "new Distribution2 (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/aws-cloudfront/lib/distribution.js:1:13165)",
+        "new Distribution2 (/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/jsii-kernel-Nqi0f7/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "Kernel._Kernel_create (/private/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/tmpwty1br9n/lib/program.js:1:61100)",
+        "Kernel.create (/private/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/tmpwty1br9n/lib/program.js:1:51863)",
+        "KernelHost.processRequest (/private/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/tmpwty1br9n/lib/program.js:1:212493)",
+        "KernelHost.run (/private/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/tmpwty1br9n/lib/program.js:1:211548)",
+        "Immediate._onImmediate (/private/var/folders/5v/_gpr76n90j95_04rrylrj0wm0000gn/T/tmpwty1br9n/lib/program.js:1:211592)",
+        "process.processImmediate (node:internal/timers:505:21)"
+      ]
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiDistribution/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUiDistributionA52D66A0"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUserPool/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUserPool46AEF0F3"
+    }
+  ],
+  "/ChangeSafe-StaticSite/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    }
+  ],
+  "/ChangeSafe-StaticSite/CDKMetadata/Condition": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadataAvailable"
+    }
+  ],
+  "/ChangeSafe-StaticSite/Exports/Output{\"Fn::GetAtt\":[\"OperatorUserPool46AEF0F3\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttOperatorUserPool46AEF0F3Arn0F137573"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiBucket/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUiBucketPolicyEA16DBF4"
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketPolicyStatements"
+      }
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiBucket/AutoDeleteObjectsCustomResource/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUiBucketAutoDeleteObjectsCustomResource09B0C0DE"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUserPool/OperatorUiClient/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUserPoolOperatorUiClientC9B6B27E"
+    }
+  ],
+  "/ChangeSafe-StaticSite/OperatorUiDistribution/Origin1/S3OriginAccessControl/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "OperatorUiDistributionOrigin1S3OriginAccessControlFE36C626"
+    }
+  ]
+}

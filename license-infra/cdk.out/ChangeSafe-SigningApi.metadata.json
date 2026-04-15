@@ -1,0 +1,140 @@
+{
+  "/ChangeSafe-SigningApi/SigningApiUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiUrl"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningKeySecretArn": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningKeySecretArn"
+    }
+  ],
+  "/ChangeSafe-SigningApi/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    }
+  ],
+  "/ChangeSafe-SigningApi/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    }
+  ],
+  "/ChangeSafe-SigningApi/LicenseSigningKey/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "LicenseSigningKey27943D4E"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SignLicenseFunction/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SignLicenseFunction7B276196"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiBC6C0974"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Account": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiAccountF06E916E"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Endpoint": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiEndpointBFD04DFE"
+    }
+  ],
+  "/ChangeSafe-SigningApi/CognitoAuthorizer/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CognitoAuthorizerF3215DBC"
+    }
+  ],
+  "/ChangeSafe-SigningApi/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    }
+  ],
+  "/ChangeSafe-SigningApi/CDKMetadata/Condition": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadataAvailable"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SignLicenseFunction/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SignLicenseFunctionServiceRoleB54E44D2"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/CloudWatchRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiCloudWatchRole91B76AD5"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Deployment/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiDeploymentDB0D78ED7a9cf43a97e1e3a1b2246742e867c9a4"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/DeploymentStage.prod/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiDeploymentStageprod86BCF4A2"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SignLicenseFunction/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SignLicenseFunctionServiceRoleDefaultPolicyA5D95EA1"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/OPTIONS/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApiOPTIONS99C1F6AC"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/sign/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApisignEF010B46"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/sign/OPTIONS/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApisignOPTIONS3218D525"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/sign/POST/ApiPermission.ChangeSafeSigningApi36668481.POST..sign": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApisignPOSTApiPermissionChangeSafeSigningApi36668481POSTsign6A0FBDD3"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/sign/POST/ApiPermission.Test.ChangeSafeSigningApi36668481.POST..sign": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApisignPOSTApiPermissionTestChangeSafeSigningApi36668481POSTsign34FB3058"
+    }
+  ],
+  "/ChangeSafe-SigningApi/SigningApi/Default/sign/POST/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SigningApisignPOST28F68430"
+    }
+  ]
+}

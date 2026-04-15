@@ -1,0 +1,847 @@
+{
+ "Resources": {
+  "LicenseSigningKey27943D4E": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Ed25519 private key (PEM) for license JWT signing",
+    "GenerateSecretString": {
+     "PasswordLength": 32
+    },
+    "Name": "changesafe/license-signing-key"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/LicenseSigningKey/Resource"
+   }
+  },
+  "SignLicenseFunctionServiceRoleB54E44D2": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SignLicenseFunction/ServiceRole/Resource"
+   }
+  },
+  "SignLicenseFunctionServiceRoleDefaultPolicyA5D95EA1": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Ref": "LicenseSigningKey27943D4E"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SignLicenseFunctionServiceRoleDefaultPolicyA5D95EA1",
+    "Roles": [
+     {
+      "Ref": "SignLicenseFunctionServiceRoleB54E44D2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SignLicenseFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "SignLicenseFunction7B276196": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": {
+      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+     },
+     "S3Key": "7b2a87503d5176a178ffd5d90d66baed6113292e365f761924a6e4f585ddb73b.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "SIGNING_KEY_SECRET_ARN": {
+       "Ref": "LicenseSigningKey27943D4E"
+      },
+      "ISSUER": "flentas-license-authority"
+     }
+    },
+    "Handler": "handler.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "SignLicenseFunctionServiceRoleB54E44D2",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.12",
+    "Timeout": 30
+   },
+   "DependsOn": [
+    "SignLicenseFunctionServiceRoleDefaultPolicyA5D95EA1",
+    "SignLicenseFunctionServiceRoleB54E44D2"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SignLicenseFunction/Resource",
+    "aws:asset:path": "asset.7b2a87503d5176a178ffd5d90d66baed6113292e365f761924a6e4f585ddb73b",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "SigningApiBC6C0974": {
+   "Type": "AWS::ApiGateway::RestApi",
+   "Properties": {
+    "Name": "ChangeSafe-License-Signing-API"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Resource"
+   }
+  },
+  "SigningApiCloudWatchRole91B76AD5": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "apigateway.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+       ]
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/CloudWatchRole/Resource"
+   }
+  },
+  "SigningApiAccountF06E916E": {
+   "Type": "AWS::ApiGateway::Account",
+   "Properties": {
+    "CloudWatchRoleArn": {
+     "Fn::GetAtt": [
+      "SigningApiCloudWatchRole91B76AD5",
+      "Arn"
+     ]
+    }
+   },
+   "DependsOn": [
+    "SigningApiBC6C0974"
+   ],
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Account"
+   }
+  },
+  "SigningApiDeploymentDB0D78ED7a9cf43a97e1e3a1b2246742e867c9a4": {
+   "Type": "AWS::ApiGateway::Deployment",
+   "Properties": {
+    "Description": "Automatically created by the RestApi construct",
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    }
+   },
+   "DependsOn": [
+    "SigningApiOPTIONS99C1F6AC",
+    "SigningApisignOPTIONS3218D525",
+    "SigningApisignPOST28F68430",
+    "SigningApisignEF010B46"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Deployment/Resource",
+    "aws:cdk:do-not-refactor": true
+   }
+  },
+  "SigningApiDeploymentStageprod86BCF4A2": {
+   "Type": "AWS::ApiGateway::Stage",
+   "Properties": {
+    "DeploymentId": {
+     "Ref": "SigningApiDeploymentDB0D78ED7a9cf43a97e1e3a1b2246742e867c9a4"
+    },
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    },
+    "StageName": "prod"
+   },
+   "DependsOn": [
+    "SigningApiAccountF06E916E"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/DeploymentStage.prod/Resource"
+   }
+  },
+  "SigningApiOPTIONS99C1F6AC": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Fn::GetAtt": [
+      "SigningApiBC6C0974",
+      "RootResourceId"
+     ]
+    },
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/OPTIONS/Resource"
+   }
+  },
+  "SigningApisignEF010B46": {
+   "Type": "AWS::ApiGateway::Resource",
+   "Properties": {
+    "ParentId": {
+     "Fn::GetAtt": [
+      "SigningApiBC6C0974",
+      "RootResourceId"
+     ]
+    },
+    "PathPart": "sign",
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/sign/Resource"
+   }
+  },
+  "SigningApisignOPTIONS3218D525": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "ApiKeyRequired": false,
+    "AuthorizationType": "NONE",
+    "HttpMethod": "OPTIONS",
+    "Integration": {
+     "IntegrationResponses": [
+      {
+       "ResponseParameters": {
+        "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'",
+        "method.response.header.Access-Control-Allow-Origin": "'*'",
+        "method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'"
+       },
+       "StatusCode": "204"
+      }
+     ],
+     "RequestTemplates": {
+      "application/json": "{ statusCode: 200 }"
+     },
+     "Type": "MOCK"
+    },
+    "MethodResponses": [
+     {
+      "ResponseParameters": {
+       "method.response.header.Access-Control-Allow-Headers": true,
+       "method.response.header.Access-Control-Allow-Origin": true,
+       "method.response.header.Access-Control-Allow-Methods": true
+      },
+      "StatusCode": "204"
+     }
+    ],
+    "ResourceId": {
+     "Ref": "SigningApisignEF010B46"
+    },
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/sign/OPTIONS/Resource"
+   }
+  },
+  "SigningApisignPOSTApiPermissionChangeSafeSigningApi36668481POSTsign6A0FBDD3": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "SignLicenseFunction7B276196",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:",
+       {
+        "Ref": "AWS::Region"
+       },
+       ":",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ":",
+       {
+        "Ref": "SigningApiBC6C0974"
+       },
+       "/",
+       {
+        "Ref": "SigningApiDeploymentStageprod86BCF4A2"
+       },
+       "/POST/sign"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/sign/POST/ApiPermission.ChangeSafeSigningApi36668481.POST..sign"
+   }
+  },
+  "SigningApisignPOSTApiPermissionTestChangeSafeSigningApi36668481POSTsign34FB3058": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "SignLicenseFunction7B276196",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:",
+       {
+        "Ref": "AWS::Region"
+       },
+       ":",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ":",
+       {
+        "Ref": "SigningApiBC6C0974"
+       },
+       "/test-invoke-stage/POST/sign"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/sign/POST/ApiPermission.Test.ChangeSafeSigningApi36668481.POST..sign"
+   }
+  },
+  "SigningApisignPOST28F68430": {
+   "Type": "AWS::ApiGateway::Method",
+   "Properties": {
+    "AuthorizationType": "COGNITO_USER_POOLS",
+    "AuthorizerId": {
+     "Ref": "CognitoAuthorizerF3215DBC"
+    },
+    "HttpMethod": "POST",
+    "Integration": {
+     "IntegrationHttpMethod": "POST",
+     "Type": "AWS_PROXY",
+     "Uri": {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":apigateway:",
+        {
+         "Ref": "AWS::Region"
+        },
+        ":lambda:path/2015-03-31/functions/",
+        {
+         "Fn::GetAtt": [
+          "SignLicenseFunction7B276196",
+          "Arn"
+         ]
+        },
+        "/invocations"
+       ]
+      ]
+     }
+    },
+    "ResourceId": {
+     "Ref": "SigningApisignEF010B46"
+    },
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/SigningApi/Default/sign/POST/Resource"
+   }
+  },
+  "CognitoAuthorizerF3215DBC": {
+   "Type": "AWS::ApiGateway::Authorizer",
+   "Properties": {
+    "IdentitySource": "method.request.header.Authorization",
+    "Name": "ChangeSafeSigningApiCognitoAuthorizer45692392",
+    "ProviderARNs": [
+     {
+      "Fn::ImportValue": "ChangeSafe-StaticSite:ExportsOutputFnGetAttOperatorUserPool46AEF0F3Arn0F137573"
+     }
+    ],
+    "RestApiId": {
+     "Ref": "SigningApiBC6C0974"
+    },
+    "Type": "COGNITO_USER_POOLS"
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/CognitoAuthorizer/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/02Q3U7DMAyFn2X3WRir9gAdiDtENcT15KWmeM1PFSeaStV3J0kL7MrfyXHsk+zl/rCTuw3ceKvafqvpIqf3AKoX6eg8MSqPgQ1Y6NAnq2jx9GkXmoUGc2lBTi/RqkDOZu+eG/SGmJOaBYGR08lpzEapjdOkxtJXaBZcnYE57ZR1LknLY1Q9hiMwChiog4A3GNMg5FAPVGb9Y62UizaIZxy0Gw3akvZOpdd1JcAC6aqLXmEZ/4rhy7XZXOnXXZes7DpLwX0w+sY5zXVMvZ6+0ZcAf2qeRXlDXkS2y+ZbDENMv9aMqck+VPKxkofNlYm2PqUmg/K01B9t5VEamgEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "ChangeSafe-SigningApi/CDKMetadata/Default"
+   },
+   "Condition": "CDKMetadataAvailable"
+  }
+ },
+ "Outputs": {
+  "SigningApiEndpointBFD04DFE": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "https://",
+      {
+       "Ref": "SigningApiBC6C0974"
+      },
+      ".execute-api.",
+      {
+       "Ref": "AWS::Region"
+      },
+      ".",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "SigningApiDeploymentStageprod86BCF4A2"
+      },
+      "/"
+     ]
+    ]
+   }
+  },
+  "SigningApiUrl": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "https://",
+      {
+       "Ref": "SigningApiBC6C0974"
+      },
+      ".execute-api.",
+      {
+       "Ref": "AWS::Region"
+      },
+      ".",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "SigningApiDeploymentStageprod86BCF4A2"
+      },
+      "/"
+     ]
+    ]
+   }
+  },
+  "SigningKeySecretArn": {
+   "Value": {
+    "Ref": "LicenseSigningKey27943D4E"
+   }
+  }
+ },
+ "Conditions": {
+  "CDKMetadataAvailable": {
+   "Fn::Or": [
+    {
+     "Fn::Or": [
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "af-south-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-east-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-northeast-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-northeast-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-northeast-3"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-south-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-south-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-southeast-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-southeast-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-southeast-3"
+       ]
+      }
+     ]
+    },
+    {
+     "Fn::Or": [
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ap-southeast-4"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ca-central-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "ca-west-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "cn-north-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "cn-northwest-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-central-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-central-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-north-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-south-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-south-2"
+       ]
+      }
+     ]
+    },
+    {
+     "Fn::Or": [
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-west-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-west-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "eu-west-3"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "il-central-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "me-central-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "me-south-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "sa-east-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "us-east-1"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "us-east-2"
+       ]
+      },
+      {
+       "Fn::Equals": [
+        {
+         "Ref": "AWS::Region"
+        },
+        "us-west-1"
+       ]
+      }
+     ]
+    },
+    {
+     "Fn::Equals": [
+      {
+       "Ref": "AWS::Region"
+      },
+      "us-west-2"
+     ]
+    }
+   ]
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,34 @@
+{
+  "version": "53.0.0",
+  "files": {
+    "7b2a87503d5176a178ffd5d90d66baed6113292e365f761924a6e4f585ddb73b": {
+      "displayName": "SignLicenseFunction/Code",
+      "source": {
+        "path": "asset.7b2a87503d5176a178ffd5d90d66baed6113292e365f761924a6e4f585ddb73b",
+        "packaging": "zip"
+      },
+      "destinations": {
+        "current_account-current_region-34868485": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}",
+          "objectKey": "7b2a87503d5176a178ffd5d90d66baed6113292e365f761924a6e4f585ddb73b.zip",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-${AWS::Region}"
+        }
+      }
+    },
+    "290cad6c3c17955e8a76c4eaddef1bb2193ec029da076894622c5cb59368ea42": {
+      "displayName": "ChangeSafe-SigningApi Template",
+      "source": {
+        "path": "ChangeSafe-SigningApi.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-current_region-c1df149f": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}",
+          "objectKey": "290cad6c3c17955e8a76c4eaddef1bb2193ec029da076894622c5cb59368ea42.json",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-${AWS::Region}"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}
