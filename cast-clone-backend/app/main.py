@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from app.api import (
 )
 from app.config import Settings
 from app.services.deployment import init_deployment_id
+from app.services.license import LicenseState, get_license_state, load_license
 from app.services.neo4j import close_neo4j, init_neo4j
 from app.services.postgres import close_postgres, init_postgres
 from app.services.redis import close_redis, init_redis
@@ -108,6 +110,26 @@ async def _cleanup_stale_analyses() -> None:
         )
 
 
+async def _license_state_refresher(app: FastAPI) -> None:
+    """Every 5 minutes, re-evaluate license state (picks up expiry transitions)."""
+    while True:
+        try:
+            await asyncio.sleep(300)
+            new_state = await get_license_state()
+            old_state = app.state.license_state
+            if new_state != old_state:
+                app.state.license_state = new_state
+                await logger.ainfo(
+                    "license.state_changed",
+                    from_state=old_state.value,
+                    to_state=new_state.value,
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:  # noqa: BLE001
+            await logger.aerror("license.state_refresher_failed", error=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings()
@@ -116,6 +138,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_postgres(settings)
     installation_id = await init_deployment_id()
     app.state.installation_id = installation_id
+
+    # License loading — after installation_id is known
+    refresher_task: asyncio.Task[None] | None = None
+    if settings.license_disabled:
+        app.state.license_info = None
+        app.state.license_state = LicenseState.LICENSED_HEALTHY
+        await logger.awarning(
+            "license.disabled_via_settings",
+            note="LICENSE_DISABLED=true — license checks are bypassed",
+        )
+    else:
+        license_info, license_state = await load_license(settings, installation_id)
+        app.state.license_info = license_info
+        app.state.license_state = license_state
+        refresher_task = asyncio.create_task(_license_state_refresher(app))
+
     await init_neo4j(settings)
     await init_redis(settings)
 
@@ -125,6 +163,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await logger.ainfo("All services initialized")
     yield
     # Shutdown
+    if refresher_task is not None:
+        refresher_task.cancel()
+        try:
+            await refresher_task
+        except asyncio.CancelledError:
+            pass
     await close_redis()
     await close_neo4j()
     await close_postgres()
