@@ -6,6 +6,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconRail } from "./IconRail";
 import { ContextPanel, useHasContextPanel } from "./ContextPanel";
+import { LicenseBanner } from "./LicenseBanner";
 import { TopBar } from "./TopBar";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ export function GlobalShell({ children }: GlobalShellProps) {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
+      <LicenseBanner />
       {/* Top bar */}
       <TopBar />
 
