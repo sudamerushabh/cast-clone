@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from app.api.license import atomic_write_text
 from app.services import license as license_module
 from app.services.license import (
     ISSUER,
@@ -152,6 +155,39 @@ class TestDecodeAndVerify:
         with pytest.raises(LicenseVerificationError):
             decode_and_verify(bad, pub, "install-123")
 
+    def test_missing_required_claim_rejected(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """A token missing the required 'jti' claim must be rejected."""
+        priv, pub = keypair
+        now = int(time.time())
+        claims_without_jti = {
+            "iss": ISSUER,
+            "sub": "test-deployment",
+            "aud": "install-123",
+            "iat": now,
+            "nbf": now,
+            "exp": now + 3600,
+            # "jti" deliberately omitted
+            "license": {
+                "version": 1,
+                "tier": 1,
+                "loc_limit": 1000,
+                "customer": {
+                    "name": "ACME",
+                    "email": "a@b.com",
+                    "organization": "ACME",
+                },
+                "issued_by": "test",
+                "notes": "",
+            },
+        }
+        token = jwt.encode(
+            claims_without_jti, priv, algorithm="EdDSA", headers={"kid": "v1"}
+        )
+        with pytest.raises(LicenseVerificationError):
+            decode_and_verify(token, pub, "install-123")
+
 
 # -------- evaluate_state --------
 
@@ -211,6 +247,120 @@ class TestEvaluateState:
         token = _make_token(priv, aud="x", exp_offset=3600, loc_limit=1000)
         info = decode_and_verify(token, pub, "x")
         assert evaluate_state(info, cumulative=1000) == LicenseState.LICENSED_BLOCKED
+
+    def test_zero_loc_limit_means_unlimited(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """loc_limit=0 means unlimited; even very high cumulative LOC stays HEALTHY."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=0
+        )
+        info = decode_and_verify(token, pub, "x")
+        assert (
+            evaluate_state(info, cumulative=999_999)
+            == LicenseState.LICENSED_HEALTHY
+        )
+
+    def test_trial_tier_accepted(self, keypair: tuple[str, str]) -> None:
+        """A token with tier='trial' should decode and evaluate as HEALTHY."""
+        priv, pub = keypair
+        token = _make_token(
+            priv,
+            aud="x",
+            exp_offset=365 * 86400,
+            loc_limit=1_000_000,
+            tier="trial",
+        )
+        info = decode_and_verify(token, pub, "x")
+        assert info.license.tier == "trial"
+        assert evaluate_state(info, cumulative=100) == LicenseState.LICENSED_HEALTHY
+
+    def test_exactly_at_90_percent_loc_is_warn(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """cumulative == 90% of loc_limit (exactly) should be LICENSED_WARN."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=100_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        assert (
+            evaluate_state(info, cumulative=90_000) == LicenseState.LICENSED_WARN
+        )
+
+    def test_just_below_90_percent_loc_is_healthy(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """cumulative == 89999 with loc_limit=100000 is below 90% -> HEALTHY."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=100_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        assert (
+            evaluate_state(info, cumulative=89_999) == LicenseState.LICENSED_HEALTHY
+        )
+
+    def test_exactly_at_30_days_before_expiry_is_warn(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """exp - now_ts == 30 * 86400 (exactly). Condition is <=, so WARN."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=1_000_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        now_ts = info.exp - 30 * 86400
+        assert (
+            evaluate_state(info, cumulative=0, now_ts=now_ts)
+            == LicenseState.LICENSED_WARN
+        )
+
+    def test_just_over_30_days_before_expiry_is_healthy(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """exp - now_ts == 31 * 86400. More than 30 days -> HEALTHY."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=1_000_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        now_ts = info.exp - 31 * 86400
+        assert (
+            evaluate_state(info, cumulative=0, now_ts=now_ts)
+            == LicenseState.LICENSED_HEALTHY
+        )
+
+    def test_exactly_at_grace_cutoff_is_blocked(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """Token expired exactly 14 days ago -> now_ts == grace_cutoff -> BLOCKED."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=1_000_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        grace_cutoff = info.exp + 14 * 86400
+        assert (
+            evaluate_state(info, cumulative=0, now_ts=grace_cutoff)
+            == LicenseState.LICENSED_BLOCKED
+        )
+
+    def test_one_second_before_grace_cutoff_is_grace(
+        self, keypair: tuple[str, str]
+    ) -> None:
+        """now_ts == grace_cutoff - 1 -> still within grace -> GRACE."""
+        priv, pub = keypair
+        token = _make_token(
+            priv, aud="x", exp_offset=365 * 86400, loc_limit=1_000_000
+        )
+        info = decode_and_verify(token, pub, "x")
+        grace_cutoff = info.exp + 14 * 86400
+        assert (
+            evaluate_state(info, cumulative=0, now_ts=grace_cutoff - 1)
+            == LicenseState.LICENSED_GRACE
+        )
 
 
 # -------- load_license (integration of file IO + decode + cache) --------
@@ -309,3 +459,36 @@ class TestGetLicenseState:
     async def test_returns_unlicensed_when_no_cache(self) -> None:
         license_module._current_license = None
         assert await get_license_state() == LicenseState.UNLICENSED
+
+
+# -------- atomic_write_text --------
+
+
+class TestAtomicWriteText:
+    def test_creates_new_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "subdir" / "new_file.txt"
+        atomic_write_text(target, "hello world")
+        assert target.read_text(encoding="utf-8") == "hello world"
+
+    def test_overwrites_existing_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "existing.txt"
+        target.write_text("old content", encoding="utf-8")
+        atomic_write_text(target, "new content")
+        assert target.read_text(encoding="utf-8") == "new content"
+
+    def test_cleans_up_on_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """If os.replace raises, the tmp file is cleaned up and original preserved."""
+        target = tmp_path / "preserved.txt"
+        target.write_text("original", encoding="utf-8")
+
+        monkeypatch.setattr(
+            os, "replace", lambda *_args, **_kw: (_ for _ in ()).throw(OSError("boom"))
+        )
+        with pytest.raises(OSError, match="boom"):
+            atomic_write_text(target, "should not persist")
+
+        # Original file preserved
+        assert target.read_text(encoding="utf-8") == "original"
+        # Tmp file cleaned up
+        tmp_file = target.with_name(f".{target.name}.tmp")
+        assert not tmp_file.exists()
