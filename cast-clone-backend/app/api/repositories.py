@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.dependencies import require_license_writable
 from app.config import Settings
 from app.models.db import AnalysisRun, GitConnector, Project, Repository
 
@@ -136,7 +137,10 @@ async def _background_clone(
 
 
 @router.post(
-    "", response_model=RepositoryResponse, status_code=status.HTTP_201_CREATED
+    "",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def create_repository(
     body: RepositoryCreate,
@@ -352,6 +356,7 @@ async def sync_repository(
     "/{repo_id}/branches",
     response_model=ProjectBranchResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def add_branch(
     repo_id: str,
