@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.models.context import AnalysisContext
 from app.models.db import AnalysisRun, Project
 from app.orchestrator.progress import WebSocketProgressReporter
+from app.services.loc_usage import invalidate_cumulative_loc_cache
 from app.services.neo4j import GraphStore
 
 logger = structlog.get_logger(__name__)
@@ -357,6 +358,7 @@ async def run_analysis_pipeline(
         total_elapsed = time.monotonic() - pipeline_start
         project.status = "analyzed"
         run.status = "completed"
+        invalidate_cumulative_loc_cache()
         run.completed_at = datetime.now(UTC)
         run.node_count = context.graph.node_count
         run.edge_count = context.graph.edge_count
