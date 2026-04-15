@@ -58,6 +58,8 @@ import type {
   ApiKeyResponse,
   ApiKeyCreateResponse,
   UsageSummaryResponse,
+  LicenseStatusResponse,
+  InstallationIdResponse,
 } from "./types";
 
 const BASE_URL =
@@ -901,4 +903,24 @@ export async function getAiUsageSummary(
   return apiFetch<UsageSummaryResponse>(
     `/api/v1/admin/ai-usage?days=${days}`,
   );
+}
+
+// ── License Management ──
+
+export async function getLicenseStatus(): Promise<LicenseStatusResponse> {
+  return apiFetch<LicenseStatusResponse>("/api/v1/license/status");
+}
+
+export async function getInstallationId(): Promise<InstallationIdResponse> {
+  return apiFetch<InstallationIdResponse>("/api/v1/license/installation-id");
+}
+
+export async function uploadLicense(file: File): Promise<LicenseStatusResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<LicenseStatusResponse>("/api/v1/license/upload", {
+    method: "POST",
+    body: formData,
+    headers: {},  // Let browser set Content-Type with boundary
+  });
 }

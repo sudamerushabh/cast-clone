@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Monitor,
   Bot,
+  Shield,
   Users,
   Activity,
 } from "lucide-react";
@@ -122,6 +123,7 @@ export function ContextPanel() {
         pathname={pathname}
         items={[
           { label: "System", href: "/settings/system", icon: Monitor },
+          { label: "License", href: "/settings/license", icon: Shield },
           { label: "AI Configuration", href: "/settings/ai", icon: Bot },
           { label: "Team", href: "/settings/team", icon: Users },
           { label: "API Keys", href: "/settings/api-keys", icon: Key },

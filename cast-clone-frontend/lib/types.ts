@@ -767,3 +767,32 @@ export interface SavedViewListItem {
   created_at: string;
   updated_at: string;
 }
+
+// ── License Management ──
+
+export type LicenseState =
+  | "UNLICENSED"
+  | "LICENSED_HEALTHY"
+  | "LICENSED_WARN"
+  | "LICENSED_GRACE"
+  | "LICENSED_BLOCKED";
+
+export interface LicenseStatusResponse {
+  state: LicenseState;
+  installation_id: string;
+  license_disabled: boolean;
+  tier: number | null;
+  loc_limit: number | null;
+  loc_used: number | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_organization: string | null;
+  issued_by: string | null;
+  expires_at: number | null;
+  issued_at: number | null;
+  notes: string | null;
+}
+
+export interface InstallationIdResponse {
+  installation_id: string;
+}
