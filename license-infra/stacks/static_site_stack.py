@@ -83,7 +83,7 @@ class StaticSiteStack(cdk.Stack):
         self.user_pool_client = self.user_pool.add_client(
             "OperatorUiClient",
             user_pool_client_name="ChangeSafe-OperatorUI",
-            auth_flows=cognito.AuthFlow(user_password=True),
+            auth_flows=cognito.AuthFlow(user_password=True, user_srp=True),
         )
 
         # ------------------------------------------------------------------ #
