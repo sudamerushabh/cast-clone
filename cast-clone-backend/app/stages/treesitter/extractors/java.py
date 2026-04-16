@@ -4,6 +4,7 @@ Parses a single Java source file and produces GraphNode + GraphEdge lists
 covering: packages, imports, classes, interfaces, methods, constructors,
 fields, method calls, object creation, annotations, and SQL-tagged strings.
 """
+
 from __future__ import annotations
 
 import re
@@ -135,9 +136,13 @@ def _extract_annotation_value(val_node: Node) -> str | list[str] | None:
                 values.extend(extracted)
         return values if values else None
     if val_node.type in (
-        "true", "false", "decimal_integer_literal",
-        "decimal_floating_point_literal", "identifier",
-        "field_access", "scoped_identifier",
+        "true",
+        "false",
+        "decimal_integer_literal",
+        "decimal_floating_point_literal",
+        "identifier",
+        "field_access",
+        "scoped_identifier",
     ):
         return _node_text(val_node)
     # Fallback: return raw text for other expression types
@@ -281,11 +286,7 @@ def _find_enclosing_class(node: Node) -> Node | None:
     """Walk up the tree to find the enclosing class/interface/enum declaration."""
     current = node.parent
     while current is not None:
-        if current.type in (
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-        ):
+        if current.type in _NESTING_NODE_TYPES:
             return current
         current = current.parent
     return None
@@ -301,29 +302,46 @@ def _find_enclosing_method(node: Node) -> Node | None:
     return None
 
 
+_NESTING_NODE_TYPES: tuple[str, ...] = (
+    "class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+)
+
+
 def _class_fqn(package: str, class_node: Node) -> str:
-    """Build FQN for a class, handling nested classes."""
+    """Build FQN for a class/interface/enum, handling nested declarations.
+
+    Walks up the tree-sitter syntax tree from the given node, collecting
+    the simple name of every ancestor class/interface/enum declaration.
+    The result is joined with '.' after the package so that nested types
+    cannot collide with top-level types of the same simple name.
+
+    Example:
+        package com.foo;
+        class Outer { class Inner {} }        -> com.foo.Outer.Inner
+        class A { class B { class C {} } }    -> com.foo.A.B.C
+    """
     name_node = class_node.child_by_field_name("name")
-    name = _node_text(name_node) if name_node is not None else "Unknown"
+    simple_name = _node_text(name_node) if name_node is not None else "Unknown"
 
-    # Check for nesting
-    parts = [name]
-    parent = class_node.parent
-    while parent is not None:
-        if parent.type in (
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-        ):
-            parent_name = parent.child_by_field_name("name")
+    # Walk UP the tree collecting ancestor class/interface/enum names.
+    ancestors: list[str] = []
+    current = class_node.parent
+    while current is not None:
+        if current.type in _NESTING_NODE_TYPES:
+            parent_name = current.child_by_field_name("name")
             if parent_name is not None:
-                parts.insert(0, _node_text(parent_name))
-        parent = parent.parent
+                ancestors.append(_node_text(parent_name))
+        current = current.parent
+    ancestors.reverse()
 
-    class_name = ".".join(parts)
+    fqn_parts: list[str] = []
     if package:
-        return f"{package}.{class_name}"
-    return class_name
+        fqn_parts.append(package)
+    fqn_parts.extend(ancestors)
+    fqn_parts.append(simple_name)
+    return ".".join(p for p in fqn_parts if p)
 
 
 def _walk_all(root: Node, node_type: str) -> list[Node]:
@@ -452,9 +470,7 @@ class JavaExtractor:
         )
 
         # Step 9: Parse object creation
-        self._extract_object_creation(
-            root, package, file_path, import_map, edges
-        )
+        self._extract_object_creation(root, package, file_path, import_map, edges)
 
         # Step 10: Tag SQL strings
         self._tag_sql_strings(root, package, nodes)
@@ -477,9 +493,12 @@ class JavaExtractor:
 
             # Add CONTAINS edges from module to top-level classes/interfaces
             for node in nodes:
-                if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE) and node.fqn.startswith(package + "."):
+                if node.kind in (
+                    NodeKind.CLASS,
+                    NodeKind.INTERFACE,
+                ) and node.fqn.startswith(package + "."):
                     # Only direct children (no nested dots after the package prefix)
-                    relative = node.fqn[len(package) + 1:]
+                    relative = node.fqn[len(package) + 1 :]
                     if "." not in relative:
                         edges.append(
                             GraphEdge(
@@ -697,8 +716,12 @@ class JavaExtractor:
                                     target_name = _node_text(type_node)
                                 elif type_node.type == "generic_type":
                                     ti = type_node.child_by_field_name("type") or next(
-                                        (c for c in type_node.children
-                                         if c.type == "type_identifier"), None
+                                        (
+                                            c
+                                            for c in type_node.children
+                                            if c.type == "type_identifier"
+                                        ),
+                                        None,
                                     )
                                     if ti is None:
                                         continue
@@ -749,9 +772,7 @@ class JavaExtractor:
             # Parameters
             params_node = method_node.child_by_field_name("parameters")
             params = (
-                _parse_formal_parameters(params_node)
-                if params_node is not None
-                else []
+                _parse_formal_parameters(params_node) if params_node is not None else []
             )
 
             properties: dict[str, Any] = {
@@ -812,9 +833,7 @@ class JavaExtractor:
 
             params_node = ctor_node.child_by_field_name("parameters")
             params = (
-                _parse_formal_parameters(params_node)
-                if params_node is not None
-                else []
+                _parse_formal_parameters(params_node) if params_node is not None else []
             )
 
             properties: dict[str, Any] = {
@@ -920,7 +939,7 @@ class JavaExtractor:
             )
 
     def _build_local_var_map(self, method_node: Node) -> dict[str, str]:
-        """Walk local_variable_declaration nodes in a method body to build {name: type}."""
+        """Walk local_variable_declaration nodes in a method to build {name: type}."""
         result: dict[str, str] = {}
         for decl in _walk_all(method_node, "local_variable_declaration"):
             type_node = decl.child_by_field_name("type")
@@ -1096,17 +1115,37 @@ class JavaExtractor:
                 tagged = graph_node.properties.setdefault("tagged_strings", [])
                 tagged.append(text)
 
-
     # Primitives and java.lang types that should not generate DEPENDS_ON edges
     _SKIP_TYPES: set[str] = {
-        "void", "int", "long", "short", "byte", "float", "double",
-        "boolean", "char", "String", "Integer", "Long", "Short",
-        "Byte", "Float", "Double", "Boolean", "Character", "Object",
-        "Class", "Void", "Number",
+        "void",
+        "int",
+        "long",
+        "short",
+        "byte",
+        "float",
+        "double",
+        "boolean",
+        "char",
+        "String",
+        "Integer",
+        "Long",
+        "Short",
+        "Byte",
+        "Float",
+        "Double",
+        "Boolean",
+        "Character",
+        "Object",
+        "Class",
+        "Void",
+        "Number",
     }
 
     def _resolve_type_fqn(
-        self, type_text: str, import_map: dict[str, str], package: str,
+        self,
+        type_text: str,
+        import_map: dict[str, str],
+        package: str,
     ) -> str | None:
         """Resolve a type name to a FQN, skipping primitives and java.lang types.
 

@@ -101,12 +101,18 @@ public class Dog extends Animal implements Runnable, Serializable {
         assert inherits is not None
 
         impl_runnable = _find_edge(
-            edges, "com.example.Dog", "Runnable", EdgeKind.IMPLEMENTS,
+            edges,
+            "com.example.Dog",
+            "Runnable",
+            EdgeKind.IMPLEMENTS,
         )
         assert impl_runnable is not None
 
         impl_serializable = _find_edge(
-            edges, "com.example.Dog", "Serializable", EdgeKind.IMPLEMENTS,
+            edges,
+            "com.example.Dog",
+            "Serializable",
+            EdgeKind.IMPLEMENTS,
         )
         assert impl_serializable is not None
 
@@ -139,7 +145,8 @@ public interface AccountRepo extends JpaRepository<Account, Long> {}
 """
         nodes, edges = extractor.extract(source, "AccountRepo.java", "/project")
         inherits_edges = [
-            e for e in edges
+            e
+            for e in edges
             if "AccountRepo" in e.source_fqn and e.kind == EdgeKind.INHERITS
         ]
         assert len(inherits_edges) == 1
@@ -179,8 +186,10 @@ public class UserService {
 
         # CONTAINS edges
         contains_find = _find_edge(
-            edges, "com.example.UserService",
-            "com.example.UserService.findById", EdgeKind.CONTAINS,
+            edges,
+            "com.example.UserService",
+            "com.example.UserService.findById",
+            EdgeKind.CONTAINS,
         )
         assert contains_find is not None
 
@@ -236,8 +245,10 @@ public class UserService {
 
         # CONTAINS edges
         contains = _find_edge(
-            edges, "com.example.UserService",
-            "com.example.UserService.repo", EdgeKind.CONTAINS,
+            edges,
+            "com.example.UserService",
+            "com.example.UserService.repo",
+            EdgeKind.CONTAINS,
         )
         assert contains is not None
 
@@ -371,8 +382,10 @@ public class UserService {
         assert ctor.properties.get("params") == ["UserRepository repo"]
 
         contains = _find_edge(
-            edges, "com.example.UserService",
-            "com.example.UserService.<init>", EdgeKind.CONTAINS,
+            edges,
+            "com.example.UserService",
+            "com.example.UserService.<init>",
+            EdgeKind.CONTAINS,
         )
         assert contains is not None
 
@@ -435,9 +448,7 @@ public class UserService {
             self.FULL_SOURCE, "UserService.java", "/project"
         )
 
-        method_names = {
-            n.fqn for n in nodes if n.kind == NodeKind.FUNCTION
-        }
+        method_names = {n.fqn for n in nodes if n.kind == NodeKind.FUNCTION}
         assert "com.example.service.UserService.<init>" in method_names
         assert "com.example.service.UserService.findById" in method_names
         assert "com.example.service.UserService.createUser" in method_names
@@ -448,9 +459,7 @@ public class UserService {
             self.FULL_SOURCE, "UserService.java", "/project"
         )
 
-        field_names = {
-            n.fqn for n in nodes if n.kind == NodeKind.FIELD
-        }
+        field_names = {n.fqn for n in nodes if n.kind == NodeKind.FIELD}
         assert "com.example.service.UserService.userRepo" in field_names
         assert "com.example.service.UserService.TABLE" in field_names
 
@@ -473,7 +482,8 @@ public class UserService {
         call_edges = _find_edges(edges, EdgeKind.CALLS)
         # createUser calls new User() and userRepo.save()
         create_calls = [
-            e for e in call_edges
+            e
+            for e in call_edges
             if e.source_fqn == "com.example.service.UserService.createUser"
         ]
         call_targets = {e.target_fqn for e in create_calls}
@@ -495,9 +505,7 @@ public class UserService {
             self.FULL_SOURCE, "UserService.java", "/project"
         )
 
-        delete_method = _find_node(
-            nodes, "com.example.service.UserService.deleteAll"
-        )
+        delete_method = _find_node(nodes, "com.example.service.UserService.deleteAll")
         assert delete_method is not None
         tagged = delete_method.properties.get("tagged_strings", [])
         assert any("DELETE" in s for s in tagged)
@@ -513,7 +521,7 @@ public class UserService {
 
         assert class_count == 1
         assert method_count == 4  # constructor + 3 methods
-        assert field_count == 2   # userRepo + TABLE
+        assert field_count == 2  # userRepo + TABLE
 
 
 # ──────────────────────────────────────────────
@@ -637,3 +645,161 @@ public class UserService {
         assert len(static_calls) == 1
         assert static_calls[0].target_fqn == "java.util.Collections.emptyList"
         assert static_calls[0].confidence == Confidence.MEDIUM
+
+
+# ──────────────────────────────────────────────
+# Nested-class FQN collision regression (CHAN-76)
+# ──────────────────────────────────────────────
+class TestNestedClassFqn:
+    """Ensure nested types carry the outer class name in their FQN so that
+    a ``com.foo.Outer.Inner`` never collides with a top-level
+    ``com.foo.Inner`` declared elsewhere."""
+
+    def test_nested_class_fqn_includes_outer(self, extractor):
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public static class Inner {
+    }
+}
+"""
+        nodes, _edges = extractor.extract(source, "Outer.java", "/project")
+
+        outer = _find_node(nodes, "com.foo.Outer")
+        assert outer is not None
+        assert outer.kind == NodeKind.CLASS
+
+        inner = _find_node(nodes, "com.foo.Outer.Inner")
+        assert inner is not None, (
+            "Nested class FQN must include the outer class name, "
+            "got FQNs: " + ", ".join(n.fqn for n in nodes)
+        )
+        assert inner.name == "Inner"
+        assert inner.kind == NodeKind.CLASS
+
+        # Must NOT be written as a top-level com.foo.Inner
+        assert _find_node(nodes, "com.foo.Inner") is None
+
+    def test_deeply_nested_class_fqn(self, extractor):
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public static class Mid {
+        public static class Inner {
+        }
+    }
+}
+"""
+        nodes, _edges = extractor.extract(source, "Outer.java", "/project")
+
+        inner = _find_node(nodes, "com.foo.Outer.Mid.Inner")
+        assert inner is not None, (
+            "Deeply nested class FQN must include all outer class names, "
+            "got FQNs: " + ", ".join(n.fqn for n in nodes)
+        )
+        assert inner.kind == NodeKind.CLASS
+
+        # Neither the shallower collision path nor the bare form should exist
+        assert _find_node(nodes, "com.foo.Mid.Inner") is None
+        assert _find_node(nodes, "com.foo.Inner") is None
+
+    def test_method_in_nested_class_fqn(self, extractor):
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public static class Inner {
+        public void doIt() {
+        }
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "Outer.java", "/project")
+
+        method = _find_node(nodes, "com.foo.Outer.Inner.doIt")
+        assert method is not None, (
+            "Method in nested class must carry the outer class in its FQN, "
+            "got FQNs: " + ", ".join(n.fqn for n in nodes)
+        )
+        assert method.kind == NodeKind.FUNCTION
+
+        # CONTAINS edge from the nested class to the method
+        contains = _find_edge(
+            edges,
+            "com.foo.Outer.Inner",
+            "com.foo.Outer.Inner.doIt",
+            EdgeKind.CONTAINS,
+        )
+        assert contains is not None
+
+        # Must not leak a collision FQN
+        assert _find_node(nodes, "com.foo.Inner.doIt") is None
+
+    def test_top_level_classes_unchanged(self, extractor):
+        """Sibling classes at the package level must not gain a duplicated segment."""
+        source = b"""\
+package com.foo;
+
+public class First {
+}
+
+class Second {
+}
+"""
+        nodes, _edges = extractor.extract(source, "Siblings.java", "/project")
+
+        first = _find_node(nodes, "com.foo.First")
+        assert first is not None
+        second = _find_node(nodes, "com.foo.Second")
+        assert second is not None
+
+        # Guard against regressions where the walker double-counted the node itself.
+        for bogus in (
+            "com.foo.First.First",
+            "com.foo.Second.Second",
+            "com.foo.First.Second",
+        ):
+            assert _find_node(nodes, bogus) is None, (
+                f"Top-level classes must not produce nested-looking FQN {bogus}"
+            )
+
+    def test_two_files_with_same_inner_name_no_collision(self, extractor):
+        """``A.Inner`` and ``B.Inner`` in the same package must get distinct FQNs."""
+        source_a = b"""\
+package com.foo;
+
+public class A {
+    public static class Inner {
+        public void ping() {}
+    }
+}
+"""
+        source_b = b"""\
+package com.foo;
+
+public class B {
+    public static class Inner {
+        public void pong() {}
+    }
+}
+"""
+        nodes_a, _ = extractor.extract(source_a, "A.java", "/project")
+        nodes_b, _ = extractor.extract(source_b, "B.java", "/project")
+
+        a_inner = _find_node(nodes_a, "com.foo.A.Inner")
+        b_inner = _find_node(nodes_b, "com.foo.B.Inner")
+        assert a_inner is not None
+        assert b_inner is not None
+        assert a_inner.fqn != b_inner.fqn
+
+        # And neither file should emit the collision-prone ``com.foo.Inner``.
+        assert _find_node(nodes_a, "com.foo.Inner") is None
+        assert _find_node(nodes_b, "com.foo.Inner") is None
+
+        # Methods must also be disambiguated by their outer class.
+        assert _find_node(nodes_a, "com.foo.A.Inner.ping") is not None
+        assert _find_node(nodes_b, "com.foo.B.Inner.pong") is not None
+        assert _find_node(nodes_a, "com.foo.Inner.ping") is None
+        assert _find_node(nodes_b, "com.foo.Inner.pong") is None
