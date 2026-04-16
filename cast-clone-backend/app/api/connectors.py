@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_current_user, require_admin
 from app.config import Settings
-from app.models.db import GitConnector
+from app.models.db import GitConnector, User
 from app.schemas.connectors import (
     BranchListResponse,
     ConnectorCreate,
@@ -67,10 +68,11 @@ async def _get_connector_or_404(
 )
 async def create_connector(
     body: ConnectorCreate,
+    admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> ConnectorResponse:
-    """Create a new git connector. Validates the token against the provider."""
+    """Create a new git connector. Validates the token. Admin only."""
     # Validate token by calling the provider API
     provider = create_provider(body.provider, body.base_url, body.token)
     try:
@@ -91,6 +93,7 @@ async def create_connector(
         encrypted_token=encrypted,
         status="connected",
         remote_username=user.username,
+        created_by=admin.id,
     )
     session.add(connector)
     await session.commit()
@@ -108,6 +111,7 @@ async def create_connector(
 async def list_connectors(
     offset: int = 0,
     limit: int = 50,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorListResponse:
     """List all git connectors."""
@@ -133,6 +137,7 @@ async def list_connectors(
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 async def get_connector(
     connector_id: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorResponse:
     """Get a single connector by ID."""
@@ -144,10 +149,11 @@ async def get_connector(
 async def update_connector(
     connector_id: str,
     body: ConnectorUpdate,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> ConnectorResponse:
-    """Update a connector's name or token."""
+    """Update a connector's name or token. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
 
     if body.name is not None:
@@ -181,9 +187,10 @@ async def update_connector(
 )
 async def delete_connector(
     connector_id: str,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Delete a connector."""
+    """Delete a connector. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
     await session.delete(connector)
     await session.commit()
@@ -195,10 +202,11 @@ async def delete_connector(
 )
 async def test_connector(
     connector_id: str,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> ConnectorTestResponse:
-    """Test a connector's token validity."""
+    """Test a connector's token validity. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
     token = decrypt_token(connector.encrypted_token, settings.secret_key)
     provider = create_provider(connector.provider, connector.base_url, token)
@@ -225,6 +233,7 @@ async def list_remote_repos(
     page: int = 1,
     per_page: int = 30,
     search: str | None = None,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> RemoteRepoListResponse:
@@ -267,6 +276,7 @@ async def get_remote_repo(
     connector_id: str,
     owner: str,
     repo: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> RemoteRepoResponse:
@@ -302,6 +312,7 @@ async def list_remote_branches(
     connector_id: str,
     owner: str,
     repo: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> BranchListResponse:

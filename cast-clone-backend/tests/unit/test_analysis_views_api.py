@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.analysis_views import get_graph_store
 from app.main import app
+from app.services.postgres import get_session
 
 
 @pytest.fixture
@@ -26,7 +27,16 @@ def mock_graph_store():
     async def override_get_graph_store():
         return mock_store
 
+    # Provide a stub session so FastAPI's dependency resolution doesn't
+    # hit the real (uninitialised) _session_factory. Admins (default when
+    # AUTH_DISABLED=true) short-circuit ownership checks before any DB call.
+    stub_session = MagicMock()
+
+    async def override_get_session():
+        yield stub_session
+
     app.dependency_overrides[get_graph_store] = override_get_graph_store
+    app.dependency_overrides[get_session] = override_get_session
     yield mock_store
     app.dependency_overrides.clear()
 

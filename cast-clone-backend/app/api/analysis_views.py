@@ -7,7 +7,12 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.api.dependencies import get_current_user
+from app.models.db import Project, User
 from app.schemas.analysis_views import (
     AffectedNode,
     CircularDependenciesResponse,
@@ -27,6 +32,7 @@ from app.schemas.analysis_views import (
     RankedItem,
 )
 from app.services.neo4j import Neo4jGraphStore, get_driver
+from app.services.postgres import get_session
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +42,30 @@ router = APIRouter(prefix="/api/v1/analysis", tags=["analysis-views"])
 async def get_graph_store() -> Neo4jGraphStore:
     """Get a Neo4jGraphStore instance (FastAPI dependency)."""
     return Neo4jGraphStore(get_driver())
+
+
+async def _ensure_project_access(
+    project_id: str, user: User, session: AsyncSession
+) -> None:
+    """Raise 403/404 if the caller can't see this project's analysis data."""
+    if user.role == "admin":
+        return
+    result = await session.execute(
+        select(Project)
+        .options(selectinload(Project.repository))
+        .where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found",
+        )
+    if project.repository is not None and project.repository.created_by != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
 
 
 # ── 1. Impact Analysis ──────────────────────────────────
@@ -52,9 +82,12 @@ async def impact_analysis(
     # NOTE: Cypher does not support parameterized relationship hop counts;
     # max_depth is validated via Query(ge=1, le=10) to prevent injection.
     max_depth: int = Query(5, ge=1, le=10),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> ImpactAnalysisResponse:
     """Compute blast radius for a node."""
+    await _ensure_project_access(project_id, user, session)
     try:
         if direction == "downstream":
             cypher = (
@@ -185,9 +218,12 @@ async def find_path(
     # NOTE: Cypher does not support parameterized relationship hop counts;
     # max_depth is validated via Query(ge=1, le=20) to prevent injection.
     max_depth: int = Query(10, ge=1, le=20),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> PathFinderResponse:
     """Find shortest path between two nodes."""
+    await _ensure_project_access(project_id, user, session)
     try:
         cypher = (
             f"MATCH path = shortestPath("
@@ -245,9 +281,12 @@ async def find_path(
 )
 async def list_communities(
     project_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> CommunitiesResponse:
     """List all detected communities."""
+    await _ensure_project_access(project_id, user, session)
     try:
         cypher = (
             "MATCH (c:Class) "
@@ -286,9 +325,12 @@ async def list_communities(
 async def circular_dependencies(
     project_id: str,
     level: str = Query("module", pattern="^(module|class)$"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> CircularDependenciesResponse:
     """Detect circular dependency cycles."""
+    await _ensure_project_access(project_id, user, session)
     try:
         if level == "module":
             cypher = (
@@ -339,9 +381,12 @@ async def dead_code(
     project_id: str,
     node_type: str = Query("function", alias="type"),
     min_loc: int = Query(0, alias="minLoc"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> DeadCodeResponse:
     """Find dead code candidates (nodes with no incoming calls)."""
+    await _ensure_project_access(project_id, user, session)
     try:
         if node_type == "function":
             cypher = (
@@ -403,9 +448,12 @@ async def dead_code(
 )
 async def metrics(
     project_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> MetricsResponse:
     """Get overview metrics for a project."""
+    await _ensure_project_access(project_id, user, session)
     try:
         # Overview stats
         overview_cypher = (
@@ -510,9 +558,12 @@ async def metrics(
 async def node_details(
     project_id: str,
     node_fqn: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> NodeDetailResponse:
     """Get enhanced details for a specific node."""
+    await _ensure_project_access(project_id, user, session)
     try:
         # Get the node
         node_record = await store.query_single(
