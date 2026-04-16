@@ -70,3 +70,55 @@ def test_export_accepts_valid_edge_fields(client: TestClient) -> None:
         params={"fields": "source,target,type"},
     )
     assert resp.status_code != 400
+
+
+def test_export_rejects_empty_fields_param(client: TestClient) -> None:
+    resp = client.get(
+        "/api/v1/export/proj/nodes.csv",
+        params={"fields": ""},
+    )
+    assert resp.status_code == 400
+    assert "must not be empty" in resp.text.lower()
+
+
+def test_export_rejects_whitespace_only_fields(client: TestClient) -> None:
+    resp = client.get(
+        "/api/v1/export/proj/nodes.csv",
+        params={"fields": "   ,  ,   "},
+    )
+    assert resp.status_code == 400
+
+
+def test_export_rejects_duplicate_field_names(client: TestClient) -> None:
+    resp = client.get(
+        "/api/v1/export/proj/nodes.csv",
+        params={"fields": "fqn,fqn,name"},
+    )
+    assert resp.status_code == 400
+    assert "duplicate" in resp.text.lower()
+
+
+def test_export_rejects_case_variant_field(client: TestClient) -> None:
+    # Neo4j properties are case-sensitive. 'FQN' is not a valid property.
+    resp = client.get(
+        "/api/v1/export/proj/nodes.csv",
+        params={"fields": "FQN"},
+    )
+    assert resp.status_code == 400
+
+
+def test_export_graph_json_rejects_unknown_level(client: TestClient) -> None:
+    resp = client.get(
+        "/api/v1/export/proj/graph.json",
+        params={"level": "molecule"},  # not module/class
+    )
+    assert resp.status_code == 400
+
+
+def test_export_impact_rejects_unknown_direction(client: TestClient) -> None:
+    resp = client.get(
+        "/api/v1/export/proj/impact.csv",
+        params={"node": "com.example.Foo", "direction": "sideways"},
+    )
+    # 400 for the direction validation (before any Neo4j hit)
+    assert resp.status_code == 400

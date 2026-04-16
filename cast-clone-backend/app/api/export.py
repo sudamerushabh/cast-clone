@@ -32,21 +32,36 @@ _ALLOWED_NODE_FIELDS: frozenset[str] = frozenset({
 
 
 # Whitelist of edge field names allowed in the `fields` query param for
-# edge exports. The Cypher template is fixed; this whitelist is used to
-# filter the projected CSV columns (DictWriter fieldnames) only.
+# edge exports. The Cypher template is fixed; this whitelist must match
+# exactly what the edge Cypher RETURN projects. If you add a column to
+# the Cypher, add it here — and vice versa.
 _ALLOWED_EDGE_FIELDS: frozenset[str] = frozenset({
-    "source", "target", "type", "weight", "confidence", "evidence",
+    "source", "target", "type", "weight",
 })
 
 
-def _validate_fields(raw: str, allowed: frozenset[str]) -> list[str]:
-    """Validate and parse the `fields` query param against a whitelist.
+# Whitelist of level values accepted by the graph.json endpoint.
+_ALLOWED_GRAPH_LEVELS: frozenset[str] = frozenset({"module", "class"})
 
-    Returns the ordered list of validated field names. Raises 400 if the
-    caller passes any name outside the whitelist. Empty input yields an
-    empty list.
+
+# Whitelist of direction values accepted by the impact.csv endpoint.
+_ALLOWED_IMPACT_DIRECTIONS: frozenset[str] = frozenset(
+    {"downstream", "upstream", "both"}
+)
+
+
+def _validate_fields(raw: str, allowed: frozenset[str]) -> list[str]:
+    """Validate a comma-separated field list against a whitelist.
+
+    Comparison is case-sensitive; Neo4j property names must match exactly.
+    Raises 400 for empty input, unknown fields, or duplicate names.
     """
     fields = [f.strip() for f in raw.split(",") if f.strip()]
+    if not fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'fields' must not be empty.",
+        )
     bad = [f for f in fields if f not in allowed]
     if bad:
         raise HTTPException(
@@ -56,7 +71,41 @@ def _validate_fields(raw: str, allowed: frozenset[str]) -> list[str]:
                 f"Allowed: {sorted(allowed)}"
             ),
         )
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for f in fields:
+        if f in seen:
+            dupes.append(f)
+        seen.add(f)
+    if dupes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Duplicate field(s): {', '.join(sorted(set(dupes)))}",
+        )
     return fields
+
+
+def _validate_level(level: str) -> str:
+    """Reject unknown graph-export levels before they reach Cypher."""
+    if level not in _ALLOWED_GRAPH_LEVELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"level must be one of: {sorted(_ALLOWED_GRAPH_LEVELS)}",
+        )
+    return level
+
+
+def _validate_direction(direction: str) -> str:
+    """Reject unknown impact directions before they reach Cypher."""
+    if direction not in _ALLOWED_IMPACT_DIRECTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"direction must be one of: "
+                f"{sorted(_ALLOWED_IMPACT_DIRECTIONS)}"
+            ),
+        )
+    return direction
 
 
 async def _neo4j_query(
@@ -171,6 +220,7 @@ async def export_graph_json(
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export full graph data as JSON."""
+    level = _validate_level(level)
     kind_filter = "n.kind IN ['Module']" if level == "module" else "true"
 
     nodes_cypher = f"""
@@ -222,6 +272,7 @@ async def export_impact_csv(
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export impact analysis result as CSV."""
+    direction = _validate_direction(direction)
     if direction == "downstream":
         path_pattern = "(start)-[*1..{depth}]->(affected)"
     elif direction == "upstream":
