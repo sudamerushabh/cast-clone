@@ -55,15 +55,17 @@ logger = structlog.get_logger(__name__)
 async def count_duplicates(
     driver: AsyncDriver, label: str, key: str, database: str = "neo4j"
 ) -> int:
-    """Return the number of duplicate nodes for ``label`` keyed on ``key``.
+    """Return the number of duplicate nodes for ``label``.
 
-    A duplicate is any node beyond the first one in each ``key`` bucket, so
-    the returned count equals the number of nodes that would be deleted.
+    Legacy pre-MERGE data only has ``fqn`` + ``app_name``; ``_id`` (the
+    post-fix composite key) is NULL on those rows. We group on the tuple
+    ``(fqn, app_name)`` so the script cleans up legacy duplicates without
+    collapsing nodes across projects.
     """
     cypher = (
         f"MATCH (n:`{label}`) "
-        f"WITH n.{key} AS k, collect(n) AS nodes "
-        "WHERE k IS NOT NULL AND size(nodes) > 1 "
+        "WITH n.fqn AS fqn, n.app_name AS app_name, collect(n) AS nodes "
+        "WHERE fqn IS NOT NULL AND size(nodes) > 1 "
         "RETURN sum(size(nodes) - 1) AS dup_count"
     )
     async with driver.session(database=database) as session:
@@ -89,8 +91,8 @@ async def delete_duplicates(
     """
     cypher = (
         f"MATCH (n:`{label}`) "
-        f"WITH n.{key} AS k, collect(n) AS nodes "
-        "WHERE k IS NOT NULL AND size(nodes) > 1 "
+        "WITH n.fqn AS fqn, n.app_name AS app_name, collect(n) AS nodes "
+        "WHERE fqn IS NOT NULL AND size(nodes) > 1 "
         "UNWIND nodes[1..] AS dup "
         "WITH dup LIMIT $batch_size "
         "DETACH DELETE dup "
