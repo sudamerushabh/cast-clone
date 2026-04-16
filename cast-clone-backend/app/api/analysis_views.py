@@ -17,6 +17,7 @@ from app.ai.summaries import (
     generate_trace_chat_reply,
     generate_trace_summary_text,
 )
+from app.ai.tools import CONTAINS_HIERARCHY_MAX_DEPTH
 from app.api.dependencies import get_accessible_project, get_current_user
 from app.config import get_settings
 from app.models.db import (
@@ -115,7 +116,7 @@ async def impact_analysis(
             cypher = (
                 "MATCH (start "
                 "{fqn: $fqn, app_name: $appName})"
-                "-[:CONTAINS*0..10]->(seed) "
+                f"-[:CONTAINS*0..{CONTAINS_HIERARCHY_MAX_DEPTH}]->(seed) "
                 "WITH collect(DISTINCT seed.fqn) "
                 "AS seed_fqns "
                 "MATCH (dependent "
@@ -160,7 +161,7 @@ async def impact_analysis(
             upstream_cypher = (
                 "MATCH (start "
                 "{fqn: $fqn, app_name: $appName})"
-                "-[:CONTAINS*0..10]->(seed) "
+                f"-[:CONTAINS*0..{CONTAINS_HIERARCHY_MAX_DEPTH}]->(seed) "
                 "WITH collect(DISTINCT seed.fqn) "
                 "AS seed_fqns "
                 "MATCH (dependent "

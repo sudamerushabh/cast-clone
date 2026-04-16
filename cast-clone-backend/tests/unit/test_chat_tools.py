@@ -3,6 +3,7 @@
 
 All tests mock GraphStore — no Neo4j needed.
 """
+
 from __future__ import annotations
 
 import json
@@ -78,9 +79,14 @@ class TestObjectDetails:
     @pytest.mark.asyncio
     async def test_found(self, ctx: ChatToolContext):
         ctx.graph_store.query_single.return_value = {
-            "fqn": "com.app.OrderService", "name": "OrderService",
-            "type": "Class", "language": "Java", "path": "src/OrderService.java",
-            "line": 10, "end_line": 100, "loc": 90,
+            "fqn": "com.app.OrderService",
+            "name": "OrderService",
+            "type": "Class",
+            "language": "Java",
+            "path": "src/OrderService.java",
+            "line": 10,
+            "end_line": 100,
+            "loc": 90,
         }
         ctx.graph_store.query.side_effect = [
             [{"fqn": "com.app.Caller", "name": "Caller", "type": "Class"}],  # callers
@@ -104,29 +110,52 @@ class TestImpactAnalysis:
     @pytest.mark.asyncio
     async def test_downstream(self, ctx: ChatToolContext):
         ctx.graph_store.query.return_value = [
-            {"fqn": "com.app.A", "name": "A", "type": "Class", "file": "A.java", "depth": 1},
-            {"fqn": "com.app.B", "name": "B", "type": "Function", "file": "B.java", "depth": 2},
+            {
+                "fqn": "com.app.A",
+                "name": "A",
+                "type": "Class",
+                "file": "A.java",
+                "depth": 1,
+            },
+            {
+                "fqn": "com.app.B",
+                "name": "B",
+                "type": "Function",
+                "file": "B.java",
+                "depth": 2,
+            },
         ]
-        result = await impact_analysis(ctx, node_fqn="com.app.X", direction="downstream", depth=5)
+        result = await impact_analysis(
+            ctx, node_fqn="com.app.X", direction="downstream", depth=5
+        )
         assert result["total"] == 2
         assert result["by_type"] == {"Class": 1, "Function": 1}
 
     @pytest.mark.asyncio
-    async def test_depth_capped_at_5(self, ctx: ChatToolContext):
+    async def test_depth_rejected_above_cap(self, ctx: ChatToolContext):
+        # Task 13 / CHAN-67: depth above the cap now raises instead of
+        # being silently clamped, to prevent Cypher injection via unvalidated
+        # interpolation and to surface caller bugs loudly.
         ctx.graph_store.query.return_value = []
-        await impact_analysis(ctx, node_fqn="com.app.X", direction="downstream", depth=20)
-        cypher = ctx.graph_store.query.call_args[0][0]
-        assert "*1..5]" in cypher  # Depth capped to match HTTP API cap
+        with pytest.raises(ValueError, match="between 1 and 5"):
+            await impact_analysis(
+                ctx, node_fqn="com.app.X", direction="downstream", depth=20
+            )
 
 
 class TestFindPath:
     @pytest.mark.asyncio
     async def test_path_found(self, ctx: ChatToolContext):
-        ctx.graph_store.query.return_value = [{
-            "nodes": [{"fqn": "A", "name": "A", "type": "Class"}, {"fqn": "B", "name": "B", "type": "Class"}],
-            "edges": [{"type": "CALLS", "source": "A", "target": "B"}],
-            "path_length": 1,
-        }]
+        ctx.graph_store.query.return_value = [
+            {
+                "nodes": [
+                    {"fqn": "A", "name": "A", "type": "Class"},
+                    {"fqn": "B", "name": "B", "type": "Class"},
+                ],
+                "edges": [{"type": "CALLS", "source": "A", "target": "B"}],
+                "path_length": 1,
+            }
+        ]
         result = await find_path(ctx, from_fqn="A", to_fqn="B")
         assert result["path_length"] == 1
 
@@ -146,7 +175,9 @@ class TestGetSourceCode:
 
         ctx.repo_path = str(tmp_path)
         ctx.graph_store.query_single.return_value = {
-            "path": "src/OrderService.java", "line": 2, "end_line": 4,
+            "path": "src/OrderService.java",
+            "line": 2,
+            "end_line": 4,
         }
         result = await get_source_code(ctx, node_fqn="com.app.OrderService")
         assert result["fqn"] == "com.app.OrderService"
@@ -162,7 +193,9 @@ class TestGetSourceCode:
     @pytest.mark.asyncio
     async def test_no_repo_path(self, ctx: ChatToolContext):
         ctx.graph_store.query_single.return_value = {
-            "path": "src/OrderService.java", "line": 2, "end_line": 4,
+            "path": "src/OrderService.java",
+            "line": 2,
+            "end_line": 4,
         }
         result = await get_source_code(ctx, node_fqn="com.app.OrderService")
         assert result["fqn"] == "com.app.OrderService"
@@ -186,8 +219,22 @@ class TestGetArchitecture:
     @pytest.mark.asyncio
     async def test_module_level(self, ctx: ChatToolContext):
         ctx.graph_store.query.side_effect = [
-            [{"fqn": "com.app.orders", "name": "orders", "type": "Module", "loc": 1000}],
-            [{"source": "com.app.orders", "target": "com.app.billing", "kind": "IMPORTS", "weight": 3}],
+            [
+                {
+                    "fqn": "com.app.orders",
+                    "name": "orders",
+                    "type": "Module",
+                    "loc": 1000,
+                }
+            ],
+            [
+                {
+                    "source": "com.app.orders",
+                    "target": "com.app.billing",
+                    "kind": "IMPORTS",
+                    "weight": 3,
+                }
+            ],
         ]
         result = await get_architecture(ctx, level="module")
         assert len(result["nodes"]) == 1
@@ -202,6 +249,7 @@ class TestTransactionGraph:
             [{"source": "com.app.A", "target": "com.app.B", "kind": "CALLS"}],
         ]
         from app.ai.tools import transaction_graph
+
         result = await transaction_graph(ctx, transaction_name="POST /orders")
         assert len(result["nodes"]) == 1
         assert len(result["edges"]) == 1
@@ -211,7 +259,13 @@ class TestListTransactions:
     @pytest.mark.asyncio
     async def test_returns_transactions(self, ctx: ChatToolContext):
         ctx.graph_store.query.return_value = [
-            {"name": "POST /orders", "http_method": "POST", "url_path": "/orders", "node_count": 12, "depth": 5},
+            {
+                "name": "POST /orders",
+                "http_method": "POST",
+                "url_path": "/orders",
+                "node_count": 12,
+                "depth": 5,
+            },
         ]
         result = await list_transactions(ctx)
         assert len(result) == 1
@@ -226,9 +280,15 @@ class TestToolDefinitions:
         defs = get_chat_tool_definitions()
         names = {d["name"] for d in defs}
         expected = {
-            "list_applications", "application_stats", "get_architecture",
-            "search_objects", "object_details", "impact_analysis",
-            "find_path", "list_transactions", "transaction_graph",
+            "list_applications",
+            "application_stats",
+            "get_architecture",
+            "search_objects",
+            "object_details",
+            "impact_analysis",
+            "find_path",
+            "list_transactions",
+            "transaction_graph",
             "get_source_code",
         }
         assert expected.issubset(names)

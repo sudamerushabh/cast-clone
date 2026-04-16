@@ -1,10 +1,12 @@
 """Aggregate per-node impact across all changed nodes in a PR."""
+
 from __future__ import annotations
 
 from collections import Counter
 
 import structlog
 
+from app.ai.tools import CONTAINS_HIERARCHY_MAX_DEPTH
 from app.pr_analysis.models import (
     AffectedNode,
     AggregatedImpact,
@@ -16,6 +18,7 @@ from app.services.neo4j import GraphStore
 logger = structlog.get_logger(__name__)
 
 _MAX_DEPTH = 5
+_HIERARCHY_MAX_DEPTH = CONTAINS_HIERARCHY_MAX_DEPTH
 
 
 class ImpactAggregator:
@@ -23,12 +26,22 @@ class ImpactAggregator:
         self._store = store
         self._app_name = app_name
 
-    async def compute_aggregated_impact(self, changed_nodes: list[ChangedNode]) -> AggregatedImpact:
+    async def compute_aggregated_impact(
+        self, changed_nodes: list[ChangedNode]
+    ) -> AggregatedImpact:
         if not changed_nodes:
             return AggregatedImpact(
-                changed_nodes=[], downstream_affected=[], upstream_dependents=[],
-                total_blast_radius=0, by_type={}, by_depth={}, by_layer={}, by_module={},
-                cross_tech_impacts=[], transactions_affected=[])
+                changed_nodes=[],
+                downstream_affected=[],
+                upstream_dependents=[],
+                total_blast_radius=0,
+                by_type={},
+                by_depth={},
+                by_layer={},
+                by_module={},
+                cross_tech_impacts=[],
+                transactions_affected=[],
+            )
 
         all_downstream: dict[str, AffectedNode] = {}
         all_upstream: dict[str, AffectedNode] = {}
@@ -42,7 +55,10 @@ class ImpactAggregator:
             downstream = await self._query_downstream(node.fqn)
             for d in downstream:
                 if d.fqn not in changed_fqns:
-                    if d.fqn not in all_downstream or d.depth < all_downstream[d.fqn].depth:
+                    if (
+                        d.fqn not in all_downstream
+                        or d.depth < all_downstream[d.fqn].depth
+                    ):
                         all_downstream[d.fqn] = d
 
             upstream = await self._query_upstream(node.fqn)
@@ -79,12 +95,20 @@ class ImpactAggregator:
 
         return AggregatedImpact(
             changed_nodes=changed_nodes,
-            downstream_affected=sorted(all_downstream.values(), key=lambda a: (a.depth, a.name)),
-            upstream_dependents=sorted(all_upstream.values(), key=lambda a: (a.depth, a.name)),
+            downstream_affected=sorted(
+                all_downstream.values(), key=lambda a: (a.depth, a.name)
+            ),
+            upstream_dependents=sorted(
+                all_upstream.values(), key=lambda a: (a.depth, a.name)
+            ),
             total_blast_radius=len(all_unique),
-            by_type=by_type, by_depth=by_depth, by_layer={}, by_module={},
+            by_type=by_type,
+            by_depth=by_depth,
+            by_layer={},
+            by_module={},
             cross_tech_impacts=deduped_ct,
-            transactions_affected=sorted(all_transactions))
+            transactions_affected=sorted(all_transactions),
+        )
 
     async def _enrich_node(self, node: ChangedNode) -> None:
         records = await self._store.query(
@@ -92,7 +116,8 @@ class ImpactAggregator:
             "OPTIONAL MATCH (caller)-[:CALLS]->(n) "
             "WITH n, count(DISTINCT caller) AS fan_in "
             "RETURN n.fqn AS fqn, fan_in, COALESCE(n.pagerank, 0.0) AS pagerank",
-            {"fqn": node.fqn, "appName": self._app_name})
+            {"fqn": node.fqn, "appName": self._app_name},
+        )
         if records:
             node.fan_in = records[0].get("fan_in", 0)
             node.is_hub = records[0].get("pagerank", 0) > 0.05
@@ -106,12 +131,14 @@ class ImpactAggregator:
             "RETURN affected.fqn AS fqn, affected.name AS name, "
             "  labels(affected)[0] AS type, affected.path AS file, depth "
             "ORDER BY depth, name",
-            {"fqn": fqn, "appName": self._app_name})
+            {"fqn": fqn, "appName": self._app_name},
+        )
         return [AffectedNode(**r) for r in records]
 
     async def _query_upstream(self, fqn: str) -> list[AffectedNode]:
         records = await self._store.query(
-            "MATCH (start {fqn: $fqn, app_name: $appName})-[:CONTAINS*0..10]->(seed) "
+            f"MATCH (start {{fqn: $fqn, app_name: $appName}})"
+            f"-[:CONTAINS*0..{_HIERARCHY_MAX_DEPTH}]->(seed) "
             "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
             f"MATCH (dep {{app_name: $appName}})"
             f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS|INCLUDES*1..{_MAX_DEPTH}]->(target) "
@@ -121,7 +148,8 @@ class ImpactAggregator:
             "RETURN dep.fqn AS fqn, dep.name AS name, "
             "  labels(dep)[0] AS type, dep.path AS file, depth "
             "ORDER BY name",
-            {"fqn": fqn, "appName": self._app_name, "fqnPrefix": fqn + "."})
+            {"fqn": fqn, "appName": self._app_name, "fqnPrefix": fqn + "."},
+        )
         return [AffectedNode(**r) for r in records]
 
     async def _query_cross_tech(self, fqn: str) -> list[CrossTechImpact]:
@@ -132,27 +160,44 @@ class ImpactAggregator:
             f"MATCH (start {{fqn: $fqn, app_name: $appName}})"
             f"-[:CALLS|INJECTS*0..{_MAX_DEPTH}]->(fn:Function)-[:HANDLES]->(ep:APIEndpoint) "
             "RETURN ep.method AS method, ep.path AS path, fn.fqn AS handler_fqn",
-            {"fqn": fqn, "appName": self._app_name})
+            {"fqn": fqn, "appName": self._app_name},
+        )
         for ep in eps:
-            impacts.append(CrossTechImpact(kind="api_endpoint", name=f"{ep['method']} {ep['path']}", detail=f"via {ep['handler_fqn']}"))
+            impacts.append(
+                CrossTechImpact(
+                    kind="api_endpoint",
+                    name=f"{ep['method']} {ep['path']}",
+                    detail=f"via {ep['handler_fqn']}",
+                )
+            )
 
         # Message topics
         mts = await self._store.query(
             f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
             f"-[:CALLS*0..{_MAX_DEPTH}]->(fn:Function)-[:PRODUCES|CONSUMES]->(mt:MessageTopic) "
             "RETURN mt.name AS topic, type(last(relationships(path))) AS direction",
-            {"fqn": fqn, "appName": self._app_name})
+            {"fqn": fqn, "appName": self._app_name},
+        )
         for mt in mts:
-            impacts.append(CrossTechImpact(kind="message_topic", name=mt["topic"], detail=mt["direction"]))
+            impacts.append(
+                CrossTechImpact(
+                    kind="message_topic", name=mt["topic"], detail=mt["direction"]
+                )
+            )
 
         # Database tables
         tables = await self._store.query(
             f"MATCH path = (start {{fqn: $fqn, app_name: $appName}})"
             f"-[:CALLS*0..{_MAX_DEPTH}]->(fn:Function)-[:READS|WRITES]->(t:Table) "
             "RETURN t.name AS table_name, type(last(relationships(path))) AS access_type",
-            {"fqn": fqn, "appName": self._app_name})
+            {"fqn": fqn, "appName": self._app_name},
+        )
         for t in tables:
-            impacts.append(CrossTechImpact(kind="database_table", name=t["table_name"], detail=t["access_type"]))
+            impacts.append(
+                CrossTechImpact(
+                    kind="database_table", name=t["table_name"], detail=t["access_type"]
+                )
+            )
 
         return impacts
 
@@ -160,5 +205,6 @@ class ImpactAggregator:
         records = await self._store.query(
             "MATCH (t:Transaction {app_name: $appName})-[:INCLUDES]->(fn {fqn: $fqn}) "
             "RETURN DISTINCT t.name AS transaction_name",
-            {"fqn": fqn, "appName": self._app_name})
+            {"fqn": fqn, "appName": self._app_name},
+        )
         return [r["transaction_name"] for r in records]

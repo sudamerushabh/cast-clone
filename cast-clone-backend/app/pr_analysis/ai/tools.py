@@ -2,6 +2,7 @@
 
 All tools read from the cloned repo filesystem or query Neo4j via GraphStore.query().
 """
+
 from __future__ import annotations
 
 import json
@@ -11,13 +12,24 @@ from pathlib import Path
 
 import structlog
 
+from app.ai.tools import (
+    CONTAINS_HIERARCHY_MAX_DEPTH,
+    FIND_PATH_MAX_DEPTH,
+    IMPACT_MAX_DEPTH,
+    _validate_depth,
+)
 from app.pr_analysis.ai.tool_context import ToolContext
 
 logger = structlog.get_logger(__name__)
 
 VALID_TOOL_NAMES = {
-    "read_file", "search_files", "grep_content", "list_directory",
-    "query_graph_node", "get_node_impact", "find_path",
+    "read_file",
+    "search_files",
+    "grep_content",
+    "list_directory",
+    "query_graph_node",
+    "get_node_impact",
+    "find_path",
 }
 
 # -- Tool definitions (Anthropic API format) --
@@ -32,9 +44,18 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path from repo root"},
-                    "line_start": {"type": "integer", "description": "Start line (1-indexed, optional)"},
-                    "line_end": {"type": "integer", "description": "End line (optional)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path from repo root",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "description": "Start line (1-indexed, optional)",
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "description": "End line (optional)",
+                    },
                 },
                 "required": ["path"],
             },
@@ -45,7 +66,10 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "glob_pattern": {"type": "string", "description": "Glob pattern (e.g. '**/*.java')"},
+                    "glob_pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (e.g. '**/*.java')",
+                    },
                 },
                 "required": ["glob_pattern"],
             },
@@ -56,9 +80,18 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regex pattern to search for"},
-                    "glob": {"type": "string", "description": "Optional glob filter (e.g. '*.java')"},
-                    "max_results": {"type": "integer", "description": "Max results (default 20, max 50)"},
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Optional glob filter (e.g. '*.java')",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max results (default 20, max 50)",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -69,8 +102,14 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path from repo root (empty=root)"},
-                    "recursive": {"type": "boolean", "description": "List recursively (default false, max 500 entries)"},
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path from repo root (empty=root)",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "List recursively (default false, max 500 entries)",
+                    },
                 },
                 "required": ["path"],
             },
@@ -81,7 +120,10 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "fqn": {"type": "string", "description": "Fully qualified name (e.g. 'com.app.OrderService.create')"},
+                    "fqn": {
+                        "type": "string",
+                        "description": "Fully qualified name (e.g. 'com.app.OrderService.create')",
+                    },
                 },
                 "required": ["fqn"],
             },
@@ -93,8 +135,14 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
                 "type": "object",
                 "properties": {
                     "fqn": {"type": "string", "description": "Node FQN to analyze"},
-                    "direction": {"type": "string", "enum": ["downstream", "upstream", "both"]},
-                    "depth": {"type": "integer", "description": "Max traversal depth (default 5, max 10)"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["downstream", "upstream", "both"],
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Max traversal depth (default 5, max 10)",
+                    },
                 },
                 "required": ["fqn", "direction"],
             },
@@ -114,23 +162,34 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
     ]
 
     if include_dispatch:
-        tools.append({
-            "name": "dispatch_subagent",
-            "description": "Dispatch an ad-hoc subagent for a focused investigation. The subagent gets 25 tool calls and all tools by default. Use for independent investigation tracks.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "role": {"type": "string", "description": "Descriptive role name (e.g. 'kafka_consumer_analyst')"},
-                    "prompt": {"type": "string", "description": "Focused task description for the subagent"},
-                    "tools": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": sorted(VALID_TOOL_NAMES)},
-                        "description": "Optional subset of tool names. If omitted, all tools are provided.",
+        tools.append(
+            {
+                "name": "dispatch_subagent",
+                "description": "Dispatch an ad-hoc subagent for a focused investigation. The subagent gets 25 tool calls and all tools by default. Use for independent investigation tracks.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "role": {
+                            "type": "string",
+                            "description": "Descriptive role name (e.g. 'kafka_consumer_analyst')",
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Focused task description for the subagent",
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": sorted(VALID_TOOL_NAMES),
+                            },
+                            "description": "Optional subset of tool names. If omitted, all tools are provided.",
+                        },
                     },
+                    "required": ["role", "prompt"],
                 },
-                "required": ["role", "prompt"],
-            },
-        })
+            }
+        )
 
     return tools
 
@@ -138,9 +197,7 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
 # -- Tool handlers --
 
 
-async def handle_tool_call(
-    ctx: ToolContext, tool_name: str, tool_input: dict
-) -> str:
+async def handle_tool_call(ctx: ToolContext, tool_name: str, tool_input: dict) -> str:
     """Execute a tool call and return a JSON string result."""
     try:
         if tool_name == "read_file":
@@ -191,7 +248,9 @@ async def _read_file(ctx: ToolContext, inp: dict) -> str:
         end = min(line_end or total_lines, total_lines)
         selected = lines[start:end]
         numbered = "\n".join(f"{start + i + 1}: {l}" for i, l in enumerate(selected))
-        return json.dumps({"content": numbered, "total_lines": total_lines, "truncated": False})
+        return json.dumps(
+            {"content": numbered, "total_lines": total_lines, "truncated": False}
+        )
 
     truncated = total_lines > 500
     if truncated:
@@ -202,7 +261,9 @@ async def _read_file(ctx: ToolContext, inp: dict) -> str:
     if truncated:
         content += f"\n\n[File truncated at 500 lines. Total: {total_lines} lines. Use line_start/line_end to read specific sections.]"
 
-    return json.dumps({"content": content, "total_lines": total_lines, "truncated": truncated})
+    return json.dumps(
+        {"content": content, "total_lines": total_lines, "truncated": truncated}
+    )
 
 
 async def _search_files(ctx: ToolContext, inp: dict) -> str:
@@ -226,11 +287,17 @@ async def _grep_content(ctx: ToolContext, inp: dict) -> str:
 
     try:
         result = subprocess.run(
-            cmd, cwd=ctx.repo_path, capture_output=True, text=True, timeout=10,
+            cmd,
+            cwd=ctx.repo_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         raw_lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
     except subprocess.TimeoutExpired:
-        return json.dumps({"matches": [], "total_matches": 0, "error": "Search timed out"})
+        return json.dumps(
+            {"matches": [], "total_matches": 0, "error": "Search timed out"}
+        )
 
     matches = []
     for line in raw_lines[:max_results]:
@@ -243,7 +310,9 @@ async def _grep_content(ctx: ToolContext, inp: dict) -> str:
             except ValueError:
                 continue
             content = parts[2]
-            matches.append({"file": file_path, "line": line_num, "content": content.strip()})
+            matches.append(
+                {"file": file_path, "line": line_num, "content": content.strip()}
+            )
 
     return json.dumps({"matches": matches, "total_matches": len(raw_lines)})
 
@@ -262,10 +331,12 @@ async def _list_directory(ctx: ToolContext, inp: dict) -> str:
     entries = []
     if recursive:
         for item in sorted(target.rglob("*"))[:500]:
-            entries.append({
-                "name": str(item.relative_to(target)),
-                "type": "dir" if item.is_dir() else "file",
-            })
+            entries.append(
+                {
+                    "name": str(item.relative_to(target)),
+                    "type": "dir" if item.is_dir() else "file",
+                }
+            )
     else:
         for item in sorted(target.iterdir()):
             entry = {"name": item.name, "type": "dir" if item.is_dir() else "file"}
@@ -314,7 +385,14 @@ async def _query_graph_node(ctx: ToolContext, inp: dict) -> str:
 async def _get_node_impact(ctx: ToolContext, inp: dict) -> str:
     fqn = inp["fqn"]
     direction = inp.get("direction", "downstream")
-    depth = min(inp.get("depth", 5), 10)
+    raw_depth = inp.get("depth", IMPACT_MAX_DEPTH)
+    # Clamp first (tool callers may pass anything), then validate.
+    try:
+        clamped = max(1, min(int(raw_depth), IMPACT_MAX_DEPTH))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"depth must be an int, got {raw_depth!r}") from exc
+    depth = _validate_depth(clamped, IMPACT_MAX_DEPTH, name="depth")
+    hierarchy = CONTAINS_HIERARCHY_MAX_DEPTH
 
     if direction == "downstream":
         cypher = (
@@ -328,7 +406,8 @@ async def _get_node_impact(ctx: ToolContext, inp: dict) -> str:
         )
     elif direction == "upstream":
         cypher = (
-            "MATCH (start {fqn: $fqn, app_name: $appName})-[:CONTAINS*0..10]->(seed) "
+            f"MATCH (start {{fqn: $fqn, app_name: $appName}})"
+            f"-[:CONTAINS*0..{hierarchy}]->(seed) "
             "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
             f"MATCH (dep {{app_name: $appName}})"
             f"-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS*1..{depth}]->(target) "
@@ -350,27 +429,31 @@ async def _get_node_impact(ctx: ToolContext, inp: dict) -> str:
             "ORDER BY depth, name LIMIT 100"
         )
 
-    records = await ctx.graph_store.query(
-        cypher, {"fqn": fqn, "appName": ctx.app_name}
-    )
+    records = await ctx.graph_store.query(cypher, {"fqn": fqn, "appName": ctx.app_name})
 
     by_type = dict(Counter(r["type"] for r in records))
 
-    return json.dumps({
-        "affected": records,
-        "total": len(records),
-        "by_type": by_type,
-    })
+    return json.dumps(
+        {
+            "affected": records,
+            "total": len(records),
+            "by_type": by_type,
+        }
+    )
 
 
 async def _find_path(ctx: ToolContext, inp: dict) -> str:
     source = inp["source_fqn"]
     target = inp["target_fqn"]
 
+    max_depth = _validate_depth(
+        FIND_PATH_MAX_DEPTH, FIND_PATH_MAX_DEPTH, name="max_depth"
+    )
     cypher = (
         "MATCH path = shortestPath("
         "(a {fqn: $source, app_name: $appName})"
-        "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS|READS|WRITES|PRODUCES|CONSUMES*..10]-"
+        "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS|READS|WRITES"
+        f"|PRODUCES|CONSUMES*..{max_depth}]-"
         "(b {fqn: $target, app_name: $appName}))"
         " RETURN [n IN nodes(path) | {fqn: n.fqn, name: n.name, type: labels(n)[0]}] AS nodes,"
         " [r IN relationships(path) | {type: type(r), source: startNode(r).fqn, target: endNode(r).fqn}] AS edges,"
