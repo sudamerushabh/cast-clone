@@ -3,6 +3,11 @@
 Parses a single Java source file and produces GraphNode + GraphEdge lists
 covering: packages, imports, classes, interfaces, methods, constructors,
 fields, method calls, object creation, annotations, and SQL-tagged strings.
+
+Note: Anonymous inner classes (`new Foo() {}`) are not extracted — their
+class_body hangs off object_creation_expression, not class_declaration.
+Methods defined inside appear to belong to the enclosing named class.
+TODO(CHAN-76 follow-up): synthesize `<Outer>.$anon<N>` FQNs via a separate visitor.
 """
 
 from __future__ import annotations
@@ -306,6 +311,8 @@ _NESTING_NODE_TYPES: tuple[str, ...] = (
     "class_declaration",
     "interface_declaration",
     "enum_declaration",
+    "record_declaration",
+    "annotation_type_declaration",
 )
 
 
@@ -326,6 +333,9 @@ def _class_fqn(package: str, class_node: Node) -> str:
     simple_name = _node_text(name_node) if name_node is not None else "Unknown"
 
     # Walk UP the tree collecting ancestor class/interface/enum names.
+    # Also detect method/constructor ancestors to disambiguate local classes
+    # declared inside methods — otherwise two methods each declaring a local
+    # `class Helper {}` would produce identical FQNs and collide.
     ancestors: list[str] = []
     current = class_node.parent
     while current is not None:
@@ -333,6 +343,13 @@ def _class_fqn(package: str, class_node: Node) -> str:
             parent_name = current.child_by_field_name("name")
             if parent_name is not None:
                 ancestors.append(_node_text(parent_name))
+        elif current.type in ("method_declaration", "constructor_declaration"):
+            if current.type == "constructor_declaration":
+                ancestors.append("<init>$local")
+            else:
+                method_name_node = current.child_by_field_name("name")
+                if method_name_node is not None:
+                    ancestors.append(f"{_node_text(method_name_node)}$local")
         current = current.parent
     ancestors.reverse()
 

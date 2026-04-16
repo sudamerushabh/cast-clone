@@ -803,3 +803,115 @@ public class B {
         assert _find_node(nodes_b, "com.foo.B.Inner.pong") is not None
         assert _find_node(nodes_a, "com.foo.Inner.ping") is None
         assert _find_node(nodes_b, "com.foo.Inner.pong") is None
+
+
+# ──────────────────────────────────────────────
+# Records, annotation types, local classes (CHAN-76)
+# ──────────────────────────────────────────────
+class TestNestedDeclarationFQNs:
+    def test_nested_record_fqn_includes_outer(self, extractor):
+        """A record declared inside a class is FQN-qualified by its outer class."""
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public record Point(int x, int y) {}
+}
+"""
+        nodes, _ = extractor.extract(source, "Outer.java", "/project")
+        # The record node itself is a record_declaration, not a class_declaration,
+        # so it isn't emitted as a CLASS node, but any nested class inside it
+        # would include Outer.Point in its FQN. Verify the nesting logic via a
+        # nested class inside the record.
+        source_nested = b"""\
+package com.foo;
+
+public class Outer {
+    public record Point(int x, int y) {
+        public static class Helper {}
+    }
+}
+"""
+        nodes, _ = extractor.extract(source_nested, "Outer.java", "/project")
+        helper = _find_node(nodes, "com.foo.Outer.Point.Helper")
+        assert helper is not None, (
+            "Nested class inside record should carry Outer.Point in its FQN; "
+            f"got FQNs: {[n.fqn for n in nodes if n.kind == NodeKind.CLASS]}"
+        )
+        # The collision-prone flat FQN must NOT exist.
+        assert _find_node(nodes, "com.foo.Helper") is None
+
+    def test_nested_annotation_type_fqn(self, extractor):
+        """A @interface declared inside a class qualifies nested types with it."""
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public @interface MyAnn {
+        class Inner {}
+    }
+}
+"""
+        nodes, _ = extractor.extract(source, "Outer.java", "/project")
+        inner = _find_node(nodes, "com.foo.Outer.MyAnn.Inner")
+        class_fqns = [n.fqn for n in nodes if n.kind == NodeKind.CLASS]
+        assert inner is not None, (
+            "Class inside annotation_type_declaration should include outer "
+            f"annotation in FQN; got: {class_fqns}"
+        )
+        assert _find_node(nodes, "com.foo.Inner") is None
+
+    def test_local_class_in_method_fqn(self, extractor):
+        """A class declared inside a method is FQN-qualified with {method}$local."""
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public void doWork() {
+        class Helper {
+            void help() {}
+        }
+    }
+}
+"""
+        nodes, _ = extractor.extract(source, "Outer.java", "/project")
+        helper = _find_node(nodes, "com.foo.Outer.doWork$local.Helper")
+        assert helper is not None, (
+            "Local class should carry {method}$local segment; got: "
+            f"{[n.fqn for n in nodes if n.kind == NodeKind.CLASS]}"
+        )
+        # Without the disambiguator, this collides with a top-level Helper.
+        assert _find_node(nodes, "com.foo.Outer.Helper") is None
+        # Method inside the local class should also be qualified.
+        assert (
+            _find_node(nodes, "com.foo.Outer.doWork$local.Helper.help") is not None
+        )
+
+    def test_two_methods_local_class_same_name_distinct(self, extractor):
+        """Two methods each declaring `class Helper {}` produce distinct FQNs."""
+        source = b"""\
+package com.foo;
+
+public class Outer {
+    public void first() {
+        class Helper {
+            void a() {}
+        }
+    }
+
+    public void second() {
+        class Helper {
+            void b() {}
+        }
+    }
+}
+"""
+        nodes, _ = extractor.extract(source, "Outer.java", "/project")
+        first_helper = _find_node(nodes, "com.foo.Outer.first$local.Helper")
+        second_helper = _find_node(nodes, "com.foo.Outer.second$local.Helper")
+        assert first_helper is not None
+        assert second_helper is not None
+        assert first_helper.fqn != second_helper.fqn
+        # Methods inside each local class are also distinct.
+        assert _find_node(nodes, "com.foo.Outer.first$local.Helper.a") is not None
+        assert _find_node(nodes, "com.foo.Outer.second$local.Helper.b") is not None
