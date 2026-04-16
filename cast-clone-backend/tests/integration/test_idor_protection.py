@@ -380,17 +380,6 @@ async def test_admin_can_read_any_repo(
     assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO(IDOR): Project has no owner_id/created_by column, so a standalone "
-        "project (one created directly via POST /projects without a parent "
-        "repository) has no ownership link. Adding a created_by column on "
-        "Project is a schema change tracked separately — until then, the "
-        "per-project ownership check can only be enforced via the parent "
-        "Repository. This test xfails on purpose to document that gap."
-    ),
-    strict=False,
-)
 async def test_user_cannot_delete_another_users_standalone_project(
     async_client: AsyncClient,
     auth_enabled_app: FastAPI,

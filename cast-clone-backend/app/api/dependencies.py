@@ -142,8 +142,12 @@ async def get_accessible_project(
         return project
     if repo is None:
         # Standalone projects have no ownership chain (Project lacks a
-        # created_by column). Deferred until the schema migration lands.
-        return project
+        # created_by column). Until the schema migration lands, only admins
+        # may access them — non-admins get 403 to close the IDOR gap.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Forbidden",

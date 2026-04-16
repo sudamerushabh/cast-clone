@@ -535,9 +535,24 @@ async def add_branch(
 async def delete_branch_project(
     repo_id: str,
     project_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Delete a branch project, its graph data, analysis runs, and clone directory."""
+    # Load parent repository and verify caller can access it before touching
+    # the child project — closes an IDOR where any authenticated user could
+    # delete a branch project by guessing its id (CHAN-54).
+    repo_result = await session.execute(
+        select(Repository).where(Repository.id == repo_id)
+    )
+    repo = repo_result.scalar_one_or_none()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found",
+        )
+    _ensure_repo_access(repo, user)
+
     result = await session.execute(
         select(Project).where(
             Project.id == project_id,
