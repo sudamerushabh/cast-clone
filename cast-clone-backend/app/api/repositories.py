@@ -45,7 +45,10 @@ def _get_settings() -> Settings:
     return Settings()
 
 
-def _repo_to_response(repo: Repository) -> RepositoryResponse:
+def _repo_to_response(
+    repo: Repository,
+    tracking: "RepositoryLocTracking | None" = None,
+) -> RepositoryResponse:
     projects = []
     for p in repo.projects:
         # Find latest completed run for this project
@@ -84,6 +87,8 @@ def _repo_to_response(repo: Repository) -> RepositoryResponse:
         last_synced_at=repo.last_synced_at,
         created_at=repo.created_at,
         projects=projects,
+        billable_loc=tracking.billable_loc if tracking else None,
+        max_loc_branch=tracking.max_loc_branch_name if tracking else None,
     )
 
 
@@ -238,8 +243,27 @@ async def list_repositories(
         .order_by(Repository.created_at.desc())
     )
     repos = result.scalars().all()
+
+    # Bulk-load LOC tracking for all repos
+    repo_ids = [r.id for r in repos]
+    if repo_ids:
+        from app.models.db import RepositoryLocTracking
+        tracking_result = await session.execute(
+            select(RepositoryLocTracking).where(
+                RepositoryLocTracking.repository_id.in_(repo_ids)
+            )
+        )
+        tracking_map = {
+            t.repository_id: t for t in tracking_result.scalars().all()
+        }
+    else:
+        tracking_map = {}
+
     return RepositoryListResponse(
-        repositories=[_repo_to_response(r) for r in repos],
+        repositories=[
+            _repo_to_response(r, tracking_map.get(r.id))
+            for r in repos
+        ],
         total=len(repos),
     )
 
@@ -261,7 +285,14 @@ async def get_repository(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
-    return _repo_to_response(repo)
+    from app.models.db import RepositoryLocTracking
+    tracking_result = await session.execute(
+        select(RepositoryLocTracking).where(
+            RepositoryLocTracking.repository_id == repo_id
+        )
+    )
+    tracking = tracking_result.scalar_one_or_none()
+    return _repo_to_response(repo, tracking)
 
 
 @router.delete("/{repo_id}", status_code=status.HTTP_204_NO_CONTENT)
