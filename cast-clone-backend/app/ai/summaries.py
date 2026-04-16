@@ -13,10 +13,12 @@ from typing import Any
 
 import structlog
 from anthropic import AsyncAnthropicBedrock
+from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from app.ai.tools import ChatToolContext, get_source_code, object_details
 from app.models.db import AiSummary
+from app.services.ai_provider import EffectiveAiConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -84,17 +86,44 @@ async def assemble_node_context(
 
 
 async def generate_summary(
-    client: AsyncAnthropicBedrock,
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
     model: str,
     max_tokens: int,
     node_context: dict[str, Any],
+    ai_config: EffectiveAiConfig | None = None,
 ) -> tuple[str, int]:
-    """Make a single Claude call to generate a node summary.
+    """Make a single AI call to generate a node summary.
 
+    Supports both Anthropic (Bedrock) and OpenAI providers.
     Returns (summary_text, total_tokens_used).
     """
     user_content = json.dumps(node_context, default=str)
 
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(**kwargs)
+        summary_text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens_used = (
+            (
+                (usage.prompt_tokens or 0)
+                + (usage.completion_tokens or 0)
+            )
+            if usage
+            else 0
+        )
+        return summary_text, tokens_used
+
+    # Anthropic / Bedrock path
     response = await client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -109,9 +138,10 @@ async def generate_summary(
 async def get_or_create_summary(
     ctx: ChatToolContext,
     node_fqn: str,
-    client: AsyncAnthropicBedrock,
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
     model: str,
     max_tokens: int,
+    ai_config: EffectiveAiConfig | None = None,
 ) -> dict[str, Any]:
     """Get cached summary or generate a new one.
 
@@ -156,6 +186,7 @@ async def get_or_create_summary(
         model=model,
         max_tokens=max_tokens,
         node_context=node_context,
+        ai_config=ai_config,
     )
 
     # Upsert via SQLAlchemy dialect-specific insert
@@ -191,3 +222,86 @@ async def get_or_create_summary(
         "model": model,
         "tokens_used": tokens_used,
     }
+
+
+TRACE_SUMMARY_SYSTEM_PROMPT = (
+    "You are an expert software architect analyzing a code "
+    "execution trace.\n"
+    "Describe the flow in 2-3 concise paragraphs:\n"
+    "- Name specific classes and methods\n"
+    "- State which architectural layers are involved\n"
+    "- Mention database tables touched and whether they are "
+    "read or written\n"
+    "- Note any patterns: fan-out, circular calls, "
+    "cross-layer shortcuts\n"
+    "Use markdown formatting. Be specific, not generic."
+)
+
+
+def compute_trace_hash(trace_context: dict[str, Any]) -> str:
+    """Compute SHA-256 hash of trace topology for caching."""
+    center = trace_context["center"]["fqn"]
+    up = sorted(n["fqn"] for n in trace_context["upstream"])
+    down = sorted(
+        n["fqn"] for n in trace_context["downstream"]
+    )
+    raw = f"{center}:{','.join(up)}:{','.join(down)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def generate_trace_summary_text(
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
+    model: str,
+    max_tokens: int,
+    trace_context: dict[str, Any],
+    ai_config: EffectiveAiConfig | None = None,
+) -> tuple[str, int]:
+    """Call the LLM to generate a trace flow summary.
+
+    Same dual-provider pattern as generate_summary().
+    Returns (summary_text, tokens_used).
+    """
+    user_content = json.dumps(trace_context, default=str)
+
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": TRACE_SUMMARY_SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(
+            **kwargs
+        )
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens = (
+            (
+                (usage.prompt_tokens or 0)
+                + (usage.completion_tokens or 0)
+            )
+            if usage
+            else 0
+        )
+        return text, tokens
+
+    # Anthropic / Bedrock path
+    response = await client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=TRACE_SUMMARY_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    text = response.content[0].text
+    tokens = (
+        response.usage.input_tokens
+        + response.usage.output_tokens
+    )
+    return text, tokens

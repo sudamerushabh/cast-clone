@@ -22,6 +22,7 @@ from app.schemas.git_config import (
     GitConfigUpdate,
     WebhookUrlResponse,
 )
+from app.services.activity import log_activity
 from app.services.crypto import decrypt_token, encrypt_token
 from app.services.git_providers import create_provider
 from app.services.postgres import get_session
@@ -74,8 +75,10 @@ async def create_git_config(
     base_url = str(request.base_url).rstrip("/")
     webhook_url = f"{base_url}/api/v1/webhooks/{body.platform}/{repo_id}"
 
-    await logger.ainfo(
-        "git_config_created", repo_id=repo_id, platform=body.platform
+    await log_activity(
+        session, "git_config.created", user_id=admin.id,
+        resource_type="git_config", resource_id=config.id,
+        details={"repo_id": repo_id, "platform": body.platform},
     )
 
     return {
@@ -145,7 +148,11 @@ async def update_git_config(
     await session.commit()
     await session.refresh(config)
 
-    await logger.ainfo("git_config_updated", repo_id=repo_id)
+    await log_activity(
+        session, "git_config.updated", user_id=admin.id,
+        resource_type="git_config", resource_id=config.id,
+        details={"repo_id": repo_id},
+    )
     return GitConfigResponse.model_validate(config)
 
 
@@ -167,9 +174,14 @@ async def delete_git_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Git config not found for this repository",
         )
+    config_id = config.id
     await session.delete(config)
     await session.commit()
-    await logger.ainfo("git_config_deleted", repo_id=repo_id)
+    await log_activity(
+        session, "git_config.deleted", user_id=admin.id,
+        resource_type="git_config", resource_id=config_id,
+        details={"repo_id": repo_id},
+    )
 
 
 @router.get("/webhook-url", response_model=WebhookUrlResponse)

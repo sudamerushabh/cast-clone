@@ -63,7 +63,7 @@ class TestPostAnalysisComment:
         call_args = mock_client.post_comment.call_args
         assert call_args.kwargs["pr_number"] == 42
         assert call_args.kwargs["token"] == "tok"
-        assert "CodeLens" in call_args.kwargs["body"]
+        assert "ChangeSafe" in call_args.kwargs["body"]
 
     @pytest.mark.asyncio
     async def test_passes_base_url_to_formatter(self):

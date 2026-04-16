@@ -35,7 +35,7 @@ async def post_analysis_comment(
         pr_record: A completed PrAnalysis ORM instance.
         platform: Git platform name (github, gitlab, bitbucket, gitea).
         api_token: Decrypted API token for the platform.
-        base_url: Optional CodeLens UI base URL for analysis link.
+        base_url: Optional ChangeSafe UI base URL for analysis link.
 
     Returns:
         CommentResult with the posted comment's ID and URL.

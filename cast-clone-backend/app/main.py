@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     activity_router,
+    ai_config_router,
     ai_usage_router,
     analysis_router,
     analysis_views_router,
@@ -30,6 +31,7 @@ from app.api import (
     pull_requests_router,
     repositories_router,
     summary_router,
+    system_router,
     tags_project_router,
     tags_router,
     users_router,
@@ -243,7 +245,7 @@ def create_app() -> FastAPI:
     settings = Settings()
 
     application = FastAPI(
-        title="CodeLens Backend",
+        title="ChangeSafe Backend",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -283,8 +285,10 @@ def create_app() -> FastAPI:
     application.include_router(chat_router)
     application.include_router(summary_router)
     application.include_router(api_keys_router)
+    application.include_router(ai_config_router)
     application.include_router(ai_usage_router)
     application.include_router(email_router)
+    application.include_router(system_router)
 
     return application
 

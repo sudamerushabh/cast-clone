@@ -19,6 +19,7 @@ from app.schemas.api_keys import (
     ApiKeyCreateResponse,
     ApiKeyResponse,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 router = APIRouter(prefix="/api/v1/api-keys", tags=["api-keys"])
@@ -44,6 +45,12 @@ async def create_api_key(
     session.add(api_key)
     await session.commit()
     await session.refresh(api_key)
+
+    await log_activity(
+        session, "api_key.created", user_id=user.id,
+        resource_type="api_key", resource_id=api_key.id,
+        details={"name": body.name},
+    )
 
     return ApiKeyCreateResponse(
         id=api_key.id,
@@ -95,4 +102,11 @@ async def revoke_api_key(
         )
     api_key.is_active = False
     await session.commit()
+
+    await log_activity(
+        session, "api_key.revoked", user_id=user.id,
+        resource_type="api_key", resource_id=key_id,
+        details={"name": api_key.name},
+    )
+
     return {"message": "Key revoked"}

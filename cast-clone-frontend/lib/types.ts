@@ -275,6 +275,7 @@ export interface TraceNode {
   depth: number;
   sequence: number;
   direction: "upstream" | "downstream";
+  layer: "api" | "service" | "repository" | "database" | "other";
 }
 
 export interface TraceEdge {
@@ -288,12 +289,24 @@ export interface TraceRouteResponse {
   center_fqn: string;
   center_name: string;
   center_kind: string;
+  center_layer: string;
   max_depth: number;
   upstream: TraceNode[];
   downstream: TraceNode[];
   edges: TraceEdge[];
   upstream_count: number;
   downstream_count: number;
+  layers_present: string[];
+}
+
+export interface TraceSummaryResponse {
+  fqn: string;
+  summary: string;
+  layers_involved: string[];
+  tables_touched: string[];
+  cached: boolean;
+  model: string | null;
+  tokens_used: number | null;
 }
 
 // ── Phase 3: Path Finder ────────────────────────────────

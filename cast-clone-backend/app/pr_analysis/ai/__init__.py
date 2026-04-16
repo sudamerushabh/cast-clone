@@ -13,6 +13,7 @@ import structlog
 from anthropic import AsyncAnthropicBedrock
 
 from app.config import get_settings
+from app.services.ai_provider import EffectiveAiConfig, create_bedrock_client
 from app.pr_analysis.ai.report_types import SummaryResult
 from app.pr_analysis.ai.supervisor import SupervisorInput, run_supervisor
 from app.pr_analysis.ai.tool_context import ToolContext
@@ -37,6 +38,7 @@ async def generate_pr_summary(
     graph_store: GraphStore,
     app_name: str,
     source_repo_path: str | None = None,
+    ai_config: EffectiveAiConfig | None = None,
 ) -> SummaryResult:
     """Run the full AI agent pipeline for PR analysis.
 
@@ -47,7 +49,10 @@ async def generate_pr_summary(
     settings = get_settings()
     start = time.monotonic()
 
-    client = AsyncAnthropicBedrock(aws_region=settings.aws_region)
+    if ai_config:
+        client = create_bedrock_client(ai_config)
+    else:
+        client = AsyncAnthropicBedrock(aws_region=settings.aws_region)
 
     # If no repo path, fall back to single-call
     if not repo_path:

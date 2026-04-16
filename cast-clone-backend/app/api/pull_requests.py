@@ -16,6 +16,7 @@ from app.schemas.pull_requests import (
     PrDriftResponse,
     PrImpactResponse,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 logger = structlog.get_logger(__name__)
@@ -127,8 +128,15 @@ async def delete_pr_analysis(
 ) -> None:
     """Delete a PR analysis record."""
     pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
+    pr_number = pr.pr_number
     await session.delete(pr)
     await session.commit()
+
+    await log_activity(
+        session, "pr_analysis.deleted", user_id=_user.id,
+        resource_type="pr_analysis", resource_id=pr_analysis_id,
+        details={"pr_number": pr_number},
+    )
 
 
 @router.post(
@@ -168,6 +176,12 @@ async def reanalyze_pr(
         api_token_encrypted=config.api_token_encrypted,
         platform=config.platform,
         secret_key=settings.secret_key,
+    )
+
+    await log_activity(
+        session, "pr_analysis.reanalyzed", user_id=_user.id,
+        resource_type="pr_analysis", resource_id=pr.id,
+        details={"pr_number": pr.pr_number},
     )
 
     return {"status": "queued", "pr_analysis_id": pr.id}

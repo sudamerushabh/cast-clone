@@ -12,9 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import require_license_writable
+from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings
-from app.models.db import AnalysisRun, GitConnector, Project, Repository, RepositoryLocTracking
+from app.models.db import AnalysisRun, GitConnector, Project, Repository, RepositoryLocTracking, User
+from app.services.activity import log_activity
 
 # Reusable eager-load option: Repository → projects → analysis_runs
 _REPO_LOAD = (
@@ -152,6 +153,7 @@ async def create_repository(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
+    _user: User = Depends(get_current_user),
 ) -> RepositoryResponse:
     """Onboard a repository: fetch info, create repo + projects, clone."""
     # Fetch connector
@@ -223,11 +225,10 @@ async def create_repository(
         target_dir,
     )
 
-    await logger.ainfo(
-        "repository_created",
-        repo_id=repo.id,
-        full_name=remote_repo.full_name,
-        branches=body.branches,
+    await log_activity(
+        session, "repository.created", user_id=_user.id,
+        resource_type="repository", resource_id=repo.id,
+        details={"full_name": remote_repo.full_name, "branches": body.branches},
     )
     return _repo_to_response(repo)
 
@@ -297,6 +298,7 @@ async def get_repository(
 async def delete_repository(
     repo_id: str,
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a repository and all its projects."""
     result = await session.execute(
@@ -309,8 +311,15 @@ async def delete_repository(
             detail=f"Repository {repo_id} not found",
         )
     local_path = repo.local_path
+    repo_name = repo.repo_full_name
     await session.delete(repo)
     await session.commit()
+
+    await log_activity(
+        session, "repository.deleted", user_id=_user.id,
+        resource_type="repository", resource_id=repo_id,
+        details={"full_name": repo_name},
+    )
 
     # CASCADE deleted the tracking row; invalidate cache so cumulative_loc()
     # picks up the removal.
@@ -350,6 +359,7 @@ async def get_clone_status(
 async def sync_repository(
     repo_id: str,
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> CloneStatusResponse:
     """Pull latest changes for a cloned repository."""
     result = await session.execute(
@@ -372,6 +382,11 @@ async def sync_repository(
         repo.last_synced_at = datetime.now(UTC)
         repo.clone_error = None
         await session.commit()
+        await log_activity(
+            session, "repository.synced", user_id=_user.id,
+            resource_type="repository", resource_id=repo_id,
+            details={"full_name": repo.repo_full_name},
+        )
     except Exception as exc:
         repo.clone_error = str(exc)
         await session.commit()

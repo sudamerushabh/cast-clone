@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from anthropic import AsyncAnthropicBedrock
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,7 @@ from app.api.dependencies import get_current_user
 from app.config import get_settings
 from app.models.db import Project, User
 from app.schemas.summaries import SummaryResponse
+from app.services.ai_provider import create_bedrock_client, create_openai_client, get_ai_config
 from app.services.neo4j import Neo4jGraphStore, get_driver
 from app.services.postgres import get_session
 
@@ -59,13 +59,19 @@ async def get_summary(
         db_session=db_session,
     )
 
-    client = AsyncAnthropicBedrock(aws_region=settings.aws_region)
+    ai_config = await get_ai_config(db_session)
+    if ai_config.provider == "openai":
+        client = create_openai_client(ai_config)
+    else:
+        client = create_bedrock_client(ai_config)
+
     result = await get_or_create_summary(
         ctx=ctx,
         node_fqn=node_fqn,
         client=client,
-        model=settings.summary_model,
+        model=ai_config.summary_model,
         max_tokens=settings.summary_max_tokens,
+        ai_config=ai_config,
     )
 
     if "error" in result:

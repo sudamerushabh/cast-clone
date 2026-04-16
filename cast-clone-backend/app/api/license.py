@@ -17,9 +17,12 @@ import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.dependencies import require_admin
 from app.config import Settings, get_settings
 from app.models.db import User
+from app.services.activity import log_activity
 from app.services.license import (
     LicenseInfo,
     LicenseState,
@@ -28,6 +31,7 @@ from app.services.license import (
     load_license,
 )
 from app.services.loc_usage import cumulative_loc
+from app.services.postgres import get_session
 
 logger = structlog.get_logger(__name__)
 
@@ -185,6 +189,7 @@ async def upload_license(
     file: UploadFile = File(...),
     _admin: User = Depends(require_admin),
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> LicenseStatusResponse:
     """Admin-only: upload a new license JWT, validate, atomically replace, reload state.
 
@@ -239,10 +244,10 @@ async def upload_license(
     request.app.state.license_info = info
     request.app.state.license_state = state
 
-    await logger.ainfo(
-        "license.uploaded",
-        admin=_admin.username,
-        state=state.value,
+    await log_activity(
+        session, "license.uploaded", user_id=_admin.id,
+        resource_type="license",
+        details={"state": state.value},
     )
 
     return await _build_status_response(request, settings)

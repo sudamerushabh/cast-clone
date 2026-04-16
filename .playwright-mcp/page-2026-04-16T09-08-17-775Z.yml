@@ -1,0 +1,136 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - link "CodeLens" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - img [ref=e5]
+        - generic [ref=e10]: CodeLens
+      - navigation "Breadcrumb" [ref=e11]:
+        - generic [ref=e12]: /
+        - link "Settings" [ref=e13] [cursor=pointer]:
+          - /url: /settings
+        - generic [ref=e14]: /
+        - generic [ref=e15]: license
+      - button "anonymous" [ref=e94]:
+        - img
+        - generic [ref=e95]: anonymous
+        - img
+      - button "Toggle theme" [ref=e16]:
+        - img
+    - generic [ref=e17]:
+      - navigation "Global navigation" [ref=e18]:
+        - generic [ref=e19]:
+          - link "Home" [ref=e20] [cursor=pointer]:
+            - /url: /
+            - img [ref=e21]
+          - link "Repositories" [ref=e26] [cursor=pointer]:
+            - /url: /repositories
+            - img [ref=e27]
+          - link "Connectors" [ref=e32] [cursor=pointer]:
+            - /url: /connectors
+            - img [ref=e33]
+          - link "Settings" [ref=e37] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e38]
+        - button "Expand navigation" [ref=e42]:
+          - img [ref=e43]
+      - complementary [ref=e45]:
+        - button "Collapse panel" [ref=e46]:
+          - img
+        - generic [ref=e50]:
+          - generic [ref=e51]: Settings
+          - link "System" [ref=e52] [cursor=pointer]:
+            - /url: /settings/system
+            - img [ref=e53]
+            - generic [ref=e55]: System
+          - link "License" [ref=e56] [cursor=pointer]:
+            - /url: /settings/license
+            - img [ref=e57]
+            - generic [ref=e59]: License
+          - link "AI Configuration" [ref=e60] [cursor=pointer]:
+            - /url: /settings/ai
+            - img [ref=e61]
+            - generic [ref=e64]: AI Configuration
+          - link "Email" [ref=e65] [cursor=pointer]:
+            - /url: /settings/email
+            - img [ref=e66]
+            - generic [ref=e69]: Email
+          - link "Team" [ref=e70] [cursor=pointer]:
+            - /url: /settings/team
+            - img [ref=e71]
+            - generic [ref=e76]: Team
+          - link "API Keys" [ref=e77] [cursor=pointer]:
+            - /url: /settings/api-keys
+            - img [ref=e78]
+            - generic [ref=e82]: API Keys
+          - link "Activity" [ref=e83] [cursor=pointer]:
+            - /url: /settings/activity
+            - img [ref=e84]
+            - generic [ref=e86]: Activity
+      - main [ref=e87]:
+        - generic [ref=e88]:
+          - generic [ref=e89]:
+            - heading "License" [level=1] [ref=e90]
+            - paragraph [ref=e91]: Manage your CodeLens license and view usage information.
+          - generic [ref=e96]:
+            - generic [ref=e98]:
+              - generic [ref=e99]:
+                - img [ref=e100]
+                - text: License Status
+              - generic [ref=e102]: Healthy
+            - generic [ref=e104]:
+              - generic [ref=e105]: Installation ID
+              - generic [ref=e106]:
+                - code [ref=e107]: 1941a2ab-238c-4495-ad85-cae53056b91e
+                - button "Copy" [ref=e108]:
+                  - img
+                  - text: Copy
+          - generic [ref=e109]:
+            - generic [ref=e111]: Customer Information
+            - generic [ref=e112]:
+              - generic [ref=e113]:
+                - generic [ref=e114]: Name
+                - generic [ref=e115]: Rushabh Sudame
+              - generic [ref=e116]:
+                - generic [ref=e117]: Email
+                - generic [ref=e118]: rushabh.sudame@flentas.com
+              - generic [ref=e119]:
+                - generic [ref=e120]: Organization
+                - generic [ref=e121]: Flentas Technologies
+          - generic [ref=e122]:
+            - generic [ref=e124]: License Details
+            - generic [ref=e125]:
+              - generic [ref=e126]:
+                - generic [ref=e127]: Tier
+                - generic [ref=e128]: Tier 2
+              - generic [ref=e129]:
+                - generic [ref=e130]: Issued By
+                - generic [ref=e131]: operator
+              - generic [ref=e132]:
+                - generic [ref=e133]: Issued At
+                - generic [ref=e134]: April 16, 2026
+              - generic [ref=e135]:
+                - generic [ref=e136]: Expires At
+                - generic [ref=e137]: April 16, 2027
+              - generic [ref=e138]:
+                - text: Notes
+                - paragraph [ref=e139]: Production license for local deployment E2E test
+          - generic [ref=e140]:
+            - generic [ref=e142]: Usage
+            - generic [ref=e145]:
+              - generic [ref=e146]: Lines of Code
+              - generic [ref=e147]: 0 / 500,000 (0.0%)
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - generic [ref=e151]: Replace License
+              - generic [ref=e152]: Upload a new license file to update your license.
+            - generic [ref=e154]:
+              - generic [ref=e155]: License File (.jwt)
+              - generic [ref=e156]:
+                - button "License File (.jwt)" [ref=e157]
+                - button "Upload" [ref=e158]:
+                  - img
+                  - text: Upload
+  - button "Open Next.js Dev Tools" [ref=e164] [cursor=pointer]:
+    - img [ref=e165]
+  - alert [ref=e168]

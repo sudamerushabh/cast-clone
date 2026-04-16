@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.models.context import AnalysisContext
 from app.models.db import AnalysisRun, Project, Repository
 from app.orchestrator.progress import WebSocketProgressReporter
+from app.services.activity import log_activity
 from app.services.loc_usage import invalidate_cumulative_loc_cache
 from app.services.neo4j import GraphStore
 
@@ -373,6 +374,13 @@ async def run_analysis_pipeline(
                     run.completed_at = datetime.now(UTC)
                     run.error_message = f"Critical stage '{stage_def.name}' failed: {e}"
                     await session.commit()
+
+                    await log_activity(
+                        session, "analysis.failed",
+                        resource_type="project", resource_id=project_id,
+                        details={"stage": stage_def.name, "error": str(e)[:500]},
+                    )
+
                     await ws.emit_error(
                         f"Pipeline aborted: stage '{stage_def.name}' failed: {e}"
                     )
@@ -409,6 +417,16 @@ async def run_analysis_pipeline(
             "duration_seconds": round(total_elapsed, 2),
         }
         await ws.emit_complete(report)
+
+        await log_activity(
+            session, "analysis.completed",
+            resource_type="project", resource_id=project_id,
+            details={
+                "nodes": context.graph.node_count,
+                "edges": context.graph.edge_count,
+                "duration_seconds": round(total_elapsed, 2),
+            },
+        )
 
         logger.info(
             "pipeline.complete",

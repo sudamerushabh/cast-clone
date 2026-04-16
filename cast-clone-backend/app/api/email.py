@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_admin
 from app.models.db import EmailConfig, User
+from app.services.activity import log_activity
 from app.services.email import SendResult, encrypt_password, test_send
 from app.services.postgres import get_session
 
@@ -158,7 +159,12 @@ async def update_email_config(
     await session.commit()
     await session.refresh(config)
 
-    await logger.ainfo("email.config_updated", admin=_admin.username)
+    await log_activity(
+        session, "settings.email_updated", user_id=_admin.id,
+        resource_type="settings", resource_id="email_config",
+        details={"enabled": body.enabled, "cadence": body.cadence},
+    )
+
     return _config_to_response(config)
 
 

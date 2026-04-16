@@ -11,6 +11,7 @@ from sqlalchemy.orm import joinedload
 from app.api.dependencies import get_current_user
 from app.models.db import Tag, User
 from app.schemas.annotations import TagCreate, TagResponse
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 logger = structlog.get_logger()
@@ -52,7 +53,11 @@ async def add_tag(
     )
     tag = result.scalar_one()
 
-    logger.info("tag_added", tag_name=req.tag_name, node_fqn=req.node_fqn)
+    await log_activity(
+        session, "tag.created", user_id=user.id,
+        resource_type="tag", resource_id=tag.id,
+        details={"tag_name": req.tag_name, "node_fqn": req.node_fqn},
+    )
     return TagResponse.model_validate(tag, from_attributes=True)
 
 
@@ -96,7 +101,12 @@ async def delete_tag(
             status_code=403, detail="Only the author or admin can remove"
         )
 
+    tag_name = tag.tag_name
     await session.delete(tag)
     await session.commit()
 
-    logger.info("tag_removed", tag_id=tag_id)
+    await log_activity(
+        session, "tag.deleted", user_id=user.id,
+        resource_type="tag", resource_id=tag_id,
+        details={"tag_name": tag_name},
+    )

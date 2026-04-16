@@ -19,6 +19,9 @@ from app.schemas.connectors import (
     RemoteRepoListResponse,
     RemoteRepoResponse,
 )
+from app.api.dependencies import get_current_user
+from app.models.db import User
+from app.services.activity import log_activity
 from app.services.crypto import decrypt_token, encrypt_token
 from app.services.git_providers import create_provider
 from app.services.postgres import get_session
@@ -69,6 +72,7 @@ async def create_connector(
     body: ConnectorCreate,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
+    _user: User = Depends(get_current_user),
 ) -> ConnectorResponse:
     """Create a new git connector. Validates the token against the provider."""
     # Validate token by calling the provider API
@@ -96,11 +100,12 @@ async def create_connector(
     await session.commit()
     await session.refresh(connector)
 
-    await logger.ainfo(
-        "connector_created",
-        connector_id=connector.id,
-        provider=body.provider,
+    await log_activity(
+        session, "connector.created", user_id=_user.id,
+        resource_type="connector", resource_id=connector.id,
+        details={"name": body.name, "provider": body.provider},
     )
+
     return _connector_to_response(connector)
 
 
@@ -182,11 +187,21 @@ async def update_connector(
 async def delete_connector(
     connector_id: str,
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a connector."""
     connector = await _get_connector_or_404(connector_id, session)
+    connector_name = connector.name
+    connector_provider = connector.provider
     await session.delete(connector)
     await session.commit()
+
+    await log_activity(
+        session, "connector.deleted", user_id=_user.id,
+        resource_type="connector", resource_id=connector_id,
+        details={"name": connector_name, "provider": connector_provider},
+    )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

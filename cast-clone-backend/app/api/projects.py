@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_license_writable
-from app.models.db import Project
+from app.api.dependencies import get_current_user, require_license_writable
+from app.models.db import Project, User
 from app.schemas.projects import (
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 async def create_project(
     body: ProjectCreate,
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> ProjectResponse:
     """Create a new project."""
     project = Project(
@@ -36,6 +38,12 @@ async def create_project(
     session.add(project)
     await session.commit()
     await session.refresh(project)
+
+    await log_activity(
+        session, "project.created", user_id=_user.id,
+        resource_type="project", resource_id=project.id,
+        details={"name": body.name},
+    )
 
     return ProjectResponse(
         id=project.id,
@@ -113,6 +121,7 @@ async def get_project(
 async def delete_project(
     project_id: str,
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a project by ID."""
     result = await session.execute(
@@ -125,6 +134,14 @@ async def delete_project(
             detail=f"Project {project_id} not found",
         )
 
+    project_name = project.name
     await session.delete(project)
     await session.commit()
+
+    await log_activity(
+        session, "project.deleted", user_id=_user.id,
+        resource_type="project", resource_id=project_id,
+        details={"name": project_name},
+    )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)

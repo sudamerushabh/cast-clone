@@ -60,7 +60,7 @@ export function TopBar() {
         className="flex items-center gap-1.5 text-sm font-semibold"
       >
         <Network className="size-4 text-primary" />
-        <span>CodeLens</span>
+        <span>ChangeSafe</span>
       </Link>
 
       {/* Breadcrumbs */}

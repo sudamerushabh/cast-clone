@@ -15,7 +15,7 @@ def get_chat_tool_definitions() -> list[dict]:
             "name": "list_applications",
             "description": (
                 "List all analyzed applications in "
-                "CodeLens with their languages and size."
+                "ChangeSafe with their languages and size."
             ),
             "input_schema": {
                 "type": "object",

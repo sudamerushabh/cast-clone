@@ -2,11 +2,11 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { GitBranch, GitPullRequest, Loader2, Plus, RefreshCw } from "lucide-react";
+import { GitBranch, GitPullRequest, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getRepository, syncRepository, getAnalysisStatus } from "@/lib/api";
+import { getRepository, syncRepository, getAnalysisStatus, deleteBranchProject } from "@/lib/api";
 import { useRepoPrAnalyses } from "@/hooks/usePullRequests";
 import { PrListTable } from "@/components/pull-requests/PrListTable";
 import { WebhookSetup } from "@/components/pull-requests/WebhookSetup";
@@ -19,6 +19,7 @@ export default function RepoDetailPage() {
   const [repo, setRepo] = React.useState<RepositoryResponse | null>(null);
   const [syncing, setSyncing] = React.useState(false);
   const [addBranchOpen, setAddBranchOpen] = React.useState(false);
+  const [deletingBranch, setDeletingBranch] = React.useState<string | null>(null);
 
   const { data: prData, loading: prLoading, refresh: refreshPrs } = useRepoPrAnalyses(repoId);
 
@@ -67,6 +68,17 @@ export default function RepoDetailPage() {
     setRepo(updated);
   }
 
+  async function handleDeleteBranch(projectId: string) {
+    try {
+      setDeletingBranch(projectId);
+      await deleteBranchProject(repoId, projectId);
+      const updated = await getRepository(repoId);
+      setRepo(updated);
+    } finally {
+      setDeletingBranch(null);
+    }
+  }
+
   if (!repo) {
     return <div className="p-6"><p className="text-muted-foreground">Loading...</p></div>;
   }
@@ -94,7 +106,7 @@ export default function RepoDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <GitBranch className="size-4" />
-                <Link href={`/repositories/${repoId}/${encodeURIComponent(p.branch ?? "main")}`} className="hover:underline">
+                <Link href={`/repositories/${repoId}/${encodeURIComponent(p.branch ?? "main")}`} className="hover:underline flex-1">
                   {p.branch ?? "main"}
                 </Link>
                 <Badge variant="outline" className={
@@ -107,6 +119,24 @@ export default function RepoDetailPage() {
                   {p.status === "analyzing" && <Loader2 className="mr-1 size-3 animate-spin" />}
                   {p.status}
                 </Badge>
+                <button
+                  type="button"
+                  title="Delete branch"
+                  disabled={deletingBranch === p.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Delete branch "${p.branch}"? This will remove all analysis data.`)) {
+                      handleDeleteBranch(p.id);
+                    }
+                  }}
+                  className="ml-auto rounded p-1 text-muted-foreground/50 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                >
+                  {deletingBranch === p.id ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-3.5" />
+                  )}
+                </button>
               </CardTitle>
             </CardHeader>
             <CardContent>

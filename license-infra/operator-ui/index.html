@@ -371,16 +371,18 @@
         <div class="form-row">
           <div class="form-group">
             <label for="tier">Tier</label>
-            <select id="tier" required>
-              <option value="trial">Trial</option>
-              <option value="tier-1">Tier 1</option>
-              <option value="tier-2">Tier 2</option>
-              <option value="tier-3">Tier 3</option>
+            <select id="tier" required onchange="onTierChange()">
+              <option value="trial" data-loc="50000">Trial (50k LOC, 30 days)</option>
+              <option value="1" data-loc="250000">Tier 1 — Up to 250k LOC ($6,000/yr)</option>
+              <option value="2" data-loc="500000">Tier 2 — Up to 500k LOC ($10,800/yr)</option>
+              <option value="3" data-loc="1000000">Tier 3 — Up to 1M LOC ($19,200/yr)</option>
+              <option value="4" data-loc="2000000">Tier 4 — Up to 2M LOC ($33,600/yr)</option>
+              <option value="5" data-loc="5000000">Tier 5 — 2M+ LOC (Custom)</option>
             </select>
           </div>
           <div class="form-group">
             <label for="locLimit">LOC Limit</label>
-            <input type="number" id="locLimit" required min="0" value="500000" />
+            <input type="number" id="locLimit" required min="0" value="50000" />
           </div>
         </div>
 
@@ -571,10 +573,26 @@
       document.getElementById("loginError").classList.add("hidden");
       document.getElementById("resultSection").classList.add("hidden");
       document.getElementById("signingForm").reset();
-      // Restore defaults after reset
-      document.getElementById("locLimit").value = "500000";
-      document.getElementById("expiresInDays").value = "365";
+      // Restore defaults after reset (trial tier)
+      document.getElementById("locLimit").value = "50000";
+      document.getElementById("expiresInDays").value = "30";
       showView("loginView");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Tier auto-fill
+    // ---------------------------------------------------------------------------
+    function onTierChange() {
+      var sel = document.getElementById("tier");
+      var opt = sel.options[sel.selectedIndex];
+      var loc = opt.getAttribute("data-loc");
+      if (loc) document.getElementById("locLimit").value = loc;
+      // Trial defaults to 30 days, paid tiers to 365
+      if (sel.value === "trial") {
+        document.getElementById("expiresInDays").value = "30";
+      } else {
+        document.getElementById("expiresInDays").value = "365";
+      }
     }
 
     // ---------------------------------------------------------------------------
@@ -596,12 +614,13 @@
       try {
         var idToken = await getIdToken();
 
+        var tierVal = document.getElementById("tier").value;
         var body = {
           installation_id: document.getElementById("installationId").value.trim(),
           customer_name: document.getElementById("customerName").value.trim(),
           customer_email: document.getElementById("customerEmail").value.trim(),
           customer_organization: document.getElementById("customerOrg").value.trim(),
-          tier: document.getElementById("tier").value,
+          tier: tierVal === "trial" ? "trial" : parseInt(tierVal, 10),
           loc_limit: parseInt(document.getElementById("locLimit").value, 10),
           expires_in_days: parseInt(document.getElementById("expiresInDays").value, 10),
           notes: document.getElementById("notes").value.trim() || undefined,

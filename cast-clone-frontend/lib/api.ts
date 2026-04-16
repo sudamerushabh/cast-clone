@@ -57,12 +57,21 @@ import type {
   SavedViewResponse,
   SavedViewListItem,
   ActivityLogEntry,
+  ActivityStatsResponse,
   WebhookUrlInfo,
   ApiKeyResponse,
   ApiKeyCreateResponse,
   UsageSummaryResponse,
   LicenseStatusResponse,
   InstallationIdResponse,
+  SystemInfoResponse,
+  AiConfigResponse,
+  AiConfigUpdateRequest,
+  AiModelsListResponse,
+  AiTestConnectionRequest,
+  AiTestConnectionResponse,
+  TraceRouteResponse,
+  TraceSummaryResponse,
 } from "./types";
 
 const BASE_URL =
@@ -321,6 +330,32 @@ export async function getImpactAnalysis(
   );
 }
 
+export async function getTraceRoute(
+  projectId: string,
+  nodeFqn: string,
+  maxDepth: number = 5,
+): Promise<TraceRouteResponse> {
+  const params = new URLSearchParams({
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<TraceRouteResponse>(
+    `/api/v1/analysis/${projectId}/trace/${encodeURIComponent(nodeFqn)}?${params}`,
+  );
+}
+
+export async function getTraceSummary(
+  projectId: string,
+  nodeFqn: string,
+  maxDepth: number = 5,
+): Promise<TraceSummaryResponse> {
+  const params = new URLSearchParams({
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<TraceSummaryResponse>(
+    `/api/v1/analysis/${projectId}/trace/${encodeURIComponent(nodeFqn)}/summary?${params}`,
+  );
+}
+
 export async function getShortestPath(
   projectId: string,
   fromFqn: string,
@@ -460,6 +495,15 @@ export async function addBranch(
   return apiFetch<ProjectBranchResponse>(`/api/v1/repositories/${repoId}/branches`, {
     method: "POST",
     body: JSON.stringify({ branch }),
+  });
+}
+
+export async function deleteBranchProject(
+  repoId: string,
+  projectId: string,
+): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${repoId}/projects/${projectId}`, {
+    method: "DELETE",
   });
 }
 
@@ -696,12 +740,21 @@ export async function getActivityFeed(params?: {
   limit?: number;
   user_id?: string;
   action?: string;
+  category?: string;
+  days?: number;
 }): Promise<ActivityLogEntry[]> {
   const searchParams = new URLSearchParams();
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.user_id) searchParams.set("user_id", params.user_id);
   if (params?.action) searchParams.set("action", params.action);
+  if (params?.category) searchParams.set("category", params.category);
+  if (params?.days) searchParams.set("days", String(params.days));
   return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
+}
+
+export async function getActivityStats(days?: number): Promise<ActivityStatsResponse> {
+  const params = days ? `?days=${days}` : "";
+  return apiFetch<ActivityStatsResponse>(`/api/v1/activity/stats${params}`);
 }
 
 // ── Phase 5a: PR Analysis API (repository-level) ──
@@ -927,6 +980,12 @@ export async function uploadLicense(file: File): Promise<LicenseStatusResponse> 
   });
 }
 
+// ── System Info ──
+
+export async function getSystemInfo(): Promise<SystemInfoResponse> {
+  return apiFetch<SystemInfoResponse>("/api/v1/system/info");
+}
+
 // ── Email Config ──
 
 export async function getEmailConfig(): Promise<EmailConfigResponse> {
@@ -945,4 +1004,39 @@ export async function testSendEmail(to: string): Promise<TestSendResponse> {
     method: "POST",
     body: JSON.stringify({ to }),
   });
+}
+
+// ── AI Config ──
+
+export async function getAiConfig(): Promise<AiConfigResponse> {
+  return apiFetch<AiConfigResponse>("/api/v1/ai/config");
+}
+
+export async function updateAiConfig(data: AiConfigUpdateRequest): Promise<AiConfigResponse> {
+  return apiFetch<AiConfigResponse>("/api/v1/ai/config", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getAiModels(): Promise<AiModelsListResponse> {
+  return apiFetch<AiModelsListResponse>("/api/v1/ai/models");
+}
+
+export async function testAiConnection(data: AiTestConnectionRequest): Promise<AiTestConnectionResponse> {
+  return apiFetch<AiTestConnectionResponse>("/api/v1/ai/test-connection", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ── Health Check ──
+
+export interface HealthResponse {
+  status: "healthy" | "unhealthy";
+  services: Record<string, "up" | "down">;
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  return apiFetch<HealthResponse>("/health");
 }

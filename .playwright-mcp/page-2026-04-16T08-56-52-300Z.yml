@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - heading "ChangeSafe License Portal" [level=1] [ref=e3]
+  - generic [ref=e5]:
+    - heading "Operator Sign In" [level=2] [ref=e6]
+    - generic [ref=e7]:
+      - generic [ref=e8]:
+        - generic [ref=e9]: Username
+        - textbox "Username" [ref=e10]
+      - generic [ref=e11]:
+        - generic [ref=e12]: Password
+        - textbox "Password" [ref=e13]
+      - button "Sign In" [ref=e15] [cursor=pointer]

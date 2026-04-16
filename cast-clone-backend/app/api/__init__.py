@@ -1,6 +1,7 @@
 """API router registry."""
 
 from app.api.activity import router as activity_router
+from app.api.ai_config import router as ai_config_router
 from app.api.ai_usage import router as ai_usage_router
 from app.api.analysis import router as analysis_router
 from app.api.analysis_views import router as analysis_views_router
@@ -21,6 +22,7 @@ from app.api.projects import router as projects_router
 from app.api.pull_requests import router as pull_requests_router
 from app.api.repositories import router as repositories_router
 from app.api.saved_views import project_router as views_project_router
+from app.api.system import router as system_router
 from app.api.saved_views import view_router as views_router
 from app.api.summaries import router as summary_router
 from app.api.tags import project_router as tags_project_router
@@ -31,6 +33,7 @@ from app.api.websocket import router as websocket_router
 
 __all__ = [
     "activity_router",
+    "ai_config_router",
     "ai_usage_router",
     "email_router",
     "api_keys_router",
@@ -56,6 +59,7 @@ __all__ = [
     "views_project_router",
     "views_router",
     "summary_router",
+    "system_router",
     "webhooks_router",
     "websocket_router",
 ]

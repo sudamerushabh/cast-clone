@@ -51,7 +51,7 @@ class GraphStore(ABC):
 
     @abstractmethod
     async def write_edges_batch(
-        self, edges: list[GraphEdge]
+        self, edges: list[GraphEdge], app_name: str
     ) -> int: ...
 
     @abstractmethod
@@ -157,12 +157,15 @@ class Neo4jGraphStore(GraphStore):
                 total += record["cnt"] if record else 0
         return total
 
-    async def write_edges_batch(self, edges: list[GraphEdge]) -> int:
+    async def write_edges_batch(self, edges: list[GraphEdge], app_name: str) -> int:
         """Write edges in batches of 5000 using UNWIND.
 
         Source and target nodes must already exist (stub nodes are pre-created
         by _create_stub_hierarchy in writer.py). Edges whose source or target
         node is missing are silently skipped by the MATCH clauses.
+
+        Both endpoints are scoped to ``app_name`` to prevent cross-project
+        edge creation when multiple projects share the same FQNs.
         """
         batch_size = 5000
         total = 0
@@ -183,13 +186,15 @@ class Neo4jGraphStore(GraphStore):
                 })
             cypher = """
             UNWIND $batch AS e
-            MATCH (from {fqn: e.from_fqn})
-            MATCH (to {fqn: e.to_fqn})
+            MATCH (from {fqn: e.from_fqn, app_name: $app_name})
+            MATCH (to {fqn: e.to_fqn, app_name: $app_name})
             CALL apoc.merge.relationship(from, e.type, {}, e.properties, to) YIELD rel
             RETURN count(rel) AS cnt
             """
             async with self._driver.session(database=self._database) as session:
-                result = await session.run(cypher, {"batch": records})
+                result = await session.run(
+                    cypher, {"batch": records, "app_name": app_name}
+                )
                 record = await result.single()
                 total += record["cnt"] if record else 0
         return total

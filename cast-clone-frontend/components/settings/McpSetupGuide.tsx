@@ -9,8 +9,8 @@ const SETUP_SNIPPETS = [
     id: "claude-code",
     name: "Claude Code",
     icon: Terminal,
-    description: "Add CodeLens as an MCP server in Claude Code CLI.",
-    command: `claude mcp add --transport sse codelens http://localhost:8090/sse`,
+    description: "Add ChangeSafe as an MCP server in Claude Code CLI.",
+    command: `claude mcp add --transport sse changesafe http://localhost:8090/sse`,
     note: "Run this in your terminal. The MCP server uses SSE transport.",
   },
   {
@@ -20,7 +20,7 @@ const SETUP_SNIPPETS = [
     description: "Add to your VS Code MCP configuration.",
     command: `{
   "servers": {
-    "codelens": {
+    "changesafe": {
       "type": "sse",
       "url": "http://localhost:8090/sse",
       "headers": {
@@ -35,10 +35,10 @@ const SETUP_SNIPPETS = [
     id: "cursor",
     name: "Cursor",
     icon: Wand2,
-    description: "Configure CodeLens MCP in Cursor settings.",
+    description: "Configure ChangeSafe MCP in Cursor settings.",
     command: `{
   "mcpServers": {
-    "codelens": {
+    "changesafe": {
       "url": "http://localhost:8090/sse",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
@@ -64,7 +64,7 @@ export function McpSetupGuide() {
       <div>
         <h3 className="text-lg font-semibold">MCP Setup Guide</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect external AI tools to CodeLens using the MCP protocol.
+          Connect external AI tools to ChangeSafe using the MCP protocol.
           Create an API key above, then use these snippets to configure your tool.
         </p>
       </div>

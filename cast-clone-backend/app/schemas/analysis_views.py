@@ -120,3 +120,48 @@ class NodeDetailResponse(BaseModel):
     community_id: int | None = None
     callers: list[PathNode] = Field(default_factory=list)
     callees: list[PathNode] = Field(default_factory=list)
+
+# ── Trace Route ─────────────────────────────────────────
+
+
+class TraceNode(BaseModel):
+    fqn: str
+    name: str
+    kind: str
+    file: str | None = None
+    language: str | None = None
+    depth: int
+    sequence: int
+    direction: str  # "upstream" | "downstream"
+    layer: str = "other"  # "api" | "service" | "repository" | "database" | "other"
+
+
+class TraceEdge(BaseModel):
+    source: str
+    target: str
+    type: str
+    sequence: int | None = None
+
+
+class TraceRouteResponse(BaseModel):
+    center_fqn: str
+    center_name: str
+    center_kind: str
+    center_layer: str = "other"
+    max_depth: int
+    upstream: list[TraceNode]
+    downstream: list[TraceNode]
+    edges: list[TraceEdge]
+    upstream_count: int
+    downstream_count: int
+    layers_present: list[str] = Field(default_factory=list)
+
+
+class TraceSummaryResponse(BaseModel):
+    fqn: str
+    summary: str
+    layers_involved: list[str] = Field(default_factory=list)
+    tables_touched: list[str] = Field(default_factory=list)
+    cached: bool
+    model: str | None = None
+    tokens_used: int | None = None

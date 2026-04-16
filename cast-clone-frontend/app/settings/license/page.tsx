@@ -375,7 +375,7 @@ export default function LicenseSettingsPage() {
       <div>
         <h1 className="text-2xl font-bold">License</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Manage your CodeLens license and view usage information.
+          Manage your ChangeSafe license and view usage information.
         </p>
       </div>
 
