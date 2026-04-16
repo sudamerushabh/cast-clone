@@ -155,7 +155,15 @@ async def execute_tool_call(
     """
     handler = _TOOL_HANDLERS.get(tool_name)
     if not handler:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        # Log the tool name server-side for debugging but never reflect it
+        # back into the SSE payload (avoids echoing attacker-controlled
+        # strings if the registry is ever extended dynamically).
+        logger.warning(
+            "chat_unknown_tool",
+            tool=tool_name,
+            project_id=getattr(ctx, "project_id", None),
+        )
+        return json.dumps({"error": "Unknown tool requested"})
     try:
         result = await handler(ctx, tool_input)
         return json.dumps(result, default=str)
@@ -472,19 +480,23 @@ async def _openai_chat_stream(
     config: EffectiveAiConfig,
 ) -> AsyncGenerator[str, None]:
     """Agentic chat loop using OpenAI's chat completions with tool use."""
-    client = create_openai_client(config)
-    tool_defs = get_chat_tool_definitions()
-    openai_tools = _anthropic_tools_to_openai(tool_defs)
-
-    messages = _history_to_openai(history, system_prompt)
-    messages.append({"role": "user", "content": message})
-
     tool_calls_made = 0
     total_input_tokens = 0
     total_output_tokens = 0
     start = time.monotonic()
 
     try:
+        # Client construction can raise (e.g. missing credentials, malformed
+        # base_url) — keep it inside the try/except so the exception text
+        # (which may contain API keys or internal URLs) never escapes into
+        # the SSE stream.
+        client = create_openai_client(config)
+        tool_defs = get_chat_tool_definitions()
+        openai_tools = _anthropic_tools_to_openai(tool_defs)
+
+        messages = _history_to_openai(history, system_prompt)
+        messages.append({"role": "user", "content": message})
+
         while True:
             elapsed = time.monotonic() - start
             if elapsed > config.chat_timeout_seconds:

@@ -35,6 +35,9 @@ class TestWebSocketCleanup:
 
         await reporter.emit("parsing", "running")
 
+        # Healthy connection actually received the broadcast
+        ws_healthy.send_json.assert_awaited_once()
+
         # Dead connection is gone, healthy remains
         remaining = active_connections.get("proj-1", [])
         assert ws_dead not in remaining

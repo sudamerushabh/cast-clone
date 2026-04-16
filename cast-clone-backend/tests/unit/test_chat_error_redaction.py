@@ -132,12 +132,153 @@ async def test_execute_tool_call_logs_full_exception_server_side(
 @pytest.mark.asyncio
 async def test_unknown_tool_error_does_not_echo_input(ctx: ChatToolContext) -> None:
     """Unknown-tool errors (separate code path) must not echo arbitrary
-    input either. The current behaviour names the missing tool, which is
-    safe since tool names come from the model's tool_use block, not user
-    free text. This test pins that contract so future refactors don't
-    accidentally start echoing ``tool_input`` values.
+    input OR the tool name. Tool names are model-controlled and could in
+    principle be poisoned via prompt injection; never reflect them into
+    the SSE payload. The tool name is logged server-side via structlog.
     """
-    raw = await execute_tool_call(ctx, "nonexistent_tool", {"secret": "s3cr3t"})
+    raw = await execute_tool_call(
+        ctx, "nonexistent_tool_with_secret_name", {"secret": "s3cr3t"}
+    )
     assert "s3cr3t" not in raw
+    # Tool name must NOT appear in the wire payload.
+    assert "nonexistent_tool_with_secret_name" not in raw
     parsed = json.loads(raw)
-    assert "error" in parsed
+    assert parsed == {"error": "Unknown tool requested"}
+
+
+# ---------------------------------------------------------------------------
+# Stream-level exception redaction (Bedrock + OpenAI paths)
+# ---------------------------------------------------------------------------
+
+_SENSITIVE_STREAM_MARKER = "super-secret-bedrock-endpoint-47.internal"
+_SENSITIVE_OPENAI_MARKER = "sk-leakedOpenAIApiKey-deadbeef"
+
+
+def _make_ai_config(provider: str = "openai") -> object:
+    """Build a minimal EffectiveAiConfig for stream tests.
+
+    Real construction requires many fields; we use SimpleNamespace so tests
+    don't break when the dataclass grows. The stream code only reads a few
+    attributes (provider, chat_model, chat_timeout_seconds, max_tool_calls,
+    max_response_tokens, temperature, top_p, thinking_budget_tokens).
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        provider=provider,
+        aws_region="us-east-1",
+        bedrock_use_iam_role=True,
+        aws_access_key_id=None,
+        aws_secret_access_key=None,
+        openai_api_key=None,
+        openai_base_url=None,
+        chat_model="test-model",
+        pr_analysis_model="test-model",
+        summary_model="test-model",
+        temperature=1.0,
+        top_p=1.0,
+        max_response_tokens=1024,
+        thinking_budget_tokens=1024,
+        chat_timeout_seconds=60,
+        max_tool_calls=5,
+        cost_input_per_mtok=0.0,
+        cost_output_per_mtok=0.0,
+    )
+
+
+async def _collect_stream(gen) -> list[str]:
+    events: list[str] = []
+    async for evt in gen:
+        events.append(evt)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_exception_redacted(
+    ctx: ChatToolContext, monkeypatch
+) -> None:
+    """Bedrock/Anthropic stream path: an exception raised by the underlying
+    ``messages.create`` must NOT reach the SSE consumer. The generic
+    ``Chat error. Please try again.`` message is yielded instead.
+    """
+    # Build a fake client whose messages.create raises with a sensitive
+    # string in the exception message.
+    class _FakeMessages:
+        async def create(self, **_kwargs):
+            raise RuntimeError(
+                f"bedrock connect failed to {_SENSITIVE_STREAM_MARKER} "
+                "with aws_secret=AKIAXXXXXXXXXXXXXXX"
+            )
+
+    class _FakeBedrockClient:
+        def __init__(self) -> None:
+            self.messages = _FakeMessages()
+
+    # Force the Bedrock branch: ai_config=None uses env-var fallback path
+    # that calls AsyncAnthropicBedrock(...) directly. Patch that symbol so
+    # construction returns our fake.
+    monkeypatch.setattr(
+        chat_module, "AsyncAnthropicBedrock", lambda **_kw: _FakeBedrockClient()
+    )
+
+    events = await _collect_stream(
+        chat_module.chat_stream(
+            ctx=ctx,
+            message="hello",
+            history=[],
+            system_prompt="you are a test",
+            ai_config=None,
+        )
+    )
+
+    joined = "\n".join(events)
+    # No sensitive content must appear in any emitted SSE event.
+    assert _SENSITIVE_STREAM_MARKER not in joined
+    assert "AKIA" not in joined
+    assert "RuntimeError" not in joined
+    assert "bedrock connect failed" not in joined
+
+    # A generic error event must have been emitted so the UI can react.
+    error_events = [e for e in events if e.startswith("event: error")]
+    assert error_events, f"expected an error SSE event, got: {events}"
+    # The generic copy pins the redaction contract.
+    assert any("Chat error. Please try again." in e for e in error_events)
+
+
+@pytest.mark.asyncio
+async def test_openai_create_client_exception_redacted(
+    ctx: ChatToolContext, monkeypatch
+) -> None:
+    """OpenAI path: if ``create_openai_client`` itself raises during the
+    stream (e.g. malformed base_url, missing credentials), the exception
+    text — which may contain API keys or internal URLs — must NOT escape
+    into the SSE stream. A generic error event is emitted instead.
+    """
+    def _raising_factory(_config):
+        raise RuntimeError(
+            f"failed to build OpenAI client with api_key={_SENSITIVE_OPENAI_MARKER} "
+            "at /app/services/ai_provider.py:168"
+        )
+
+    # chat.py imported the symbol directly — patch it on the chat module.
+    monkeypatch.setattr(chat_module, "create_openai_client", _raising_factory)
+
+    events = await _collect_stream(
+        chat_module.chat_stream(
+            ctx=ctx,
+            message="hello",
+            history=[],
+            system_prompt="you are a test",
+            ai_config=_make_ai_config(provider="openai"),
+        )
+    )
+
+    joined = "\n".join(events)
+    assert _SENSITIVE_OPENAI_MARKER not in joined
+    assert "sk-" not in joined
+    assert "/app/services/ai_provider.py" not in joined
+    assert "RuntimeError" not in joined
+
+    error_events = [e for e in events if e.startswith("event: error")]
+    assert error_events, f"expected an error SSE event, got: {events}"
+    assert any("Chat error. Please try again." in e for e in error_events)
