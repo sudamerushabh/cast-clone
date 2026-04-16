@@ -141,7 +141,7 @@ def get_tool_definitions(include_dispatch: bool = False) -> list[dict]:
                     },
                     "depth": {
                         "type": "integer",
-                        "description": "Max traversal depth (default 5, max 10)",
+                        "description": f"Max traversal depth (1-{IMPACT_MAX_DEPTH}, default 5)",
                     },
                 },
                 "required": ["fqn", "direction"],
@@ -447,7 +447,9 @@ async def _find_path(ctx: ToolContext, inp: dict) -> str:
     target = inp["target_fqn"]
 
     max_depth = _validate_depth(
-        FIND_PATH_MAX_DEPTH, FIND_PATH_MAX_DEPTH, name="max_depth"
+        inp.get("max_depth", FIND_PATH_MAX_DEPTH),
+        FIND_PATH_MAX_DEPTH,
+        name="max_depth",
     )
     cypher = (
         "MATCH path = shortestPath("

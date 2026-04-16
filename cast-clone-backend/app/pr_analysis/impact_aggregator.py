@@ -6,7 +6,7 @@ from collections import Counter
 
 import structlog
 
-from app.ai.tools import CONTAINS_HIERARCHY_MAX_DEPTH
+from app.ai.tools import CONTAINS_HIERARCHY_MAX_DEPTH, IMPACT_MAX_DEPTH
 from app.pr_analysis.models import (
     AffectedNode,
     AggregatedImpact,
@@ -17,7 +17,7 @@ from app.services.neo4j import GraphStore
 
 logger = structlog.get_logger(__name__)
 
-_MAX_DEPTH = 5
+_MAX_DEPTH = IMPACT_MAX_DEPTH
 _HIERARCHY_MAX_DEPTH = CONTAINS_HIERARCHY_MAX_DEPTH
 
 
