@@ -62,7 +62,8 @@ async def _stage_dependencies(
     """Stage 2: Resolve build dependencies."""
     from app.stages.dependencies import resolve_dependencies
 
-    assert context.manifest is not None, "Stage 1 (discovery) must run first"
+    if context.manifest is None:
+        raise RuntimeError("Stage 1 (discovery) must run first")
     context.environment = await resolve_dependencies(context.manifest)
 
 
@@ -70,7 +71,8 @@ async def _stage_parsing(context: AnalysisContext, services: PipelineServices) -
     """Stage 3: Parse source files with tree-sitter."""
     from app.stages.treesitter.parser import parse_with_treesitter
 
-    assert context.manifest is not None, "Stage 1 (discovery) must run first"
+    if context.manifest is None:
+        raise RuntimeError("Stage 1 (discovery) must run first")
     graph = await parse_with_treesitter(context.manifest)
     context.graph.merge(graph)
 
@@ -191,7 +193,8 @@ def get_session_factory():
     """Get the async session factory. Separated for testability."""
     from app.services.postgres import _session_factory
 
-    assert _session_factory is not None, "PostgreSQL not initialized"
+    if _session_factory is None:
+        raise RuntimeError("PostgreSQL not initialized")
     return _session_factory
 
 
@@ -239,7 +242,11 @@ async def run_analysis_pipeline(
 
         # Ensure branch clone directory exists, then checkout
         if project.branch and project.source_path:
-            from app.services.clone import checkout_branch, clone_branch_local, fetch_all_refs
+            from app.services.clone import (
+                checkout_branch,
+                clone_branch_local,
+                fetch_all_refs,
+            )
 
             source = Path(project.source_path)
             if not source.exists() and project.repository_id:
@@ -290,7 +297,9 @@ async def run_analysis_pipeline(
             )
             run = run_result.scalar_one_or_none()
             if run is None:
-                run = AnalysisRun(project_id=project_id, status="running", started_at=now)
+                run = AnalysisRun(
+                    project_id=project_id, status="running", started_at=now
+                )
                 session.add(run)
             else:
                 run.status = "running"
@@ -376,8 +385,10 @@ async def run_analysis_pipeline(
                     await session.commit()
 
                     await log_activity(
-                        session, "analysis.failed",
-                        resource_type="project", resource_id=project_id,
+                        session,
+                        "analysis.failed",
+                        resource_type="project",
+                        resource_id=project_id,
                         details={"stage": stage_def.name, "error": str(e)[:500]},
                     )
 
@@ -396,6 +407,7 @@ async def run_analysis_pipeline(
         # Recalculate per-repo LOC tracking (also invalidates cumulative cache)
         if project.repository_id:
             from app.services.loc_tracking import recalculate_repo_loc
+
             await recalculate_repo_loc(project.repository_id, session)
         else:
             invalidate_cumulative_loc_cache()
@@ -419,8 +431,10 @@ async def run_analysis_pipeline(
         await ws.emit_complete(report)
 
         await log_activity(
-            session, "analysis.completed",
-            resource_type="project", resource_id=project_id,
+            session,
+            "analysis.completed",
+            resource_type="project",
+            resource_id=project_id,
             details={
                 "nodes": context.graph.node_count,
                 "edges": context.graph.edge_count,

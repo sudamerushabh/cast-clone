@@ -33,9 +33,7 @@ from app.models.db import (
 from app.services.activity import log_activity
 
 # Reusable eager-load option: Repository → projects → analysis_runs
-_REPO_LOAD = (
-    selectinload(Repository.projects).selectinload(Project.analysis_runs)
-)
+_REPO_LOAD = selectinload(Repository.projects).selectinload(Project.analysis_runs)
 from app.schemas.repositories import (
     BranchAddRequest,
     BranchCompareResponse,
@@ -93,11 +91,15 @@ def _repo_to_response(
         last_analyzed_at = None
         node_count = None
         edge_count = None
-        if hasattr(p, 'analysis_runs') and p.analysis_runs:
+        if hasattr(p, "analysis_runs") and p.analysis_runs:
             completed = [r for r in p.analysis_runs if r.status == "completed"]
             if completed:
                 latest = max(completed, key=lambda r: r.completed_at or r.started_at)
-                last_analyzed_at = (latest.completed_at or latest.started_at).isoformat() if (latest.completed_at or latest.started_at) else None
+                last_analyzed_at = (
+                    (latest.completed_at or latest.started_at).isoformat()
+                    if (latest.completed_at or latest.started_at)
+                    else None
+                )
                 if latest.snapshot:
                     node_count = latest.snapshot.get("node_count")
                     edge_count = latest.snapshot.get("edge_count")
@@ -137,7 +139,9 @@ async def _background_clone(
     # Lazy import so we get the live reference set during lifespan, not the
     # None value that exists at module-load time.
     from app.services.postgres import _session_factory
-    assert _session_factory is not None, "PostgreSQL not initialized"
+
+    if _session_factory is None:
+        raise RuntimeError("PostgreSQL not initialized")
     async with _session_factory() as session:
         result = await session.execute(
             select(Repository)
@@ -172,9 +176,7 @@ async def _background_clone(
         except Exception as exc:
             repo.clone_status = "clone_failed"
             repo.clone_error = str(exc)
-            await logger.awarning(
-                "clone_failed", repo_id=repo_id, error=str(exc)
-            )
+            await logger.awarning("clone_failed", repo_id=repo_id, error=str(exc))
 
         await session.commit()
 
@@ -264,8 +266,11 @@ async def create_repository(
     )
 
     await log_activity(
-        session, "repository.created", user_id=user.id,
-        resource_type="repository", resource_id=repo.id,
+        session,
+        "repository.created",
+        user_id=user.id,
+        resource_type="repository",
+        resource_id=repo.id,
         details={"full_name": remote_repo.full_name, "branches": body.branches},
     )
     return _repo_to_response(repo)
@@ -295,17 +300,12 @@ async def list_repositories(
                 RepositoryLocTracking.repository_id.in_(repo_ids)
             )
         )
-        tracking_map = {
-            t.repository_id: t for t in tracking_result.scalars().all()
-        }
+        tracking_map = {t.repository_id: t for t in tracking_result.scalars().all()}
     else:
         tracking_map = {}
 
     return RepositoryListResponse(
-        repositories=[
-            _repo_to_response(r, tracking_map.get(r.id))
-            for r in repos
-        ],
+        repositories=[_repo_to_response(r, tracking_map.get(r.id)) for r in repos],
         total=len(repos),
     )
 
@@ -318,9 +318,7 @@ async def get_repository(
 ) -> RepositoryResponse:
     """Get a single repository by ID."""
     result = await session.execute(
-        select(Repository)
-        .options(_REPO_LOAD)
-        .where(Repository.id == repo_id)
+        select(Repository).options(_REPO_LOAD).where(Repository.id == repo_id)
     )
     repo = result.scalar_one_or_none()
     if repo is None:
@@ -349,9 +347,7 @@ async def delete_repository(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Delete a repository and all its projects."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
@@ -365,20 +361,29 @@ async def delete_repository(
     await session.commit()
 
     await log_activity(
-        session, "repository.deleted", user_id=user.id,
-        resource_type="repository", resource_id=repo_id,
+        session,
+        "repository.deleted",
+        user_id=user.id,
+        resource_type="repository",
+        resource_id=repo_id,
         details={"full_name": repo_name},
     )
 
     # CASCADE deleted the tracking row; invalidate cache so cumulative_loc()
     # picks up the removal.
     from app.services.loc_usage import invalidate_cumulative_loc_cache
+
     invalidate_cumulative_loc_cache()
 
     try:
         await cleanup_repo_dirs(local_path)
     except Exception:
-        logger.warning("repo_disk_cleanup_failed", repo_id=repo_id, local_path=local_path, exc_info=True)
+        logger.warning(
+            "repo_disk_cleanup_failed",
+            repo_id=repo_id,
+            local_path=local_path,
+            exc_info=True,
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -390,9 +395,7 @@ async def get_clone_status(
     session: AsyncSession = Depends(get_session),
 ) -> CloneStatusResponse:
     """Get the clone status for a repository."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
@@ -414,9 +417,7 @@ async def sync_repository(
     _user: User = Depends(get_current_user),
 ) -> CloneStatusResponse:
     """Pull latest changes for a cloned repository."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
@@ -436,8 +437,11 @@ async def sync_repository(
         repo.clone_error = None
         await session.commit()
         await log_activity(
-            session, "repository.synced", user_id=user.id,
-            resource_type="repository", resource_id=repo_id,
+            session,
+            "repository.synced",
+            user_id=user.id,
+            resource_type="repository",
+            resource_id=repo_id,
             details={"full_name": repo.repo_full_name},
         )
     except Exception as exc:
@@ -488,7 +492,9 @@ async def add_branch(
                 detail=f"Branch {body.branch} already exists for this repository",
             )
 
-    branch_dir = get_branch_clone_path(repo.local_path, body.branch) if repo.local_path else ""
+    branch_dir = (
+        get_branch_clone_path(repo.local_path, body.branch) if repo.local_path else ""
+    )
     project = Project(
         name=f"{repo.repo_full_name}:{body.branch}",
         source_path=branch_dir,
@@ -502,6 +508,7 @@ async def add_branch(
     if repo.local_path and repo.clone_status == "cloned":
         try:
             from app.services.clone import fetch_all_refs
+
             await fetch_all_refs(repo.local_path)
             await clone_branch_local(repo.local_path, body.branch, branch_dir)
         except Exception as exc:
@@ -568,6 +575,7 @@ async def delete_branch_project(
 
     # Recalculate repo LOC tracking after branch removal
     from app.services.loc_tracking import recalculate_repo_loc
+
     await recalculate_repo_loc(repo_id, session)
 
     # Remove branch clone directory from disk

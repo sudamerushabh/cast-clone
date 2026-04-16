@@ -41,7 +41,8 @@ _authenticator: ApiKeyAuthenticator | None = None
 
 def _get_graph_store() -> Neo4jGraphStore:
     """Get the initialized GraphStore instance."""
-    assert _graph_store is not None, "MCP server not initialized — GraphStore is None"
+    if _graph_store is None:
+        raise RuntimeError("MCP server not initialized — GraphStore is None")
     return _graph_store
 
 

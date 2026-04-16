@@ -37,7 +37,8 @@ async def close_neo4j() -> None:
 
 
 def get_driver() -> AsyncDriver:
-    assert _driver is not None, "Neo4j not initialized"
+    if _driver is None:
+        raise RuntimeError("Neo4j not initialized")
     return _driver
 
 
@@ -45,14 +46,10 @@ class GraphStore(ABC):
     """Abstract graph database interface."""
 
     @abstractmethod
-    async def write_nodes_batch(
-        self, nodes: list[GraphNode], app_name: str
-    ) -> int: ...
+    async def write_nodes_batch(self, nodes: list[GraphNode], app_name: str) -> int: ...
 
     @abstractmethod
-    async def write_edges_batch(
-        self, edges: list[GraphEdge], app_name: str
-    ) -> int: ...
+    async def write_edges_batch(self, edges: list[GraphEdge], app_name: str) -> int: ...
 
     @abstractmethod
     async def ensure_indexes(self) -> None: ...
@@ -102,9 +99,7 @@ class Neo4jGraphStore(GraphStore):
             for stmt in index_statements:
                 await session.run(stmt)
 
-    async def write_nodes_batch(
-        self, nodes: list[GraphNode], app_name: str
-    ) -> int:
+    async def write_nodes_batch(self, nodes: list[GraphNode], app_name: str) -> int:
         """Write nodes in batches of 5000 using UNWIND."""
         batch_size = 5000
         total = 0
@@ -119,11 +114,7 @@ class Neo4jGraphStore(GraphStore):
                 for k, v in node.properties.items():
                     if isinstance(v, dict):
                         serializable_props[k] = json.dumps(v)
-                    elif (
-                        isinstance(v, list)
-                        and v
-                        and isinstance(v[0], dict)
-                    ):
+                    elif isinstance(v, list) and v and isinstance(v[0], dict):
                         serializable_props[k] = json.dumps(v)
                     else:
                         serializable_props[k] = v
@@ -178,12 +169,14 @@ class Neo4jGraphStore(GraphStore):
                     "evidence": edge.evidence,
                     **edge.properties,
                 }
-                records.append({
-                    "from_fqn": edge.source_fqn,
-                    "to_fqn": edge.target_fqn,
-                    "type": edge.kind.value,
-                    "properties": props,
-                })
+                records.append(
+                    {
+                        "from_fqn": edge.source_fqn,
+                        "to_fqn": edge.target_fqn,
+                        "type": edge.kind.value,
+                        "properties": props,
+                    }
+                )
             cypher = """
             UNWIND $batch AS e
             MATCH (from {fqn: e.from_fqn, app_name: $app_name})
