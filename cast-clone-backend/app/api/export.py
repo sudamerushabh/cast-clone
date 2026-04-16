@@ -24,20 +24,39 @@ router = APIRouter(prefix="/api/v1/export", tags=["export"])
 # Whitelist of node property names allowed in the `fields` query param for
 # node exports. Only names in this set may be interpolated into Cypher —
 # anything else is rejected with 400 to prevent Cypher injection.
-_ALLOWED_NODE_FIELDS: frozenset[str] = frozenset({
-    "fqn", "name", "kind", "language", "path", "file", "line", "end_line",
-    "loc", "complexity", "fan_in", "fan_out", "community_id",
-    "layer", "visibility",
-})
+_ALLOWED_NODE_FIELDS: frozenset[str] = frozenset(
+    {
+        "fqn",
+        "name",
+        "kind",
+        "language",
+        "path",
+        "file",
+        "line",
+        "end_line",
+        "loc",
+        "complexity",
+        "fan_in",
+        "fan_out",
+        "community_id",
+        "layer",
+        "visibility",
+    }
+)
 
 
 # Whitelist of edge field names allowed in the `fields` query param for
 # edge exports. The Cypher template is fixed; this whitelist must match
 # exactly what the edge Cypher RETURN projects. If you add a column to
 # the Cypher, add it here — and vice versa.
-_ALLOWED_EDGE_FIELDS: frozenset[str] = frozenset({
-    "source", "target", "type", "weight",
-})
+_ALLOWED_EDGE_FIELDS: frozenset[str] = frozenset(
+    {
+        "source",
+        "target",
+        "type",
+        "weight",
+    }
+)
 
 
 # Whitelist of level values accepted by the graph.json endpoint.
@@ -66,10 +85,7 @@ def _validate_fields(raw: str, allowed: frozenset[str]) -> list[str]:
     if bad:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unknown field(s): {', '.join(bad)}. "
-                f"Allowed: {sorted(allowed)}"
-            ),
+            detail=(f"Unknown field(s): {', '.join(bad)}. Allowed: {sorted(allowed)}"),
         )
     seen: set[str] = set()
     dupes: list[str] = []
@@ -100,10 +116,7 @@ def _validate_direction(direction: str) -> str:
     if direction not in _ALLOWED_IMPACT_DIRECTIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"direction must be one of: "
-                f"{sorted(_ALLOWED_IMPACT_DIRECTIONS)}"
-            ),
+            detail=(f"direction must be one of: {sorted(_ALLOWED_IMPACT_DIRECTIONS)}"),
         )
     return direction
 
@@ -266,7 +279,7 @@ async def export_impact_csv(
     project_id: str,
     node: str = Query(..., description="FQN of the starting node"),
     direction: str = Query(default="both", description="downstream, upstream, or both"),
-    max_depth: int = Query(default=5, ge=1, le=10),
+    max_depth: int = Query(default=5, ge=1, le=5),
     # TODO(CHAN-54): switch to get_accessible_project(project_id) once the
     # per-project authorization dependency lands.
     _user: User = Depends(get_current_user),

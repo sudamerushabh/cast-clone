@@ -81,8 +81,8 @@ async def list_nodes(
     project_id: str,
     kind: str | None = None,
     language: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
     _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """List graph nodes for a project, with optional filtering by kind/language."""
@@ -127,8 +127,8 @@ async def list_nodes(
 async def list_edges(
     project_id: str,
     kind: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
     _: Project = Depends(get_accessible_project),
 ) -> GraphEdgeListResponse:
     """List graph edges for a project, with optional filtering by kind."""
@@ -235,8 +235,8 @@ async def get_node(
 async def get_neighbors(
     project_id: str,
     fqn: str,
-    depth: int = 1,
-    limit: int = 100,
+    depth: int = Query(1, ge=1, le=5),
+    limit: int = Query(100, ge=1, le=500),
     _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """Get neighbor subgraph around a node."""
@@ -276,9 +276,7 @@ async def search_nodes(
         "n.language AS language, 1.0 AS score "
         "LIMIT 50"
     )
-    records = await store.query(
-        cypher, {"app_name": project_id, "query": q}
-    )
+    records = await store.query(cypher, {"app_name": project_id, "query": q})
 
     hits = [
         GraphSearchHit(

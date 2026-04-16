@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,8 +45,11 @@ async def create_project(
     await session.refresh(project)
 
     await log_activity(
-        session, "project.created", user_id=user.id,
-        resource_type="project", resource_id=project.id,
+        session,
+        "project.created",
+        user_id=user.id,
+        resource_type="project",
+        resource_id=project.id,
         details={"name": body.name},
     )
 
@@ -62,8 +65,8 @@ async def create_project(
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ProjectListResponse:
@@ -138,8 +141,11 @@ async def delete_project(
     await session.commit()
 
     await log_activity(
-        session, "project.deleted", user_id=user.id,
-        resource_type="project", resource_id=project_id,
+        session,
+        "project.deleted",
+        user_id=user.id,
+        resource_type="project",
+        resource_id=project_id,
         details={"name": project_name},
     )
 

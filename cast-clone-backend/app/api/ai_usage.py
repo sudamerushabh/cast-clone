@@ -109,7 +109,7 @@ async def get_usage_summary(
 @router.get("/project/{project_id}", response_model=list[UsageLogResponse])
 async def get_project_usage(
     project_id: str,
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=500),
     _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[UsageLogResponse]:

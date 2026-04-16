@@ -572,7 +572,9 @@ async def get_code(
     project_id: str,
     file: str = Query(..., description="Relative file path within the project"),
     line: int | None = Query(None, description="Line to highlight"),
-    context: int = Query(30, description="Lines of context around highlight line"),
+    context: int = Query(
+        30, ge=0, le=500, description="Lines of context around highlight line"
+    ),
     project: Project = Depends(get_accessible_project),
 ) -> CodeViewerResponse:
     """Read source code from the project's filesystem.
