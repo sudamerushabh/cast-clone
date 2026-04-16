@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_accessible_project
 from app.models.db import AnalysisRun, Project
 from app.orchestrator.pipeline import PipelineServices, run_analysis_pipeline
 from app.schemas.analysis import (
@@ -93,17 +94,13 @@ async def trigger_analysis(
     project_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    project: Project = Depends(get_accessible_project),
 ) -> AnalysisTriggerResponse:
-    """Trigger analysis for a project. Runs as a background task."""
-    # Load project
-    result = await session.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
+    """Trigger analysis for a project. Runs as a background task.
 
+    Access control: ``get_accessible_project`` transitively requires
+    ``get_current_user`` and enforces ownership (admin or repo creator).
+    """
     # Prevent duplicate analysis
     if project.status == "analyzing":
         raise HTTPException(
@@ -142,17 +139,13 @@ async def trigger_analysis(
 async def get_analysis_status(
     project_id: str,
     session: AsyncSession = Depends(get_session),
+    project: Project = Depends(get_accessible_project),
 ) -> AnalysisStatusResponse:
-    """Get the current analysis status for a project."""
-    # Load project
-    result = await session.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
+    """Get the current analysis status for a project.
 
+    Access control: ``get_accessible_project`` transitively requires
+    ``get_current_user`` and enforces ownership (admin or repo creator).
+    """
     # Get latest analysis run
     run_result = await session.execute(
         select(AnalysisRun)

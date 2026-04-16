@@ -28,9 +28,17 @@ def mock_graph_store():
         return mock_store
 
     # Provide a stub session so FastAPI's dependency resolution doesn't
-    # hit the real (uninitialised) _session_factory. Admins (default when
-    # AUTH_DISABLED=true) short-circuit ownership checks before any DB call.
-    stub_session = MagicMock()
+    # hit the real (uninitialised) _session_factory. The new get_accessible_project
+    # dependency unconditionally loads the project, so session.execute must be
+    # awaitable and return a result with a project that has no repository.
+    # AUTH_DISABLED=true makes the anonymous user an admin, so the
+    # admin short-circuit kicks in after the project is loaded.
+    stub_project = MagicMock()
+    stub_project.repository = None
+    stub_result = MagicMock()
+    stub_result.scalar_one_or_none = MagicMock(return_value=stub_project)
+    stub_session = AsyncMock()
+    stub_session.execute = AsyncMock(return_value=stub_result)
 
     async def override_get_session():
         yield stub_session

@@ -7,7 +7,15 @@ from pathlib import Path
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,7 +39,13 @@ from app.schemas.repositories import (
     RepositoryResponse,
     SnapshotPoint,
 )
-from app.services.clone import cleanup_repo_dirs, clone_branch_local, clone_repo, get_branch_clone_path, pull_latest
+from app.services.clone import (
+    cleanup_repo_dirs,
+    clone_branch_local,
+    clone_repo,
+    get_branch_clone_path,
+    pull_latest,
+)
 from app.services.crypto import decrypt_token
 from app.services.git_providers import create_provider
 from app.services.postgres import get_session

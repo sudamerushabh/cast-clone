@@ -6,12 +6,9 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_current_user
-from app.models.db import Project, User
+from app.api.dependencies import get_accessible_project
+from app.models.db import Project
 from app.schemas.graph import (
     GraphEdgeListResponse,
     GraphEdgeResponse,
@@ -22,7 +19,6 @@ from app.schemas.graph import (
     NodeWithNeighborsResponse,
 )
 from app.services.neo4j import Neo4jGraphStore, get_driver
-from app.services.postgres import get_session
 
 _VALID_REL_TYPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -32,37 +28,6 @@ router = APIRouter(prefix="/api/v1/graphs", tags=["graph"])
 def get_graph_store() -> Neo4jGraphStore:
     """Get a Neo4jGraphStore instance."""
     return Neo4jGraphStore(get_driver())
-
-
-async def _ensure_project_access(
-    project_id: str, user: User, session: AsyncSession
-) -> None:
-    """Raise 403 if the caller can't see this project; 404 if it doesn't exist.
-
-    Admins see everything. Members only see projects whose parent repository
-    they created, plus legacy projects without a repository (can't enforce
-    ownership without an owner column).
-    """
-    if user.role == "admin":
-        return
-    result = await session.execute(
-        select(Project)
-        .options(selectinload(Project.repository))
-        .where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        # Don't leak existence — but the Cypher query would also return
-        # empty for a non-existent app_name, so 404 is the natural answer.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
-    if project.repository is not None and project.repository.created_by != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden",
-        )
 
 
 def _record_to_node(record: dict[str, Any]) -> GraphNodeResponse:
@@ -118,11 +83,9 @@ async def list_nodes(
     language: str | None = None,
     offset: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """List graph nodes for a project, with optional filtering by kind/language."""
-    await _ensure_project_access(project_id, user, session)
     store = get_graph_store()
 
     # Build WHERE clause
@@ -166,11 +129,9 @@ async def list_edges(
     kind: str | None = None,
     offset: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphEdgeListResponse:
     """List graph edges for a project, with optional filtering by kind."""
-    await _ensure_project_access(project_id, user, session)
     store = get_graph_store()
 
     where_parts = ["a.app_name = $app_name"]
@@ -218,11 +179,9 @@ async def list_edges(
 async def get_node(
     project_id: str,
     fqn: str,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    _: Project = Depends(get_accessible_project),
 ) -> NodeWithNeighborsResponse:
     """Get a single node by FQN with its neighbors and edges."""
-    await _ensure_project_access(project_id, user, session)
     store = get_graph_store()
 
     # Find node
@@ -278,11 +237,9 @@ async def get_neighbors(
     fqn: str,
     depth: int = 1,
     limit: int = 100,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """Get neighbor subgraph around a node."""
-    await _ensure_project_access(project_id, user, session)
     store = get_graph_store()
 
     cypher = (
@@ -305,11 +262,9 @@ async def get_neighbors(
 async def search_nodes(
     project_id: str,
     q: str = Query(..., min_length=1),
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphSearchResponse:
     """Full-text search across graph nodes."""
-    await _ensure_project_access(project_id, user, session)
     store = get_graph_store()
 
     # Use CONTAINS for basic search; full-text index search in production

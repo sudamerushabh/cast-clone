@@ -15,12 +15,25 @@ from app.models.db import Project
 
 @pytest_asyncio.fixture
 async def mock_session():
-    """Mock AsyncSession for DB-dependent tests."""
+    """Mock AsyncSession for DB-dependent tests.
+
+    Default `execute()` returns a result whose `scalar_one_or_none()` yields a
+    standalone Project (no parent Repository), which lets get_accessible_project
+    short-circuit via the anonymous-admin path under AUTH_DISABLED=true. Tests
+    that need specific query results should override `session.execute` directly.
+    """
     session = AsyncMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
     session.delete = AsyncMock()
     session.add = MagicMock()  # add() is sync in SQLAlchemy
+
+    default_project = MagicMock(spec=Project)
+    default_project.repository = None
+    default_result = MagicMock()
+    default_result.scalar_one_or_none = MagicMock(return_value=default_project)
+    default_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    session.execute = AsyncMock(return_value=default_result)
     return session
 
 
