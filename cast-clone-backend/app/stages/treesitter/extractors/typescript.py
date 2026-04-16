@@ -89,6 +89,97 @@ def _module_name_from_path(module_path: str) -> str:
     return module_path.rsplit("/", 1)[-1]
 
 
+def _resolve_relative_module(current_module: str, spec: str) -> str:
+    """Resolve a relative import specifier against the current module path.
+
+    Args:
+        current_module: Current file's module path (e.g. 'src/models/user').
+        spec: Import specifier (e.g. './base', '../core/base').
+
+    Returns:
+        Resolved module path (e.g. 'src/models/base').
+
+    For non-relative specs (bare modules, path aliases like '@/...'), the
+    spec is returned unchanged -- callers treat these as raw module names.
+    """
+    if not spec.startswith("./") and not spec.startswith("../"):
+        # Bare module or path alias -- left to callers to handle as raw string.
+        return spec
+
+    # Walk up/down from the current module's directory.
+    current_dir_parts = current_module.split("/")[:-1]
+    spec_parts = spec.split("/")
+
+    parts: list[str] = list(current_dir_parts)
+    for segment in spec_parts:
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(segment)
+
+    resolved = "/".join(parts)
+    if resolved.endswith("/index"):
+        resolved = resolved[: -len("/index")]
+    return resolved
+
+
+def _build_import_map(
+    imports: list[_ImportInfo], current_module: str
+) -> dict[str, str]:
+    """Build a mapping of local names to their resolved source FQNs.
+
+    Rules:
+      - Named import ``import { Base } from './x'`` -> ``Base`` maps to
+        ``<resolved>.Base`` using the original (non-aliased) name.
+      - Named import with alias ``import { Base as B } from './x'`` ->
+        local ``B`` maps to ``<resolved>.Base``.
+      - Default import ``import Base from './x'`` -> ``Base`` maps to
+        ``<resolved>.Base`` (best-effort -- the real exported name may differ).
+      - Namespace import ``import * as C from './x'`` -> ``C`` maps to the
+        module path ``<resolved>`` (no trailing symbol). Callers that see
+        ``C.Symbol`` should append ``.Symbol``.
+      - CommonJS ``const X = require('./x')`` -> same treatment as default.
+      - Path aliases (e.g. ``@/core/x``) and bare modules are kept as the
+        raw module string -- no tsconfig resolver is wired in yet (follow-up).
+
+    Later imports win on collisions (matches ES module evaluation order).
+    """
+    import_map: dict[str, str] = {}
+
+    for imp in imports:
+        resolved_module = _resolve_relative_module(current_module, imp.module)
+
+        if imp.kind == "namespace":
+            import_map[imp.local_name] = resolved_module
+        elif imp.kind == "named":
+            exported = imp.imported_name or imp.local_name
+            import_map[imp.local_name] = f"{resolved_module}.{exported}"
+        elif imp.kind in ("default", "commonjs"):
+            import_map[imp.local_name] = f"{resolved_module}.{imp.local_name}"
+
+    return import_map
+
+
+def _resolve_heritage_name(name: str, import_map: dict[str, str]) -> str:
+    """Resolve an ``extends``/``implements`` name through the import map.
+
+    Handles qualified names (``NS.Foo``): the first segment is looked up in
+    the import map (typically a namespace import) and the remaining segments
+    are appended. If the first segment is unknown, the original name is
+    returned unchanged so downstream linkers can still match it.
+    """
+    if not name:
+        return name
+    head, sep, tail = name.partition(".")
+    resolved_head = import_map.get(head)
+    if resolved_head is None:
+        return name
+    return f"{resolved_head}.{tail}" if sep else resolved_head
+
+
 def _is_pascal_case(name: str) -> bool:
     """Check if a name is PascalCase (React component convention)."""
     return bool(name) and name[0].isupper() and not name.isupper()
@@ -150,7 +241,11 @@ def _compute_complexity(node: Node) -> int:
             complexity += 1
         elif n.type == "binary_expression":
             op_node = n.child_by_field_name("operator")
-            if op_node is not None and op_node.text and op_node.text.decode("utf-8") in ("&&", "||"):
+            if (
+                op_node is not None
+                and op_node.text
+                and op_node.text.decode("utf-8") in ("&&", "||")
+            ):
                 complexity += 1
         for child in n.children:
             _visit(child)
@@ -199,6 +294,7 @@ class TypeScriptExtractor:
 
         # Track context for cross-referencing
         imports = self._extract_imports(tree.root_node)
+        import_map = _build_import_map(imports, module_path)
         exports = self._extract_exports(tree.root_node)
         export_names = {e["name"] for e in exports if "name" in e}
 
@@ -214,6 +310,7 @@ class TypeScriptExtractor:
             edges,
             class_fqns,
             is_tsx,
+            import_map,
         )
 
         self._extract_interfaces(
@@ -223,6 +320,8 @@ class TypeScriptExtractor:
             language,
             export_names,
             nodes,
+            edges,
+            import_map,
         )
 
         self._extract_functions(
@@ -504,6 +603,7 @@ class TypeScriptExtractor:
         edges: list[GraphEdge],
         class_fqns: dict[str, str],
         is_tsx: bool,
+        import_map: dict[str, str],
     ) -> None:
         """Extract class declarations from the AST."""
         for node in root.children:
@@ -540,23 +640,31 @@ class TypeScriptExtractor:
                 root,
             )
 
-            # Extract extends / implements
+            # Extract extends / implements. Names are captured verbatim here
+            # and later resolved through the per-file import_map so that edges
+            # point at the imported symbol's canonical FQN instead of a
+            # dangling local reference.
             extends_name = None
             implements_names: list[str] = []
             heritage = _find_child_by_type(class_node, "class_heritage")
             if heritage:
                 extends_clause = _find_child_by_type(heritage, "extends_clause")
                 if extends_clause:
-                    ext_id = _find_child_by_type(extends_clause, "identifier")
-                    if ext_id:
-                        extends_name = _node_text(ext_id)
+                    extends_name = self._heritage_ref_name(extends_clause)
 
                 implements_clause = _find_child_by_type(heritage, "implements_clause")
                 if implements_clause:
-                    for ti in _find_children_by_type(
-                        implements_clause, "type_identifier"
-                    ):
-                        implements_names.append(_node_text(ti))
+                    for child in implements_clause.children:
+                        if child.type in ("type_identifier", "identifier"):
+                            implements_names.append(_node_text(child))
+                        elif child.type in (
+                            "member_expression",
+                            "nested_type_identifier",
+                            "generic_type",
+                        ):
+                            ref = self._qualified_ref_text(child)
+                            if ref:
+                                implements_names.append(ref)
 
             properties: dict[str, Any] = {}
             if decorators:
@@ -581,24 +689,32 @@ class TypeScriptExtractor:
             )
             nodes.append(graph_node)
 
-            # INHERITS edge
+            # INHERITS edge -- resolve target through the file's import map
+            # so that `class X extends Base` where `Base` is imported points
+            # at the imported symbol's FQN rather than a dangling local ref.
             if extends_name:
+                target = self._resolve_heritage_target(
+                    extends_name, module_path, import_map
+                )
                 edges.append(
                     GraphEdge(
                         source_fqn=fqn,
-                        target_fqn=f"{module_path}.{extends_name}",
+                        target_fqn=target,
                         kind=EdgeKind.INHERITS,
                         confidence=Confidence.LOW,
                         evidence="tree-sitter",
                     )
                 )
 
-            # IMPLEMENTS edges
+            # IMPLEMENTS edges -- resolved through the same import map.
             for impl_name in implements_names:
+                target = self._resolve_heritage_target(
+                    impl_name, module_path, import_map
+                )
                 edges.append(
                     GraphEdge(
                         source_fqn=fqn,
-                        target_fqn=f"{module_path}.{impl_name}",
+                        target_fqn=target,
                         kind=EdgeKind.IMPLEMENTS,
                         confidence=Confidence.LOW,
                         evidence="tree-sitter",
@@ -619,8 +735,98 @@ class TypeScriptExtractor:
                 )
 
     # -------------------------------------------------------------------
-    # Method extraction (inside classes)
+    # Heritage helpers (extends / implements)
     # -------------------------------------------------------------------
+    def _heritage_ref_name(self, clause: Node) -> str | None:
+        """Return the referenced type name from an ``extends_clause``.
+
+        Supports plain identifiers (``extends Base``) and qualified names
+        (``extends NS.Base``). Generics (``extends Base<T>``) are stripped
+        to the outer type. Returns ``None`` if no reference can be found.
+        """
+        for child in clause.children:
+            if child.type in ("identifier", "type_identifier"):
+                return _node_text(child)
+            if child.type in (
+                "member_expression",
+                "nested_type_identifier",
+            ):
+                return self._qualified_ref_text(child)
+            if child.type == "generic_type":
+                name_child = _find_child_by_type(child, "type_identifier")
+                if name_child is not None:
+                    return _node_text(name_child)
+                nested = _find_child_by_type(child, "nested_type_identifier")
+                if nested is not None:
+                    return self._qualified_ref_text(nested)
+        return None
+
+    def _qualified_ref_text(self, node: Node) -> str | None:
+        """Render a dotted reference (``member_expression`` /
+        ``nested_type_identifier``) as ``Head.Tail``.
+        """
+        parts: list[str] = []
+        for child in node.children:
+            if child.type in ("identifier", "property_identifier", "type_identifier"):
+                parts.append(_node_text(child))
+            elif child.type in ("member_expression", "nested_type_identifier"):
+                sub = self._qualified_ref_text(child)
+                if sub:
+                    parts.append(sub)
+        if not parts:
+            return None
+        return ".".join(parts)
+
+    def _collect_heritage_refs(self, clause: Node) -> list[str]:
+        """Collect every type reference inside an extends clause.
+
+        Handles the interface form ``extends A, B, NS.C`` which tree-sitter
+        represents as a flat list of type nodes separated by commas.
+        """
+        refs: list[str] = []
+        for child in clause.children:
+            if child.type in ("identifier", "type_identifier"):
+                refs.append(_node_text(child))
+            elif child.type in (
+                "member_expression",
+                "nested_type_identifier",
+            ):
+                ref = self._qualified_ref_text(child)
+                if ref:
+                    refs.append(ref)
+            elif child.type == "generic_type":
+                name_child = _find_child_by_type(child, "type_identifier")
+                if name_child is not None:
+                    refs.append(_node_text(name_child))
+                    continue
+                nested = _find_child_by_type(child, "nested_type_identifier")
+                if nested is not None:
+                    ref = self._qualified_ref_text(nested)
+                    if ref:
+                        refs.append(ref)
+        return refs
+
+    def _resolve_heritage_target(
+        self,
+        name: str,
+        module_path: str,
+        import_map: dict[str, str],
+    ) -> str:
+        """Resolve a heritage name to a target FQN.
+
+        Lookup precedence:
+          1. import map (named/default/namespace imports) -- canonical FQN
+             of the imported symbol, possibly with a trailing ``.Member``
+             for qualified references like ``NS.Base``.
+          2. local fallback -- treat the name as a same-module symbol and
+             prefix with the current module path.
+        """
+        resolved = _resolve_heritage_name(name, import_map)
+        if resolved != name:
+            return resolved
+        # Unresolved: fall back to local module-prefixed name.
+        return f"{module_path}.{name}"
+
     def _extract_methods(
         self,
         class_body: Node,
@@ -861,8 +1067,10 @@ class TypeScriptExtractor:
         language: str,
         export_names: set[str],
         nodes: list[GraphNode],
+        edges: list[GraphEdge],
+        import_map: dict[str, str],
     ) -> None:
-        """Extract interface declarations."""
+        """Extract interface declarations and their heritage."""
         for node in root.children:
             iface_node = None
             is_exported = False
@@ -902,6 +1110,27 @@ class TypeScriptExtractor:
                 properties=properties,
             )
             nodes.append(graph_node)
+
+            # INHERITS edges for `interface X extends A, B`.
+            # tree-sitter exposes these under an `extends_type_clause` that
+            # contains one or more type references. Resolve each through the
+            # import map so named/namespace imports point at real FQNs.
+            extends_clause = _find_child_by_type(iface_node, "extends_type_clause")
+            if extends_clause is None:
+                # Older grammars spell this `extends_clause`.
+                extends_clause = _find_child_by_type(iface_node, "extends_clause")
+            if extends_clause is not None:
+                for ref in self._collect_heritage_refs(extends_clause):
+                    target = self._resolve_heritage_target(ref, module_path, import_map)
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=fqn,
+                            target_fqn=target,
+                            kind=EdgeKind.INHERITS,
+                            confidence=Confidence.LOW,
+                            evidence="tree-sitter",
+                        )
+                    )
 
     # -------------------------------------------------------------------
     # Call extraction
