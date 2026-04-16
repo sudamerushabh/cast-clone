@@ -27,6 +27,35 @@ from app.models.db import User
 pytestmark = pytest.mark.asyncio
 
 
+def _is_validation_error_response(resp: object) -> bool:
+    """True iff the response body is a FastAPI/Pydantic validation error.
+
+    FastAPI's 422 body has shape ``{"detail": [{"loc": [...], "msg": ...,
+    "type": ...}, ...]}``. A handler-level error (500 with plaintext
+    ``Internal Server Error`` from the ASGI transport) or a real 2xx
+    payload does NOT match this shape, so this lets us distinguish
+    "cap rejected the request" from "cap let it through and the stubbed
+    handler crashed".
+    """
+    import json as _json
+
+    try:
+        body = _json.loads(resp.content)  # type: ignore[attr-defined]
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    detail = body.get("detail")
+    if not isinstance(detail, list) or not detail:
+        return False
+    first = detail[0]
+    return (
+        isinstance(first, dict)
+        and "loc" in first
+        and "msg" in first
+    )
+
+
 def _admin(user_id: str, username: str) -> User:
     return User(
         id=user_id,
@@ -44,6 +73,7 @@ async def auth_enabled_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setenv("AUTH_DISABLED", "false")
     monkeypatch.setenv("SECRET_KEY", "integration-test-secret-key-for-query-caps")
     monkeypatch.setenv("LICENSE_DISABLED", "true")
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000")
 
     from app.config import get_settings
 
@@ -151,10 +181,14 @@ async def test_projects_limit_at_cap_accepted(
         "/api/v1/projects?limit=200",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # Validation passed; handler may still 500 on the MagicMock session but
-    # that's fine — we only care that ``limit=200`` isn't rejected at the
-    # Query layer.
-    assert resp.status_code != 422, resp.text
+    # 500 acceptable — handler body uses stubbed DB that may fail; we
+    # only assert the cap did NOT reject the request at the Query layer.
+    # Strengthened assertion: also confirm the response body is NOT a
+    # Pydantic validation error payload (``raise_app_exceptions=False``
+    # converts handler crashes to 500, so a naive ``!= 422`` check would
+    # pass even if the cap silently mutated to reject ``limit=200``).
+    assert resp.status_code in (200, 500), resp.text
+    assert not _is_validation_error_response(resp), resp.text
 
 
 # ── Pagination: `offset` lower bound ─────────────────────────────────────
@@ -228,7 +262,11 @@ async def test_graph_neighbors_depth_at_cap_accepted(
         "/api/v1/graphs/test-project/neighbors/some.node.fqn?depth=5",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code != 422, resp.text
+    # 500 acceptable — handler body uses stubbed DB that may fail; we
+    # only assert the cap did NOT reject. Strengthened assertion: also
+    # confirm the response body is NOT a Pydantic validation error.
+    assert resp.status_code in (200, 500), resp.text
+    assert not _is_validation_error_response(resp), resp.text
 
 
 # ── Impact analysis: `max_depth` cap ─────────────────────────────────────

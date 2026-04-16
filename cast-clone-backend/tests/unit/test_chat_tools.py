@@ -112,11 +112,11 @@ class TestImpactAnalysis:
         assert result["by_type"] == {"Class": 1, "Function": 1}
 
     @pytest.mark.asyncio
-    async def test_depth_capped_at_10(self, ctx: ChatToolContext):
+    async def test_depth_capped_at_5(self, ctx: ChatToolContext):
         ctx.graph_store.query.return_value = []
         await impact_analysis(ctx, node_fqn="com.app.X", direction="downstream", depth=20)
         cypher = ctx.graph_store.query.call_args[0][0]
-        assert "*1..10]" in cypher  # Depth capped
+        assert "*1..5]" in cypher  # Depth capped to match HTTP API cap
 
 
 class TestFindPath:

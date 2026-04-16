@@ -170,7 +170,7 @@ async def impact_analysis(
     Args:
         app_name: The application name.
         node_fqn: Fully qualified name of the node to analyze.
-        depth: Max traversal depth (default 5, max 10).
+        depth: Max traversal depth (default 5, max 5).
         direction: Impact direction — "downstream", "upstream", or "both".
     """
     ctx = _build_context(app_name)

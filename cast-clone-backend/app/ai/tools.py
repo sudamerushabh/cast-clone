@@ -210,7 +210,7 @@ async def impact_analysis(
     direction: str = "both",
 ) -> dict:
     """Compute the blast radius of changing a specific code object."""
-    depth = min(depth, 10)
+    depth = min(depth, 5)
 
     if direction == "upstream":
         cypher = (

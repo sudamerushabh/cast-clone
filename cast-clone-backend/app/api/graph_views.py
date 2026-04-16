@@ -573,7 +573,7 @@ async def get_code(
     file: str = Query(..., description="Relative file path within the project"),
     line: int | None = Query(None, description="Line to highlight"),
     context: int = Query(
-        30, ge=0, le=500, description="Lines of context around highlight line"
+        30, ge=0, le=200, description="Lines of context around highlight line"
     ),
     project: Project = Depends(get_accessible_project),
 ) -> CodeViewerResponse:

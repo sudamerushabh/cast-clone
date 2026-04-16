@@ -235,7 +235,7 @@ async def test_connector(
 @router.get("/{connector_id}/repos", response_model=RemoteRepoListResponse)
 async def list_remote_repos(
     connector_id: str,
-    page: int = Query(1, ge=1, le=10000),
+    page: int = Query(1, ge=1, le=100),
     per_page: int = Query(30, ge=1, le=100),
     search: str | None = None,
     _user: User = Depends(get_current_user),
