@@ -16,6 +16,7 @@ On failure, the language is queued for LSP fallback in Stage 4b.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,6 +156,32 @@ def detect_available_indexers(
     return configs
 
 
+# -- Log Scrubbing -----------------------------------------------------------
+
+
+def _scrub_stderr(s: str, project_root: Path | None) -> str:
+    """Best-effort PII scrubbing for subprocess stderr before logging.
+
+    Replaces common sources of PII (absolute project paths, user home
+    directories) with stable placeholders so structured log sinks do not
+    leak usernames or checkout locations. Not a comprehensive secret
+    redactor -- just the minimum to keep routine SCIP output safe.
+    """
+    if not s:
+        return s
+    if project_root is not None:
+        root_str = str(project_root)
+        if root_str:
+            s = s.replace(root_str, "<project>")
+    try:
+        home = os.path.expanduser("~")
+    except Exception:
+        home = ""
+    if home and home not in ("~", ""):
+        s = s.replace(home, "<home>")
+    return s
+
+
 # -- Single Indexer Run ------------------------------------------------------
 
 
@@ -253,30 +280,32 @@ async def _run_scip_in_directory(
             output=result.stdout[:2000],
             project_id=context.project_id,
         )
+    project_root = context.manifest.root_path if context.manifest else None
     if result.stderr.strip():
         log_fn = logger.warning if result.returncode != 0 else logger.info
         log_fn(
             "scip.indexer.stderr",
             language=indexer_config.language,
-            output=result.stderr[:2000],
+            output=_scrub_stderr(result.stderr[:2000], project_root),
             project_id=context.project_id,
         )
 
     if result.returncode != 0:
         # CHAN-70: non-zero exit is a RuntimeError, distinct from the timeout
         # path above. Log exit code + stderr for diagnosis.
+        scrubbed_stderr = _scrub_stderr(result.stderr[:500], project_root)
         logger.warning(
             "scip.indexer.nonzero_exit",
             language=indexer_config.language,
             indexer=indexer_config.name,
             returncode=result.returncode,
-            stderr=result.stderr[:500],
+            stderr=scrubbed_stderr,
             cwd=str(cwd),
             project_id=context.project_id,
         )
         raise RuntimeError(
             f"{indexer_config.name} exited with code {result.returncode}: "
-            f"{result.stderr[:500]}"
+            f"{scrubbed_stderr}"
         )
 
     # Parse the SCIP protobuf output
@@ -470,12 +499,25 @@ async def run_single_scip_indexer(
     aggregated = MergeStats()
     failures: list[str] = []
     for sub_dir, outcome in zip(sub_dirs, outcomes):
+        if isinstance(outcome, FileNotFoundError):
+            # CHAN-69: SCIP binary missing -- no subproject can succeed.
+            # Propagate so the top-level orchestrator routes this language
+            # to LSP fallback instead of masking it as an aggregate
+            # RuntimeError.
+            logger.warning(
+                "scip.indexer.subproject_binary_missing",
+                language=indexer_config.language,
+                subproject=sub_dir.name,
+                project_id=context.project_id,
+            )
+            raise outcome
         if isinstance(outcome, Exception):
             logger.warning(
                 "scip.indexer.subproject_failed",
                 language=indexer_config.language,
                 subproject=sub_dir.name,
                 error=str(outcome)[:200],
+                error_type=type(outcome).__name__,
                 project_id=context.project_id,
             )
             failures.append(sub_dir.name)
