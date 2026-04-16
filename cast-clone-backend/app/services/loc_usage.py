@@ -1,10 +1,11 @@
 """Cumulative LOC usage query with a short in-process cache.
 
-This is the heart of license enforcement: how many lines of code have been
-successfully analyzed across all ``analysis_runs``.  A 60-second cache prevents
-hammering the DB during hot loops (status polling, dashboard renders); the
-cache is explicitly invalidated when an analysis run completes so the next
-caller sees fresh data.
+Billable LOC = SUM(repository_loc_tracking.billable_loc)
+             + SUM(latest completed run LOC for standalone projects)
+
+A 60-second cache prevents hammering the DB during hot loops (status polling,
+dashboard renders); the cache is explicitly invalidated when a tracking row
+is recalculated.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import AnalysisRun
+from app.models.db import AnalysisRun, Project, RepositoryLocTracking
 from app.services.postgres import get_background_session
 
 logger = structlog.get_logger(__name__)
@@ -28,26 +29,18 @@ _lock = asyncio.Lock()
 
 
 async def cumulative_loc(session: AsyncSession | None = None) -> int:
-    """Return the sum of ``total_loc`` across completed analysis runs.
+    """Return total billable LOC across all repositories + standalone projects.
 
     Cached for 60 seconds.  Call :func:`invalidate_cumulative_loc_cache` when
-    an analysis run completes to force a fresh read.
-
-    Args:
-        session: Optional injected session (used in tests or when inside an
-            existing transaction).  When ``None``, a fresh background session
-            is opened.
+    a tracking row is recalculated to force a fresh read.
     """
     global _cache_value, _cache_set_at
 
-    # Fast path: unlocked read.  Races are benign — worst case a second
-    # caller wastes one DB query, but correctness is preserved.
     now = time.monotonic()
     if _cache_value is not None and (now - _cache_set_at) < _CACHE_TTL_SECONDS:
         return _cache_value
 
     async with _lock:
-        # Re-check under the lock in case another coroutine just refreshed.
         now = time.monotonic()
         if (
             _cache_value is not None
@@ -56,12 +49,36 @@ async def cumulative_loc(session: AsyncSession | None = None) -> int:
             return _cache_value
 
         async def _query(s: AsyncSession) -> int:
-            result = await s.execute(
-                select(func.coalesce(func.sum(AnalysisRun.total_loc), 0)).where(
-                    AnalysisRun.status == "completed"
+            # Part 1: Sum of per-repo max-branch LOC from tracking table
+            repo_result = await s.execute(
+                select(
+                    func.coalesce(func.sum(RepositoryLocTracking.billable_loc), 0)
                 )
             )
-            return int(result.scalar_one())
+            repo_total = int(repo_result.scalar_one())
+
+            # Part 2: Standalone projects (no repository_id) — latest run each
+            standalone_latest = (
+                select(
+                    AnalysisRun.project_id,
+                    AnalysisRun.total_loc,
+                )
+                .join(Project, Project.id == AnalysisRun.project_id)
+                .where(
+                    Project.repository_id.is_(None),
+                    AnalysisRun.status == "completed",
+                    AnalysisRun.total_loc.isnot(None),
+                )
+                .order_by(AnalysisRun.project_id, AnalysisRun.completed_at.desc())
+                .distinct(AnalysisRun.project_id)
+                .subquery()
+            )
+            standalone_result = await s.execute(
+                select(func.coalesce(func.sum(standalone_latest.c.total_loc), 0))
+            )
+            standalone_total = int(standalone_result.scalar_one())
+
+            return repo_total + standalone_total
 
         if session is not None:
             value = await _query(session)
