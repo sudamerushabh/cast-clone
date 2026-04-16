@@ -319,3 +319,144 @@ class TestStderrScrubbing:
         assert _scrub_stderr("", None) == ""
         out = _scrub_stderr("some error message", None)
         assert "some error message" in out
+
+    def test_stderr_scrubs_userprofile(self, tmp_path, monkeypatch):
+        """Windows ``USERPROFILE`` must be replaced with ``<userprofile>``."""
+        fake_profile = r"C:\Users\alice"
+        monkeypatch.setenv("USERPROFILE", fake_profile)
+        # Clear APPDATA so it does not interfere with this assertion.
+        monkeypatch.delenv("APPDATA", raising=False)
+
+        stderr = (
+            rf"error: cannot open {fake_profile}\AppData\Local\scip\cache"
+        )
+        scrubbed = _scrub_stderr(stderr, tmp_path)
+
+        assert fake_profile not in scrubbed
+        assert "<userprofile>" in scrubbed
+
+    def test_stderr_scrubs_appdata(self, tmp_path, monkeypatch):
+        """Windows ``APPDATA`` must be replaced with ``<appdata>``."""
+        fake_appdata = r"C:\Users\alice\AppData\Roaming"
+        monkeypatch.setenv("APPDATA", fake_appdata)
+        monkeypatch.delenv("USERPROFILE", raising=False)
+
+        stderr = rf"warning: config missing at {fake_appdata}\scip\config.json"
+        scrubbed = _scrub_stderr(stderr, tmp_path)
+
+        assert fake_appdata not in scrubbed
+        assert "<appdata>" in scrubbed
+
+    def test_stderr_empty_env_var_does_not_splatter(self, tmp_path, monkeypatch):
+        """Empty env vars must not cause ``str.replace("", ...)`` to insert
+        the placeholder between every character of the stderr output.
+        """
+        monkeypatch.setenv("USERPROFILE", "")
+        monkeypatch.setenv("APPDATA", "")
+
+        stderr = "hello world"
+        scrubbed = _scrub_stderr(stderr, tmp_path)
+
+        assert scrubbed == "hello world"
+        assert "<userprofile>" not in scrubbed
+        assert "<appdata>" not in scrubbed
+
+    def test_stderr_scrubs_resolved_project_root(self, tmp_path):
+        """If the project root is reached via a symlink, both the unresolved
+        and resolved variants must be scrubbed -- SCIP indexers often emit
+        resolved absolute paths even when launched via a symlink.
+        """
+        real = tmp_path / "real_project"
+        real.mkdir()
+        link = tmp_path / "link_project"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported in this environment")
+
+        # Use the symlinked path as the "project_root" passed to the scrubber
+        # but craft stderr that includes the RESOLVED path (what SCIP would
+        # normally emit).
+        resolved = str(link.resolve())
+        stderr = f"error: could not parse {resolved}/src/Main.java"
+        scrubbed = _scrub_stderr(stderr, link)
+
+        assert resolved not in scrubbed
+        assert "<project>" in scrubbed
+        assert "src/Main.java" in scrubbed
+
+
+class TestSubprojectGatherTimeout:
+    """CHAN-70: subproject gather must distinguish TimeoutError from RuntimeError."""
+
+    @pytest.mark.asyncio
+    async def test_subproject_gather_distinguishes_timeout_error(self, tmp_path):
+        """When a per-subproject SCIP invocation times out, the aggregation
+        loop must emit a distinct ``scip.indexer.subproject_timeout`` log
+        event AND re-raise ``TimeoutError`` (not collapse it into an
+        aggregate RuntimeError) so the top-level orchestrator can route it
+        to LSP fallback distinctly from a non-zero-exit failure.
+        """
+        import structlog
+        from structlog.testing import capture_logs
+
+        ctx = AnalysisContext(project_id="test-proj")
+        sub_a = tmp_path / "svc-a"
+        sub_b = tmp_path / "svc-b"
+        sub_a.mkdir()
+        sub_b.mkdir()
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        manifest.detected_languages = [
+            DetectedLanguage(name="java", file_count=2, total_loc=20),
+        ]
+        manifest.build_tools = [
+            BuildTool(
+                name="maven",
+                config_file="svc-a/pom.xml",
+                language="java",
+                subproject_root="svc-a",
+            ),
+            BuildTool(
+                name="maven",
+                config_file="svc-b/pom.xml",
+                language="java",
+                subproject_root="svc-b",
+            ),
+        ]
+        ctx.manifest = manifest
+
+        async def fake_run(context, indexer_config, project_name, cwd, build_tool=None):
+            if cwd == sub_a:
+                raise TimeoutError("Command timed out after 300s: scip-java index")
+            # Make the other subproject also fail so we are sure we would
+            # otherwise collapse into aggregate RuntimeError if the branch
+            # were missing.
+            raise RuntimeError("scip-java exited with code 1")
+
+        # Configure structlog for capture_logs to work reliably.
+        structlog.configure(
+            processors=[structlog.testing.LogCapture()],
+            wrapper_class=structlog.BoundLogger,
+            cache_logger_on_first_use=False,
+        )
+
+        with patch(
+            "app.stages.scip.indexer._run_scip_in_directory",
+            side_effect=fake_run,
+        ):
+            cfg = SCIP_INDEXER_CONFIGS["java"]
+            with capture_logs() as cap:
+                with pytest.raises(TimeoutError) as exc_info:
+                    await run_single_scip_indexer(
+                        context=ctx,
+                        indexer_config=cfg,
+                        project_name="myapp",
+                    )
+
+        # Re-raised as-is (not collapsed into RuntimeError).
+        assert not isinstance(exc_info.value, RuntimeError)
+
+        # Distinct structured log event was emitted.
+        events = [entry.get("event") for entry in cap]
+        assert "scip.indexer.subproject_timeout" in events

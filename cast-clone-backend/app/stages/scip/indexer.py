@@ -163,22 +163,48 @@ def _scrub_stderr(s: str, project_root: Path | None) -> str:
     """Best-effort PII scrubbing for subprocess stderr before logging.
 
     Replaces common sources of PII (absolute project paths, user home
-    directories) with stable placeholders so structured log sinks do not
-    leak usernames or checkout locations. Not a comprehensive secret
-    redactor -- just the minimum to keep routine SCIP output safe.
+    directories, Windows user profile/AppData paths) with stable
+    placeholders so structured log sinks do not leak usernames or checkout
+    locations. Not a comprehensive secret redactor -- just the minimum to
+    keep routine SCIP output safe.
+
+    Empty-string sources are always skipped -- otherwise ``str.replace("", X)``
+    would splatter the placeholder between every character.
     """
     if not s:
         return s
+
+    # Longest-first replacement so the resolved (symlink-expanded) project
+    # root matches before its unresolved alias if they share a prefix.
     if project_root is not None:
         root_str = str(project_root)
-        if root_str:
-            s = s.replace(root_str, "<project>")
+        try:
+            resolved_root = str(project_root.resolve())
+        except Exception:
+            resolved_root = ""
+        for candidate in sorted(
+            {root_str, resolved_root}, key=len, reverse=True
+        ):
+            if candidate:
+                s = s.replace(candidate, "<project>")
+
     try:
         home = os.path.expanduser("~")
     except Exception:
         home = ""
     if home and home not in ("~", ""):
         s = s.replace(home, "<home>")
+
+    # Windows-specific env paths -- on non-Windows these are empty and the
+    # guard below prevents the ``replace("", ...)`` footgun.
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        s = s.replace(appdata, "<appdata>")
+
+    userprofile = os.environ.get("USERPROFILE", "")
+    if userprofile:
+        s = s.replace(userprofile, "<userprofile>")
+
     return s
 
 
@@ -404,7 +430,7 @@ async def run_single_scip_indexer(
         RuntimeError: If all indexer attempts fail.
     """
     root_path = context.manifest.root_path
-    indexer_start = time.perf_counter()
+    _indexer_start = time.perf_counter()  # reserved for future elapsed logging
 
     logger.info(
         "scip.indexer.single.start",
@@ -483,6 +509,7 @@ async def run_single_scip_indexer(
     )
 
     # Run SCIP in each subproject in parallel
+    subproject_start = time.perf_counter()
     tasks = [
         _run_scip_in_directory(
             context,
@@ -508,6 +535,23 @@ async def run_single_scip_indexer(
                 "scip.indexer.subproject_binary_missing",
                 language=indexer_config.language,
                 subproject=sub_dir.name,
+                project_id=context.project_id,
+            )
+            raise outcome
+        if isinstance(outcome, TimeoutError):
+            # CHAN-70: subprocess timeout must stay distinguishable from
+            # a plain RuntimeError so the top-level orchestrator can route
+            # it to LSP fallback as a distinct failure mode (same treatment
+            # as a FileNotFoundError, but logged separately for operators
+            # tuning ``scip_timeout``). No retry -- documented behaviour is
+            # "timeouts route directly to LSP fallback".
+            elapsed = round(time.perf_counter() - subproject_start, 3)
+            logger.warning(
+                "scip.indexer.subproject_timeout",
+                language=indexer_config.language,
+                subproject=sub_dir.name,
+                elapsed_seconds=elapsed,
+                error=str(outcome)[:200],
                 project_id=context.project_id,
             )
             raise outcome
@@ -551,6 +595,19 @@ async def run_scip_indexers(context: AnalysisContext) -> SCIPResult:
     - If no SCIP indexer: add to languages_needing_fallback
 
     On indexer failure: add to fallback, log warning, continue.
+
+    Failure routing (no retry is performed here; a timeout routes directly
+    to LSP fallback so operators can tune ``scip_timeout`` or exclude the
+    language rather than paying the timeout cost twice):
+
+    - ``FileNotFoundError`` -- binary missing on PATH. Language queued for
+      LSP fallback.
+    - ``TimeoutError``      -- subprocess exceeded ``scip_timeout``. Logged
+      distinctly from generic RuntimeError; language queued for LSP fallback.
+      No retry with extended timeout -- if operators need more time they
+      must tune the setting.
+    - ``RuntimeError``      -- non-zero exit code. Language queued for LSP
+      fallback.
 
     Args:
         context: Pipeline analysis context (modified in place).
