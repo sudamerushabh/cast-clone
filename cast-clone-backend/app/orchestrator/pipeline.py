@@ -17,8 +17,10 @@ import structlog
 from sqlalchemy import select
 
 from app.models.context import AnalysisContext
-from app.models.db import AnalysisRun, Project
+from app.models.db import AnalysisRun, Project, Repository
 from app.orchestrator.progress import WebSocketProgressReporter
+from app.services.activity import log_activity
+from app.services.loc_usage import invalidate_cumulative_loc_cache
 from app.services.neo4j import GraphStore
 
 logger = structlog.get_logger(__name__)
@@ -235,9 +237,36 @@ async def run_analysis_pipeline(
                 source_path=Path(project.source_path),
             )
 
-        # Checkout the correct branch before analysis
+        # Ensure branch clone directory exists, then checkout
         if project.branch and project.source_path:
-            from app.services.clone import checkout_branch
+            from app.services.clone import checkout_branch, clone_branch_local, fetch_all_refs
+
+            source = Path(project.source_path)
+            if not source.exists() and project.repository_id:
+                # Branch dir missing — try to create it from the main repo clone
+                repo_result = await session.execute(
+                    select(Repository).where(Repository.id == project.repository_id)
+                )
+                repo = repo_result.scalar_one_or_none()
+                if repo and repo.local_path:
+                    try:
+                        await fetch_all_refs(repo.local_path)
+                        await clone_branch_local(
+                            repo.local_path, project.branch, str(source)
+                        )
+                        logger.info(
+                            "pipeline.branch_clone_created",
+                            project_id=project_id,
+                            branch=project.branch,
+                        )
+                    except Exception as clone_err:
+                        logger.warning(
+                            "pipeline.branch_clone_failed",
+                            project_id=project_id,
+                            branch=project.branch,
+                            error=str(clone_err),
+                        )
+
             try:
                 await checkout_branch(project.source_path, project.branch)
                 logger.info(
@@ -303,6 +332,12 @@ async def run_analysis_pipeline(
 
                 await stage_func(context, services)
 
+                # Persist total_loc after discovery so license enforcement and email
+                # reporting have a single source of truth (CHAN-12).
+                if stage_def.name == "discovery" and context.manifest is not None:
+                    run.total_loc = context.manifest.total_loc
+                    await session.commit()
+
                 elapsed = time.monotonic() - stage_start
                 await ws.emit(
                     stage_def.name,
@@ -339,6 +374,13 @@ async def run_analysis_pipeline(
                     run.completed_at = datetime.now(UTC)
                     run.error_message = f"Critical stage '{stage_def.name}' failed: {e}"
                     await session.commit()
+
+                    await log_activity(
+                        session, "analysis.failed",
+                        resource_type="project", resource_id=project_id,
+                        details={"stage": stage_def.name, "error": str(e)[:500]},
+                    )
+
                     await ws.emit_error(
                         f"Pipeline aborted: stage '{stage_def.name}' failed: {e}"
                     )
@@ -351,6 +393,12 @@ async def run_analysis_pipeline(
         total_elapsed = time.monotonic() - pipeline_start
         project.status = "analyzed"
         run.status = "completed"
+        # Recalculate per-repo LOC tracking (also invalidates cumulative cache)
+        if project.repository_id:
+            from app.services.loc_tracking import recalculate_repo_loc
+            await recalculate_repo_loc(project.repository_id, session)
+        else:
+            invalidate_cumulative_loc_cache()
         run.completed_at = datetime.now(UTC)
         run.node_count = context.graph.node_count
         run.edge_count = context.graph.edge_count
@@ -369,6 +417,16 @@ async def run_analysis_pipeline(
             "duration_seconds": round(total_elapsed, 2),
         }
         await ws.emit_complete(report)
+
+        await log_activity(
+            session, "analysis.completed",
+            resource_type="project", resource_id=project_id,
+            details={
+                "nodes": context.graph.node_count,
+                "edges": context.graph.edge_count,
+                "duration_seconds": round(total_elapsed, 2),
+            },
+        )
 
         logger.info(
             "pipeline.complete",

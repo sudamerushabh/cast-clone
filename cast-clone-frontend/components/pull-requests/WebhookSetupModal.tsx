@@ -335,7 +335,7 @@ function BitbucketGuide() {
           then <strong>Add webhook</strong>
         </Step>
         <Step n={3}>
-          Enter a <strong>Title</strong> (e.g., &quot;CodeLens PR Analysis&quot;)
+          Enter a <strong>Title</strong> (e.g., &quot;ChangeSafe PR Analysis&quot;)
         </Step>
         <Step n={4}>
           Paste the <strong>Payload URL</strong> into the <strong>URL</strong> field

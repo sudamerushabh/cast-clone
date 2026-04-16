@@ -2,10 +2,27 @@
 "use client"
 
 import * as React from "react"
-import { useCallback, useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import CytoscapeComponent from "react-cytoscapejs"
 import type cytoscape from "cytoscape"
-import { GitBranch, List, Network } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import {
+  GitBranch,
+  List,
+  Network,
+  Sparkles,
+  RefreshCw,
+  Globe,
+  Cog,
+  Archive,
+  Database,
+  Loader2,
+  PanelRightOpen,
+  PanelRightClose,
+  Send,
+  Trash2,
+  User as UserIcon,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -16,29 +33,40 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ensureCytoscapeExtensions } from "@/lib/cytoscape-setup"
-import { useTraceRoute, type TraceEdge } from "@/hooks/useTraceRoute"
-import type { AffectedNode } from "@/lib/types"
+import { useTraceRoute } from "@/hooks/useTraceRoute"
+import { useTraceSummary } from "@/hooks/useTraceSummary"
+import { useTraceChat } from "@/hooks/useTraceChat"
+import type { TraceNode, TraceEdge, TraceRouteResponse, TraceSummaryResponse, TraceChatMessage } from "@/lib/types"
 
 ensureCytoscapeExtensions()
 
-// ─── Kind → Cytoscape node color ─────────────────────────────────────────────
+// ─── Layer configuration ────────────────────────────────────────────────────
 
-const KIND_NODE_COLORS: Record<string, string> = {
-  CLASS: "#3B82F6",
-  INTERFACE: "#14B8A6",
-  FUNCTION: "#EAB308",
-  TABLE: "#F97316",
-  API_ENDPOINT: "#A855F7",
-  MODULE: "#6B7280",
-  ENUM: "#F59E0B",
-  ROUTE: "#A855F7",
+const LAYER_CONFIG: Record<string, { color: string; bandColor: string; label: string }> = {
+  api:        { color: "#A855F7", bandColor: "rgba(168,85,247,0.05)", label: "API / Controller" },
+  service:    { color: "#3B82F6", bandColor: "rgba(59,130,246,0.05)", label: "Service" },
+  repository: { color: "#10B981", bandColor: "rgba(16,185,129,0.05)", label: "Repository" },
+  database:   { color: "#F97316", bandColor: "rgba(249,115,22,0.05)", label: "Database" },
+  other:      { color: "#6B7280", bandColor: "rgba(107,114,128,0.05)", label: "Other" },
 }
 
-function kindNodeColor(kind: string): string {
-  return KIND_NODE_COLORS[kind?.toUpperCase()] ?? "#6B7280"
+const LAYER_ORDER = ["api", "service", "repository", "database", "other"]
+
+// ─── Layer-based badge classes for list view ────────────────────────────────
+
+const LAYER_BADGE_CLASSES: Record<string, string> = {
+  api:        "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+  service:    "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+  repository: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
+  database:   "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+  other:      "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
 }
 
-// ─── Depth badge (for list view) ─────────────────────────────────────────────
+function layerBadgeClass(layer: string): string {
+  return LAYER_BADGE_CLASSES[layer] ?? "bg-muted text-muted-foreground"
+}
+
+// ─── Sequence badge colors ──────────────────────────────────────────────────
 
 const DEPTH_BADGE_CLASSES: Record<number, string> = {
   1: "bg-red-500 text-white",
@@ -49,85 +77,58 @@ const DEPTH_BADGE_CLASSES: Record<number, string> = {
 }
 
 function depthBadgeClass(depth: number): string {
-  return DEPTH_BADGE_CLASSES[depth] ?? DEPTH_BADGE_CLASSES[5]
+  return DEPTH_BADGE_CLASSES[depth] ?? DEPTH_BADGE_CLASSES[5]!
 }
 
-// ─── Kind badge (for list view) ──────────────────────────────────────────────
+// ─── Layer icon ─────────────────────────────────────────────────────────────
 
-const KIND_BADGE_COLORS: Record<string, string> = {
-  CLASS: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  INTERFACE: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-  FUNCTION: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  TABLE: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-  API_ENDPOINT: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  MODULE: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200",
-  ENUM: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+function LayerIcon({ layer, className }: { layer: string; className?: string }) {
+  switch (layer) {
+    case "api":        return <Globe className={className} />
+    case "service":    return <Cog className={className} />
+    case "repository": return <Archive className={className} />
+    case "database":   return <Database className={className} />
+    default:           return <GitBranch className={className} />
+  }
 }
 
-function kindBadgeClass(kind: string): string {
-  return KIND_BADGE_COLORS[kind] ?? "bg-muted text-muted-foreground"
-}
+// ─── Build Cytoscape elements from trace data ───────────────────────────────
 
-// ─── Build Cytoscape elements from trace data ────────────────────────────────
-
-/**
- * Derive the parent class/module FQN from a fully-qualified node name.
- * e.g. "com.example.service.AccountServiceImpl.closeAccount"
- *    → "com.example.service.AccountServiceImpl"
- */
 function parentFqn(fqn: string): string | null {
   const lastDot = fqn.lastIndexOf(".")
   if (lastDot <= 0) return null
   return fqn.substring(0, lastDot)
 }
 
-/**
- * Short label: last segment of a dot-separated FQN.
- */
 function shortLabel(fqn: string): string {
   const parts = fqn.split(".")
   return parts[parts.length - 1]
 }
 
 function buildTraceElements(
-  centerNode: TraceRouteNode,
-  upstreamNodes: AffectedNode[],
-  downstreamNodes: AffectedNode[],
-  realEdges: TraceEdge[],
+  data: TraceRouteResponse,
 ): cytoscape.ElementDefinition[] {
   const elements: cytoscape.ElementDefinition[] = []
 
-  // ─── Collect all nodes with their direction prefix ────────────────────
-  // prefix avoids ID collisions if the same FQN appears in both directions
   interface PrefixedNode {
-    node: AffectedNode
+    node: TraceNode
     prefix: "u" | "d"
-    direction: "upstream" | "downstream"
   }
 
-  // Filter out Transaction nodes (fqn starts with "txn:") — they flatten
-  // the trace and create misleading shortcuts via INCLUDES edges.
-  const isTransaction = (fqn: string) => fqn.startsWith("txn:")
-  const filteredUpstream = upstreamNodes.filter((n) => !isTransaction(n.fqn))
-  const filteredDownstream = downstreamNodes.filter((n) => !isTransaction(n.fqn))
-
   const allNodes: PrefixedNode[] = [
-    ...filteredUpstream.map((n) => ({ node: n, prefix: "u" as const, direction: "upstream" as const })),
-    ...filteredDownstream.map((n) => ({ node: n, prefix: "d" as const, direction: "downstream" as const })),
+    ...data.upstream.map((n) => ({ node: n, prefix: "u" as const })),
+    ...data.downstream.map((n) => ({ node: n, prefix: "d" as const })),
   ]
 
-  // Build FQN → direction prefix lookup for edge resolution
-  const upstreamFqns = new Set(filteredUpstream.map((n) => n.fqn))
-  const downstreamFqns = new Set(filteredDownstream.map((n) => n.fqn))
+  const upstreamFqns = new Set(data.upstream.map((n) => n.fqn))
+  const downstreamFqns = new Set(data.downstream.map((n) => n.fqn))
 
-  // ─── Determine compound parent groups ─────────────────────────────────
-  // Only group FUNCTION-type nodes by their parent class.
-  // CLASS, MODULE, TABLE etc. stay ungrouped.
-  const GROUPABLE_TYPES = new Set(["FUNCTION", "METHOD", "CONSTRUCTOR"])
+  // ─── Compound parent grouping ───────────────────────────────────────
+  const GROUPABLE_KINDS = new Set(["FUNCTION", "METHOD", "CONSTRUCTOR", "STORED_PROCEDURE"])
 
   const parentGroups = new Map<string, PrefixedNode[]>()
   for (const pn of allNodes) {
-    if (!GROUPABLE_TYPES.has(pn.node.type?.toUpperCase())) continue
+    if (!GROUPABLE_KINDS.has(pn.node.kind?.toUpperCase())) continue
     const pFqn = parentFqn(pn.node.fqn)
     if (!pFqn) continue
     const key = `${pn.prefix}:${pFqn}`
@@ -135,13 +136,12 @@ function buildTraceElements(
     parentGroups.get(key)!.push(pn)
   }
 
-  // Create compound nodes for every group (even single-child)
   const compoundParents = new Set<string>()
-  for (const key of parentGroups.keys()) {
-    compoundParents.add(key)
+  for (const [key, members] of parentGroups.entries()) {
+    if (members.length >= 2) compoundParents.add(key)
   }
 
-  // ─── Create compound parent nodes ─────────────────────────────────────
+  // ─── Compound parent nodes ──────────────────────────────────────────
   for (const key of compoundParents) {
     const pFqn = key.substring(key.indexOf(":") + 1)
     elements.push({
@@ -155,19 +155,21 @@ function buildTraceElements(
     })
   }
 
-  // ─── Center node ──────────────────────────────────────────────────────
+  // ─── Center node ────────────────────────────────────────────────────
   elements.push({
     data: {
       id: "__center__",
-      label: centerNode.name,
-      kind: centerNode.kind,
+      label: data.center_name,
+      kind: data.center_kind,
+      layer: data.center_layer,
       isCenter: true,
       traceDepth: 0,
-      fqn: centerNode.fqn,
+      fqn: data.center_fqn,
+      sequence: 0,
     },
   })
 
-  // ─── Child nodes ──────────────────────────────────────────────────────
+  // ─── Child nodes ────────────────────────────────────────────────────
   for (const pn of allNodes) {
     const pFqn = parentFqn(pn.node.fqn)
     const groupKey = pFqn ? `${pn.prefix}:${pFqn}` : null
@@ -177,22 +179,23 @@ function buildTraceElements(
       data: {
         id: `${pn.prefix}:${pn.node.fqn}`,
         label: pn.node.name,
-        kind: pn.node.type,
+        kind: pn.node.kind,
+        layer: pn.node.layer,
         depth: pn.node.depth,
         traceDepth: pn.prefix === "u" ? -pn.node.depth : pn.node.depth,
         fqn: pn.node.fqn,
         file: pn.node.file,
-        direction: pn.direction,
+        direction: pn.node.direction,
+        sequence: pn.node.sequence,
+        sequenceLabel: `${pn.node.sequence}`,
         ...(hasCompound ? { parent: groupKey } : {}),
       },
     })
   }
 
-  // ─── Edges from real path finder data ─────────────────────────────────
-  // Map FQN → element ID (with direction prefix)
-  // A node could be center, upstream, or downstream
+  // ─── Edges ──────────────────────────────────────────────────────────
   function resolveNodeId(fqn: string): string | null {
-    if (fqn === centerNode.fqn) return "__center__"
+    if (fqn === data.center_fqn) return "__center__"
     if (upstreamFqns.has(fqn)) return `u:${fqn}`
     if (downstreamFqns.has(fqn)) return `d:${fqn}`
     return null
@@ -200,7 +203,7 @@ function buildTraceElements(
 
   const addedEdges = new Set<string>()
 
-  for (const edge of realEdges) {
+  for (const edge of data.edges) {
     const sourceId = resolveNodeId(edge.source)
     const targetId = resolveNodeId(edge.target)
     if (!sourceId || !targetId) continue
@@ -216,13 +219,13 @@ function buildTraceElements(
         source: sourceId,
         target: targetId,
         edgeType: edge.type,
+        sequence: edge.sequence,
+        sequenceLabel: edge.sequence != null ? `${edge.sequence}` : "",
       },
     })
   }
 
   // ─── Fallback for disconnected nodes ────────────────────────────────
-  // After filtering structural edges (INCLUDES/CONTAINS), some nodes may
-  // have no connections. Connect them to center as a last resort.
   const connectedNodes = new Set<string>()
   for (const edgeKey of addedEdges) {
     const [src, tgt] = edgeKey.split("->")
@@ -234,13 +237,19 @@ function buildTraceElements(
     const nodeId = `${pn.prefix}:${pn.node.fqn}`
     if (connectedNodes.has(nodeId)) continue
 
-    // This node has no edges — connect it directly to center
     if (pn.prefix === "u") {
       const edgeKey = `${nodeId}->__center__`
       if (!addedEdges.has(edgeKey)) {
         addedEdges.add(edgeKey)
         elements.push({
-          data: { id: `e:${edgeKey}`, source: nodeId, target: "__center__" },
+          data: {
+            id: `e:${edgeKey}`,
+            source: nodeId,
+            target: "__center__",
+            edgeType: "CALLS",
+            sequence: pn.node.sequence,
+            sequenceLabel: `${pn.node.sequence}`,
+          },
         })
       }
     } else {
@@ -248,7 +257,14 @@ function buildTraceElements(
       if (!addedEdges.has(edgeKey)) {
         addedEdges.add(edgeKey)
         elements.push({
-          data: { id: `e:${edgeKey}`, source: "__center__", target: nodeId },
+          data: {
+            id: `e:${edgeKey}`,
+            source: "__center__",
+            target: nodeId,
+            edgeType: "CALLS",
+            sequence: pn.node.sequence,
+            sequenceLabel: `${pn.node.sequence}`,
+          },
         })
       }
     }
@@ -257,30 +273,32 @@ function buildTraceElements(
   return elements
 }
 
-// ─── Cytoscape stylesheet for the trace graph ───────────────────────────────
+// ─── Cytoscape stylesheet ───────────────────────────────────────────────────
 
 const traceStylesheet: cytoscape.StylesheetJsonBlock[] = [
+  // Base node style
   {
     selector: "node",
     style: {
       label: "data(label)",
+      shape: "round-rectangle",
+      width: 55,
+      height: 36,
       "text-valign": "center",
       "text-halign": "center",
-      "font-size": "10px",
+      "font-size": "9px",
       "font-family": "Inter, system-ui, sans-serif",
-      color: "#1F2937",
-      "text-outline-color": "#FFFFFF",
-      "text-outline-width": 1.5,
+      color: "#FFFFFF",
+      "text-outline-color": "transparent",
+      "text-outline-width": 0,
       "background-color": "#6B7280",
-      width: 40,
-      height: 40,
       "border-width": 1,
       "border-color": "#D1D5DB",
       "text-wrap": "ellipsis",
-      "text-max-width": "80px",
+      "text-max-width": "50px",
     },
   },
-  // Compound parent nodes (boxes containing children)
+  // Compound parent nodes
   {
     selector: "node:parent",
     style: {
@@ -290,27 +308,65 @@ const traceStylesheet: cytoscape.StylesheetJsonBlock[] = [
       "border-color": "#93C5FD",
       "text-valign": "top",
       "text-halign": "center",
-      "font-size": "12px",
+      "font-size": "10px",
       "font-weight": "bold",
       padding: "16px",
       shape: "roundrectangle",
       "text-wrap": "ellipsis",
       "text-max-width": "180px",
+      color: "#1F2937",
     },
   },
+  // Center node
   {
     selector: "node[isCenter]",
     style: {
-      "background-color": "#2563EB",
+      width: 65,
+      height: 42,
       "border-width": 3,
-      "border-color": "#1D4ED8",
-      width: 55,
-      height: 55,
-      "font-size": "12px",
+      "border-color": "#FFFFFF",
+      "font-size": "10px",
       "font-weight": "bold",
-      color: "#1E3A8A",
+      label: "data(label)",
     },
   },
+  // ── Layer-based node colors ─────────────────────────────────────────
+  {
+    selector: 'node[layer = "api"]',
+    style: {
+      "background-color": "#A855F7",
+      "border-color": "#9333EA",
+    },
+  },
+  {
+    selector: 'node[layer = "service"]',
+    style: {
+      "background-color": "#3B82F6",
+      "border-color": "#2563EB",
+    },
+  },
+  {
+    selector: 'node[layer = "repository"]',
+    style: {
+      "background-color": "#10B981",
+      "border-color": "#059669",
+    },
+  },
+  {
+    selector: 'node[layer = "database"]',
+    style: {
+      "background-color": "#F97316",
+      "border-color": "#EA580C",
+    },
+  },
+  {
+    selector: 'node[layer = "other"]',
+    style: {
+      "background-color": "#6B7280",
+      "border-color": "#4B5563",
+    },
+  },
+  // ── Edges ───────────────────────────────────────────────────────────
   {
     selector: "edge",
     style: {
@@ -321,28 +377,48 @@ const traceStylesheet: cytoscape.StylesheetJsonBlock[] = [
       "arrow-scale": 0.8,
       "curve-style": "bezier",
       opacity: 0.7,
-      label: "data(edgeType)",
-      "font-size": "8px",
+      label: "data(sequenceLabel)",
+      "font-size": "10px",
+      "font-weight": "bold",
       "text-rotation": "autorotate",
-      color: "#64748B",
+      color: "#1D4ED8",
       "text-outline-color": "#FFFFFF",
       "text-outline-width": 2,
-      "text-background-color": "#FFFFFF",
-      "text-background-opacity": 0.8,
-      "text-background-padding": "2px",
+      "text-background-color": "#EFF6FF",
+      "text-background-opacity": 0.9,
+      "text-background-padding": "3px",
+      "text-background-shape": "roundrectangle",
     },
   },
-  // Kind-based coloring (only for leaf nodes, not compound parents)
-  ...Object.entries(KIND_NODE_COLORS).map(([kind, color]) => ({
-    selector: `node[kind = "${kind}"]`,
+  // WRITES edges (dashed red)
+  {
+    selector: 'edge[edgeType = "WRITES"]',
     style: {
-      "background-color": color,
-      "border-color": color,
+      "line-style": "dashed",
+      "line-color": "#EF4444",
+      "target-arrow-color": "#EF4444",
     },
-  })),
+  },
+  // READS edges (dashed blue)
+  {
+    selector: 'edge[edgeType = "READS"]',
+    style: {
+      "line-style": "dashed",
+      "line-color": "#3B82F6",
+      "target-arrow-color": "#3B82F6",
+    },
+  },
 ]
 
-// ─── Trace Graph component ──────────────────────────────────────────────────
+// ─── Swim lane type ─────────────────────────────────────────────────────────
+
+interface SwimLane {
+  layer: string
+  top: number
+  height: number
+}
+
+// ─── Tooltip state ──────────────────────────────────────────────────────────
 
 interface TooltipState {
   visible: boolean
@@ -351,58 +427,120 @@ interface TooltipState {
   name: string
   fqn: string
   kind: string
+  layer: string
+  sequence: number | null
   depth: number | null
   direction: string
   file: string | null
 }
 
 const EMPTY_TOOLTIP: TooltipState = {
-  visible: false, x: 0, y: 0, name: "", fqn: "", kind: "", depth: null, direction: "", file: null,
+  visible: false, x: 0, y: 0, name: "", fqn: "", kind: "", layer: "",
+  sequence: null, depth: null, direction: "", file: null,
 }
 
-function TraceGraph({
-  centerNode,
-  upstreamNodes,
-  downstreamNodes,
-  edges: realEdges,
-}: {
-  centerNode: TraceRouteNode
-  upstreamNodes: AffectedNode[]
-  downstreamNodes: AffectedNode[]
-  edges: TraceEdge[]
-}) {
+// ─── Trace Graph component ──────────────────────────────────────────────────
+
+function TraceGraph({ data }: { data: TraceRouteResponse }) {
   const cyRef = useRef<cytoscape.Core | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [tooltip, setTooltip] = React.useState<TooltipState>(EMPTY_TOOLTIP)
+  const [tooltip, setTooltip] = useState<TooltipState>(EMPTY_TOOLTIP)
+  const [swimLanes, setSwimLanes] = useState<SwimLane[]>([])
 
-  const elements = useMemo(
-    () => buildTraceElements(centerNode, upstreamNodes, downstreamNodes, realEdges),
-    [centerNode, upstreamNodes, downstreamNodes, realEdges],
-  )
+  const elements = useMemo(() => buildTraceElements(data), [data])
+
+  // Height (in model units, pre-zoom) of each swim lane. Nodes are
+  // snapped onto their layer's row after dagre runs so the visual
+  // banding always matches the data, regardless of call depth.
+  const LANE_HEIGHT_MODEL = 120
+
+  const snapNodesToLayers = useCallback(() => {
+    const cy = cyRef.current
+    if (!cy || cy.nodes().length === 0) return
+
+    const visibleLayers = LAYER_ORDER.filter(
+      (l) => cy.nodes(`[layer = "${l}"]`).length > 0,
+    )
+
+    // Minimum horizontal spacing between nodes in the same lane.
+    // Nodes are 50w; allow 30px gap for edge breathing room.
+    const MIN_X_SPACING = 80
+
+    visibleLayers.forEach((layer, laneIdx) => {
+      const laneCenterY = laneIdx * LANE_HEIGHT_MODEL + LANE_HEIGHT_MODEL / 2
+
+      // Collect non-parent nodes in this layer, sorted by dagre's X
+      // (preserves edge-crossing-minimized ordering).
+      const layerNodes: cytoscape.NodeSingular[] = []
+      cy.nodes(`[layer = "${layer}"]`).forEach(
+        (node: cytoscape.NodeSingular) => {
+          if (!node.isParent()) layerNodes.push(node)
+        },
+      )
+      layerNodes.sort((a, b) => a.position().x - b.position().x)
+
+      // Re-space to eliminate horizontal overlap while keeping the
+      // original centroid so the layout stays centered.
+      if (layerNodes.length === 0) return
+      const originalCentroidX =
+        layerNodes.reduce((sum, n) => sum + n.position().x, 0) /
+        layerNodes.length
+      const totalWidth = (layerNodes.length - 1) * MIN_X_SPACING
+      const startX = originalCentroidX - totalWidth / 2
+      layerNodes.forEach((node, i) => {
+        node.position({ x: startX + i * MIN_X_SPACING, y: laneCenterY })
+      })
+    })
+  }, [])
+
+  const computeSwimLanes = useCallback(() => {
+    const cy = cyRef.current
+    if (!cy || cy.nodes().length === 0) return
+
+    const pan = cy.pan()
+    const zoom = cy.zoom()
+
+    const visibleLayers = LAYER_ORDER.filter(
+      (l) => cy.nodes(`[layer = "${l}"]`).length > 0,
+    )
+
+    // After snap-to-layer, each layer's nodes share the same
+    // model-space Y band. We just convert that band to screen space.
+    const rawLanes: SwimLane[] = visibleLayers.map((layer, laneIdx) => {
+      const laneCenterYModel =
+        laneIdx * LANE_HEIGHT_MODEL + LANE_HEIGHT_MODEL / 2
+      const topModel = laneCenterYModel - LANE_HEIGHT_MODEL / 2
+      const topScreen = topModel * zoom + pan.y
+      const heightScreen = LANE_HEIGHT_MODEL * zoom
+      return {
+        layer,
+        top: topScreen,
+        height: heightScreen,
+      }
+    })
+
+    setSwimLanes(rawLanes)
+  }, [])
 
   const handleCy = useCallback((cy: cytoscape.Core) => {
     if (cyRef.current === cy) return
     cyRef.current = cy
 
-    // Hover → show tooltip
     cy.on("mouseover", "node", (event) => {
       const node = event.target
-      const data = node.data()
-      const container = containerRef.current
-      if (!container) return
-      const rect = container.getBoundingClientRect()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const renderedPos = node.renderedPosition()
+      const d = node.data()
       setTooltip({
         visible: true,
-        x: renderedPos.x,
-        y: renderedPos.y,
-        name: data.label ?? "",
-        fqn: data.fqn ?? data.id ?? "",
-        kind: data.kind ?? "",
-        depth: data.depth ?? null,
-        direction: data.isCenter ? "selected" : (data.direction ?? ""),
-        file: data.file ?? null,
+        x: node.renderedPosition().x,
+        y: node.renderedPosition().y,
+        name: d.label ?? "",
+        fqn: d.fqn ?? d.id ?? "",
+        kind: d.kind ?? "",
+        layer: d.layer ?? "other",
+        sequence: d.sequence ?? null,
+        depth: d.depth ?? null,
+        direction: d.isCenter ? "selected" : (d.direction ?? ""),
+        file: d.file ?? null,
       })
     })
 
@@ -410,31 +548,34 @@ function TraceGraph({
       setTooltip(EMPTY_TOOLTIP)
     })
 
-    // Hide tooltip on pan/zoom
     cy.on("viewport", () => {
       setTooltip((prev) => (prev.visible ? EMPTY_TOOLTIP : prev))
+      computeSwimLanes()
     })
 
-    // Run dagre layout after mounting
     const timer = setTimeout(() => {
       try {
         const layout = cy.layout({
           name: "dagre",
-          rankDir: "LR",
-          nodeSep: 40,
-          rankSep: 80,
-          fit: true,
-          padding: 30,
+          rankDir: "TB",
+          nodeSep: 50,
+          rankSep: 60,
+          fit: false,
+          padding: 40,
           animate: false,
         } as cytoscape.LayoutOptions)
         layout.run()
+        // Snap Y to layer rows, then fit to viewport
+        snapNodesToLayers()
+        cy.fit(undefined, 40)
+        setTimeout(computeSwimLanes, 50)
       } catch {
         // Layout may fail with 0 nodes
       }
     }, 50)
 
     return () => clearTimeout(timer)
-  }, [])
+  }, [computeSwimLanes, snapNodesToLayers])
 
   // Re-run layout when elements change
   useEffect(() => {
@@ -445,21 +586,41 @@ function TraceGraph({
       try {
         const layout = cy.layout({
           name: "dagre",
-          rankDir: "LR",
-          nodeSep: 40,
-          rankSep: 80,
-          fit: true,
-          padding: 30,
+          rankDir: "TB",
+          nodeSep: 50,
+          rankSep: 60,
+          fit: false,
+          padding: 40,
           animate: false,
         } as cytoscape.LayoutOptions)
         layout.run()
+        snapNodesToLayers()
+        cy.fit(undefined, 40)
+        setTimeout(computeSwimLanes, 50)
       } catch {
         // noop
       }
     }, 100)
 
     return () => clearTimeout(timer)
-  }, [elements])
+  }, [elements, computeSwimLanes, snapNodesToLayers])
+
+  // Refit the graph when the container resizes (e.g. when the user
+  // drags the split-panel divider). Cytoscape doesn't auto-fit on
+  // container size change, so we detect it manually.
+  useEffect(() => {
+    const container = containerRef.current
+    const cy = cyRef.current
+    if (!container) return
+    const observer = new ResizeObserver(() => {
+      if (!cy) return
+      cy.resize()
+      cy.fit(undefined, 40)
+      computeSwimLanes()
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [computeSwimLanes])
 
   if (elements.length <= 1) {
     return (
@@ -471,6 +632,39 @@ function TraceGraph({
 
   return (
     <div ref={containerRef} className="absolute inset-0">
+      {/* Swim-lane background bands */}
+      {swimLanes.map((lane) => {
+        const cfg = LAYER_CONFIG[lane.layer]
+        if (!cfg) return null
+        return (
+          <div
+            key={lane.layer}
+            className="pointer-events-none absolute left-0 right-0"
+            style={{
+              top: lane.top,
+              height: lane.height,
+              backgroundColor: cfg.bandColor,
+              borderTop: `1px solid ${cfg.color}20`,
+              borderBottom: `1px solid ${cfg.color}20`,
+              zIndex: 0,
+            }}
+          >
+            <span
+              className="absolute left-2 text-[10px] font-semibold"
+              style={{
+                color: cfg.color,
+                top: "50%",
+                transform: "translateY(-50%)",
+                opacity: 0.9,
+                textShadow: "0 0 4px rgba(255,255,255,0.8)",
+              }}
+            >
+              {cfg.label}
+            </span>
+          </div>
+        )
+      })}
+
       <CytoscapeComponent
         elements={CytoscapeComponent.normalizeElements(elements)}
         stylesheet={traceStylesheet}
@@ -481,6 +675,7 @@ function TraceGraph({
           position: "absolute",
           top: 0,
           left: 0,
+          zIndex: 1,
         }}
         minZoom={0.3}
         maxZoom={2.5}
@@ -507,8 +702,19 @@ function TraceGraph({
             {tooltip.fqn}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {tooltip.layer && (
+              <Badge
+                className="text-[10px] px-1.5 py-0"
+                style={{
+                  backgroundColor: LAYER_CONFIG[tooltip.layer]?.color ?? "#6B7280",
+                  color: "#FFFFFF",
+                }}
+              >
+                {LAYER_CONFIG[tooltip.layer]?.label ?? tooltip.layer}
+              </Badge>
+            )}
             {tooltip.kind && (
-              <Badge className={`text-[10px] px-1.5 py-0 ${kindBadgeClass(tooltip.kind)}`}>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                 {tooltip.kind}
               </Badge>
             )}
@@ -521,6 +727,11 @@ function TraceGraph({
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 capitalize">
                   {tooltip.direction}
                 </Badge>
+                {tooltip.sequence !== null && (
+                  <Badge className="bg-blue-600 text-white text-[10px] px-1.5 py-0">
+                    #{tooltip.sequence}
+                  </Badge>
+                )}
                 {tooltip.depth !== null && (
                   <Badge className={`text-[10px] px-1.5 py-0 ${depthBadgeClass(tooltip.depth)}`}>
                     depth {tooltip.depth}
@@ -540,15 +751,359 @@ function TraceGraph({
   )
 }
 
+// ─── AI Summary Panel ───────────────────────────────────────────────────────
+
+function AiSummaryPanel({
+  projectId,
+  nodeFqn,
+  maxDepth,
+  hasConnections,
+}: {
+  projectId: string
+  nodeFqn: string | null
+  maxDepth: number
+  hasConnections: boolean
+}) {
+  const { summary, isLoading, error, errorStatus, fetch: fetchSummary, retry, clear } = useTraceSummary()
+  const chat = useTraceChat()
+
+  useEffect(() => {
+    if (nodeFqn && hasConnections) {
+      fetchSummary(projectId, nodeFqn, maxDepth)
+      chat.load(projectId, nodeFqn)
+    }
+    return () => {
+      clear()
+      chat.clear()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeFqn, projectId, maxDepth, hasConnections])
+
+  // No connections state
+  if (!hasConnections) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+        <GitBranch className="size-8 text-muted-foreground/40" />
+        <p className="text-sm text-muted-foreground">No connections to summarize</p>
+      </div>
+    )
+  }
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-4">
+        <Loader2 className="size-6 animate-spin text-blue-500" />
+        <p className="text-sm text-muted-foreground">Generating AI summary...</p>
+      </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    // 401 = no auth token, 503 = provider misconfigured/unreachable.
+    // Both are resolved by visiting the Settings page.
+    const isConfigError =
+      errorStatus === 401 ||
+      errorStatus === 503 ||
+      error.toLowerCase().includes("not configured")
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
+        <Sparkles className="size-8 text-muted-foreground/40" />
+        {isConfigError ? (
+          <>
+            <p className="text-sm text-muted-foreground">AI summary unavailable</p>
+            <p className="text-xs text-muted-foreground/70 max-w-xs">{error}</p>
+            <a
+              href="/settings/system"
+              className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
+            >
+              <Cog className="size-3" />
+              Open AI Settings
+            </a>
+            <Button variant="outline" size="sm" onClick={retry} className="mt-1 gap-1.5">
+              <RefreshCw className="size-3" />
+              Retry
+            </Button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">Summary unavailable</p>
+            <p className="text-xs text-muted-foreground/70">{error}</p>
+            <Button variant="outline" size="sm" onClick={retry} className="mt-1 gap-1.5">
+              <RefreshCw className="size-3" />
+              Retry
+            </Button>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Success state
+  if (summary) {
+    return (
+      <AiSummaryWithChat
+        summary={summary}
+        projectId={projectId}
+        nodeFqn={nodeFqn}
+        maxDepth={maxDepth}
+        chat={chat}
+      />
+    )
+  }
+
+  // Default / waiting state
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+      <Sparkles className="size-8 text-muted-foreground/40" />
+      <p className="text-sm text-muted-foreground">AI summary will appear here</p>
+    </div>
+  )
+}
+
+// ─── Summary + Chat composite ───────────────────────────────────────────────
+
+type ChatHook = ReturnType<typeof useTraceChat>
+
+function AiSummaryWithChat({
+  summary,
+  projectId,
+  nodeFqn,
+  maxDepth,
+  chat,
+}: {
+  summary: TraceSummaryResponse
+  projectId: string
+  nodeFqn: string | null
+  maxDepth: number
+  chat: ChatHook
+}) {
+  const [draft, setDraft] = useState("")
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Auto-scroll to the bottom when a new message arrives.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [chat.messages.length, chat.isSending])
+
+  const canSend =
+    !chat.isSending && draft.trim().length > 0 && nodeFqn !== null
+
+  const handleSend = useCallback(async () => {
+    if (!canSend || !nodeFqn) return
+    const question = draft.trim()
+    setDraft("")
+    await chat.send(projectId, nodeFqn, question, maxDepth)
+    textareaRef.current?.focus()
+  }, [canSend, draft, projectId, nodeFqn, maxDepth, chat])
+
+  const handleClearHistory = useCallback(async () => {
+    if (!nodeFqn) return
+    if (chat.messages.length === 0) return
+    const confirmed = window.confirm("Clear all follow-up messages for this node?")
+    if (!confirmed) return
+    await chat.clearServer(projectId, nodeFqn)
+  }, [nodeFqn, projectId, chat])
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Scrollable region: summary + metadata + chat thread */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1">
+        {/* Summary header */}
+        <div className="sticky top-0 z-10 flex items-center gap-2 bg-background/95 backdrop-blur border-b pb-3">
+          <Sparkles className="size-4 text-amber-500" />
+          <span className="text-sm font-semibold">AI Flow Summary</span>
+          {summary.cached && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+              Cached
+            </Badge>
+          )}
+          {chat.messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 gap-1 px-2 text-[10px] text-muted-foreground hover:text-destructive"
+              onClick={handleClearHistory}
+              title="Clear conversation"
+            >
+              <Trash2 className="size-3" />
+              Clear chat
+            </Button>
+          )}
+        </div>
+
+        {/* Summary markdown */}
+        <div className="mt-3 prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
+          <ReactMarkdown>{summary.summary}</ReactMarkdown>
+        </div>
+
+        {/* Layers/tables metadata */}
+        {(summary.layers_involved.length > 0 || summary.tables_touched.length > 0) && (
+          <div className="mt-3 border-t pt-3 space-y-2">
+            {summary.layers_involved.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1">
+                  Layers
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {summary.layers_involved.map((layer) => (
+                    <Badge
+                      key={layer}
+                      className={`text-[10px] px-1.5 py-0 ${layerBadgeClass(layer)}`}
+                    >
+                      {LAYER_CONFIG[layer]?.label ?? layer}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {summary.tables_touched.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-1">
+                  Tables
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {Array.from(new Set(summary.tables_touched)).map((table) => (
+                    <Badge
+                      key={table}
+                      variant="outline"
+                      className="text-[10px] px-1.5 py-0"
+                    >
+                      <Database className="mr-1 size-2.5" />
+                      {table}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Chat thread */}
+        {chat.messages.length > 0 && (
+          <>
+            <Separator className="my-4" />
+            <div className="flex items-center gap-2 mb-3">
+              <GitBranch className="size-3.5 text-blue-500" />
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Follow-up Q&amp;A
+              </span>
+            </div>
+            <div className="space-y-3">
+              {chat.messages.map((msg) => (
+                <ChatBubble key={msg.id} message={msg} />
+              ))}
+              {chat.isSending && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" />
+                  Thinking…
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Error surface */}
+        {chat.error && (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+            {chat.error}
+          </div>
+        )}
+      </div>
+
+      {/* Composer — pinned to the bottom */}
+      <div className="mt-2 border-t bg-background pt-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSend()
+          }}
+          className="flex items-end gap-2"
+        >
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="Ask a follow-up about this trace…"
+            rows={2}
+            disabled={chat.isSending}
+            className="flex-1 resize-none rounded-md border bg-background px-2.5 py-2 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!canSend}
+            className="h-9 shrink-0 gap-1 px-3"
+          >
+            {chat.isSending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Send className="size-3.5" />
+            )}
+            Send
+          </Button>
+        </form>
+        <p className="mt-1 text-[10px] text-muted-foreground/60">
+          Enter to send · Shift+Enter for newline
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function ChatBubble({ message }: { message: TraceChatMessage }) {
+  const isUser = message.role === "user"
+  return (
+    <div className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+      <div
+        className={`flex size-6 shrink-0 items-center justify-center rounded-full ${
+          isUser
+            ? "bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-300"
+            : "bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-300"
+        }`}
+      >
+        {isUser ? <UserIcon className="size-3" /> : <Sparkles className="size-3" />}
+      </div>
+      <div
+        className={`max-w-[85%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
+          isUser
+            ? "bg-blue-50 text-blue-900 dark:bg-blue-950/50 dark:text-blue-100"
+            : "bg-muted/60 text-foreground"
+        }`}
+      >
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <div className="prose prose-xs dark:prose-invert max-w-none break-words">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Node row (for list view) ───────────────────────────────────────────────
 
-function NodeRow({ node }: { node: AffectedNode }) {
+function NodeRow({ node }: { node: TraceNode }) {
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
+    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50">
+      <Badge className="shrink-0 bg-blue-600 text-white text-[10px] px-1.5 py-0 tabular-nums min-w-[24px] justify-center">
+        {node.sequence}
+      </Badge>
       <Badge
         className={`shrink-0 text-[10px] px-1.5 py-0 ${depthBadgeClass(node.depth)}`}
       >
-        {node.depth}
+        d{node.depth}
       </Badge>
       <div className="min-w-0 flex-1">
         <p className="break-all text-xs font-medium">{node.name}</p>
@@ -559,8 +1114,8 @@ function NodeRow({ node }: { node: AffectedNode }) {
           {node.fqn}
         </p>
       </div>
-      <Badge className={`shrink-0 text-[10px] px-1.5 py-0 ${kindBadgeClass(node.type)}`}>
-        {node.type}
+      <Badge className={`shrink-0 text-[10px] px-1.5 py-0 ${layerBadgeClass(node.layer)}`}>
+        {LAYER_CONFIG[node.layer]?.label ?? node.layer}
       </Badge>
     </div>
   )
@@ -577,7 +1132,7 @@ function Section({
 }: {
   title: string
   count: number
-  nodes: AffectedNode[]
+  nodes: TraceNode[]
   isLoading: boolean
   emptyMessage: string
 }) {
@@ -612,7 +1167,7 @@ function Section({
   )
 }
 
-// ─── Props ───────────────────────────────────────────────────────────────────
+// ─── Props ──────────────────────────────────────────────────────────────────
 
 export interface TraceRouteNode {
   fqn: string
@@ -628,7 +1183,11 @@ interface TraceRouteModalProps {
   projectId: string
 }
 
-// ─── Modal ───────────────────────────────────────────────────────────────────
+// ─── Depth options ──────────────────────────────────────────────────────────
+
+const DEPTH_OPTIONS = [1, 2, 3, 5, 7, 10] as const
+
+// ─── Modal ──────────────────────────────────────────────────────────────────
 
 export function TraceRouteModal({
   open,
@@ -636,52 +1195,132 @@ export function TraceRouteModal({
   node,
   projectId,
 }: TraceRouteModalProps) {
-  const { upstreamData, downstreamData, edges, isLoading, error, fetchTrace, clear } =
-    useTraceRoute()
-  const [viewMode, setViewMode] = React.useState<"graph" | "list">("graph")
+  const { data, isLoading, error, fetchTrace, clear } = useTraceRoute()
+  const [viewMode, setViewMode] = useState<"graph" | "list">("graph")
+  const [maxDepth, setMaxDepth] = useState(5)
+  const [summaryOpen, setSummaryOpen] = useState(true)
+  // AI summary panel width as % of the split area (20-70% range).
+  // Persisted to localStorage so the user's preference sticks.
+  const [summaryWidth, setSummaryWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 40
+    const stored = window.localStorage.getItem("traceroute:summaryWidth")
+    const parsed = stored ? Number(stored) : NaN
+    return Number.isFinite(parsed) && parsed >= 20 && parsed <= 70 ? parsed : 40
+  })
+  const splitContainerRef = useRef<HTMLDivElement | null>(null)
+  const isResizingRef = useRef(false)
 
-  // Fetch when modal opens
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        "traceroute:summaryWidth",
+        String(summaryWidth),
+      )
+    }
+  }, [summaryWidth])
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isResizingRef.current = true
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const onMove = (ev: MouseEvent) => {
+      const container = splitContainerRef.current
+      if (!container || !isResizingRef.current) return
+      const rect = container.getBoundingClientRect()
+      const rightPct = ((rect.right - ev.clientX) / rect.width) * 100
+      // Clamp to usable range
+      const clamped = Math.min(70, Math.max(20, rightPct))
+      setSummaryWidth(clamped)
+    }
+    const onUp = () => {
+      isResizingRef.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }, [])
+
+  // Fetch trace when modal opens or depth changes
   useEffect(() => {
     if (open && node) {
-      fetchTrace(projectId, node.fqn)
+      fetchTrace(projectId, node.fqn, maxDepth)
     }
     if (!open) {
       clear()
     }
-  }, [open, node, projectId, fetchTrace, clear])
+  }, [open, node, projectId, maxDepth, fetchTrace, clear])
 
-  const upstreamNodes = upstreamData?.affected ?? []
-  const downstreamNodes = downstreamData?.affected ?? []
-  const totalAffected = upstreamNodes.length + downstreamNodes.length
+  const upstreamCount = data?.upstream_count ?? 0
+  const downstreamCount = data?.downstream_count ?? 0
+  const hasConnections = upstreamCount > 0 || downstreamCount > 0
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose() }}>
-      <DialogContent className="flex h-[80vh] w-[70vw] !max-w-none flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-[80vh] w-[85vw] !max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-6 py-4">
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2 text-base">
               <GitBranch className="size-4 text-blue-500" />
               Trace Route
             </DialogTitle>
-            {/* View toggle */}
-            <div className="flex items-center gap-1 rounded-md border p-0.5">
+            <div className="flex items-center gap-3">
+              {/* Depth control */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  Depth
+                </span>
+                <select
+                  value={maxDepth}
+                  onChange={(e) => setMaxDepth(Number(e.target.value))}
+                  className="h-7 rounded-md border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {DEPTH_OPTIONS.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {/* View toggle */}
+              <div className="flex items-center gap-1 rounded-md border p-0.5">
+                <Button
+                  variant={viewMode === "graph" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setViewMode("graph")}
+                >
+                  <Network className="mr-1 size-3" />
+                  Graph
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setViewMode("list")}
+                >
+                  <List className="mr-1 size-3" />
+                  List
+                </Button>
+              </div>
+              {/* AI summary toggle */}
               <Button
-                variant={viewMode === "graph" ? "secondary" : "ghost"}
+                variant="ghost"
                 size="sm"
                 className="h-7 px-2 text-xs"
-                onClick={() => setViewMode("graph")}
+                onClick={() => setSummaryOpen((v) => !v)}
+                title={summaryOpen ? "Hide AI summary" : "Show AI summary"}
               >
-                <Network className="mr-1 size-3" />
-                Graph
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setViewMode("list")}
-              >
-                <List className="mr-1 size-3" />
-                List
+                {summaryOpen ? (
+                  <PanelRightClose className="mr-1 size-3" />
+                ) : (
+                  <PanelRightOpen className="mr-1 size-3" />
+                )}
+                <Sparkles className="size-3" />
               </Button>
             </div>
           </div>
@@ -689,7 +1328,7 @@ export function TraceRouteModal({
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className="break-all text-sm font-medium">{node.name}</span>
               {node.kind && (
-                <Badge className={`text-[10px] ${kindBadgeClass(node.kind)}`}>
+                <Badge variant="outline" className="text-[10px]">
                   {node.kind}
                 </Badge>
               )}
@@ -698,9 +1337,9 @@ export function TraceRouteModal({
                   {node.language}
                 </Badge>
               )}
-              {!isLoading && totalAffected > 0 && (
+              {!isLoading && hasConnections && (
                 <Badge variant="outline" className="text-[10px]">
-                  {upstreamNodes.length} upstream / {downstreamNodes.length} downstream
+                  {upstreamCount} upstream / {downstreamCount} downstream
                 </Badge>
               )}
             </div>
@@ -713,75 +1352,122 @@ export function TraceRouteModal({
           </div>
         ) : isLoading ? (
           <div className="flex flex-1 items-center justify-center">
+            <Loader2 className="mr-2 size-4 animate-spin" />
             <span className="text-sm text-muted-foreground">Analyzing trace route...</span>
           </div>
-        ) : viewMode === "graph" ? (
-          /* ─── Graph View ─── */
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            {node && (
-              <TraceGraph
-                centerNode={node}
-                upstreamNodes={upstreamNodes}
-                downstreamNodes={downstreamNodes}
-                edges={edges}
-              />
-            )}
-            {/* Legend */}
-            <div className="absolute bottom-3 left-3 flex items-center gap-3 rounded-md border bg-background/90 px-3 py-1.5 text-[10px] backdrop-blur-sm">
-              <span className="font-medium text-muted-foreground">Flow:</span>
-              <span className="text-muted-foreground">Upstream Callers</span>
-              <span className="text-muted-foreground">&rarr;</span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block size-2.5 rounded-full bg-blue-600" />
-                <span className="font-medium">Selected Node</span>
-              </span>
-              <span className="text-muted-foreground">&rarr;</span>
-              <span className="text-muted-foreground">Downstream Callees</span>
-            </div>
-          </div>
         ) : (
-          /* ─── List View ─── */
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="space-y-0 px-6 py-4">
-              <Section
-                title="Upstream Callers"
-                count={upstreamNodes.length}
-                nodes={upstreamNodes}
-                isLoading={isLoading}
-                emptyMessage="No callers found"
-              />
-
-              <Separator className="my-4" />
-
-              {/* This node */}
-              <div className="flex items-center gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-800 dark:bg-blue-950">
-                <GitBranch className="size-3.5 shrink-0 text-blue-500" />
-                <div className="min-w-0 flex-1">
-                  <p className="break-all text-xs font-semibold">
-                    {node?.name ?? ""}
-                  </p>
-                  <p
-                    className="break-all text-[10px] text-muted-foreground"
-                    title={node?.fqn ?? ""}
-                  >
-                    {node?.fqn ?? ""}
-                  </p>
+          <div ref={splitContainerRef} className="flex flex-1 min-h-0">
+            {/* Left panel: graph or list */}
+            <div
+              className="relative min-w-0"
+              style={{
+                flex: summaryOpen
+                  ? `0 0 ${100 - summaryWidth}%`
+                  : "1 1 100%",
+              }}
+            >
+              {viewMode === "graph" ? (
+                <div className="relative h-full overflow-hidden">
+                  {data && <TraceGraph data={data} />}
+                  {/* Legend */}
+                  <div className="absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-2 rounded-md border bg-background/90 px-3 py-1.5 text-[10px] backdrop-blur-sm">
+                    {LAYER_ORDER.map((layer) => {
+                      const cfg = LAYER_CONFIG[layer]
+                      if (!cfg) return null
+                      return (
+                        <span key={layer} className="inline-flex items-center gap-1">
+                          <span
+                            className="inline-block size-2.5 rounded-sm"
+                            style={{ backgroundColor: cfg.color }}
+                          />
+                          <span className="text-muted-foreground">{cfg.label}</span>
+                        </span>
+                      )
+                    })}
+                    <span className="ml-1 border-l pl-2 text-muted-foreground">
+                      Numbers = call sequence
+                    </span>
+                  </div>
                 </div>
-                <Badge variant="outline" className="shrink-0 text-[10px]">
-                  this node
-                </Badge>
-              </div>
+              ) : (
+                <div className="h-full overflow-y-auto">
+                  <div className="space-y-0 px-6 py-4">
+                    <Section
+                      title="Upstream Callers"
+                      count={upstreamCount}
+                      nodes={data?.upstream ?? []}
+                      isLoading={isLoading}
+                      emptyMessage="No callers found"
+                    />
 
-              <Separator className="my-4" />
+                    <Separator className="my-4" />
 
-              <Section
-                title="Downstream Callees"
-                count={downstreamNodes.length}
-                nodes={downstreamNodes}
-                isLoading={isLoading}
-                emptyMessage="No callees found"
-              />
+                    {/* This node */}
+                    <div className="flex items-center gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-800 dark:bg-blue-950">
+                      <GitBranch className="size-3.5 shrink-0 text-blue-500" />
+                      <div className="min-w-0 flex-1">
+                        <p className="break-all text-xs font-semibold">
+                          {node?.name ?? ""}
+                        </p>
+                        <p
+                          className="break-all text-[10px] text-muted-foreground"
+                          title={node?.fqn ?? ""}
+                        >
+                          {node?.fqn ?? ""}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="shrink-0 text-[10px]">
+                        this node
+                      </Badge>
+                    </div>
+
+                    <Separator className="my-4" />
+
+                    <Section
+                      title="Downstream Callees"
+                      count={downstreamCount}
+                      nodes={data?.downstream ?? []}
+                      isLoading={isLoading}
+                      emptyMessage="No callees found"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Draggable divider */}
+            {summaryOpen && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize AI summary panel"
+                onMouseDown={handleResizeStart}
+                className="group relative flex w-1 shrink-0 cursor-col-resize items-center justify-center bg-border transition-colors hover:bg-blue-400"
+              >
+                {/* Wider hit area + grip dots */}
+                <div className="absolute inset-y-0 -inset-x-1" />
+                <div className="pointer-events-none flex flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-60">
+                  <div className="size-0.5 rounded-full bg-white" />
+                  <div className="size-0.5 rounded-full bg-white" />
+                  <div className="size-0.5 rounded-full bg-white" />
+                </div>
+              </div>
+            )}
+
+            {/* Right panel: AI summary (resizable) */}
+            {summaryOpen && (
+              <div
+                className="min-w-0 overflow-y-auto p-4"
+                style={{ flex: `0 0 calc(${summaryWidth}% - 4px)` }}
+              >
+                <AiSummaryPanel
+                  projectId={projectId}
+                  nodeFqn={node?.fqn ?? null}
+                  maxDepth={maxDepth}
+                  hasConnections={hasConnections}
+                />
+              </div>
+            )}
           </div>
         )}
       </DialogContent>

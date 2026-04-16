@@ -37,7 +37,7 @@ class ChatToolContext:
 
 
 async def list_applications(ctx: ChatToolContext) -> list[dict]:
-    """List all analyzed applications in CodeLens."""
+    """List all analyzed applications in ChangeSafe."""
     from sqlalchemy import select
 
     from app.models.db import Project, Repository

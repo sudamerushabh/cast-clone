@@ -1,0 +1,42 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - link "CodeLens" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - img [ref=e5]
+        - generic [ref=e10]: CodeLens
+      - navigation "Breadcrumb" [ref=e11]:
+        - generic [ref=e12]: /
+        - link "Repositories" [ref=e13] [cursor=pointer]:
+          - /url: /repositories
+        - generic [ref=e14]: /
+        - generic [ref=e15]: 3110ce26-22af-4a43-86be-6c59f9e71364
+      - button "Toggle theme" [ref=e16]:
+        - img
+    - generic [ref=e17]:
+      - navigation "Global navigation" [ref=e18]:
+        - generic [ref=e19]:
+          - link "Home" [ref=e20] [cursor=pointer]:
+            - /url: /
+            - img [ref=e21]
+            - generic [ref=e26]: Home
+          - link "Repositories" [ref=e27] [cursor=pointer]:
+            - /url: /repositories
+            - img [ref=e28]
+            - generic [ref=e33]: Repositories
+          - link "Connectors" [ref=e34] [cursor=pointer]:
+            - /url: /connectors
+            - img [ref=e35]
+            - generic [ref=e39]: Connectors
+          - link "Settings" [ref=e40] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e41]
+            - generic [ref=e44]: Settings
+        - button "Collapse navigation" [ref=e46]:
+          - img [ref=e47]
+          - generic [ref=e49]: Collapse
+      - main [ref=e50]:
+        - paragraph [ref=e52]: Loading...
+  - button "Open Next.js Dev Tools" [ref=e58] [cursor=pointer]:
+    - img [ref=e59]
+  - alert [ref=e62]

@@ -1,0 +1,2 @@
+[     334ms] [VERBOSE] [DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o @ https://d3ui2q885j4oe3.cloudfront.net/:0
+[    1172ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://d3ui2q885j4oe3.cloudfront.net/favicon.ico:0

@@ -1,0 +1,43 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - heading "ChangeSafe License Portal" [level=1] [ref=e3]
+    - generic [ref=e4]:
+      - generic [ref=e5]: 14b80498-2081-7051-b1f4-6f1539a866c8
+      - button "Sign Out" [ref=e6] [cursor=pointer]
+  - generic [ref=e8]:
+    - heading "Sign License" [level=2] [ref=e9]
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: Installation ID
+        - textbox "Installation ID" [ref=e13]:
+          - /placeholder: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      - generic [ref=e14]:
+        - generic [ref=e15]: Customer Name
+        - textbox "Customer Name" [ref=e16]
+      - generic [ref=e17]:
+        - generic [ref=e18]: Customer Email
+        - textbox "Customer Email" [ref=e19]
+      - generic [ref=e20]:
+        - generic [ref=e21]: Customer Organization
+        - textbox "Customer Organization" [ref=e22]
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Tier
+          - combobox "Tier" [ref=e26]:
+            - option "Trial (50k LOC, 30 days)" [selected]
+            - option "Tier 1 — Up to 250k LOC ($6,000/yr)"
+            - option "Tier 2 — Up to 500k LOC ($10,800/yr)"
+            - option "Tier 3 — Up to 1M LOC ($19,200/yr)"
+            - option "Tier 4 — Up to 2M LOC ($33,600/yr)"
+            - option "Tier 5 — 2M+ LOC (Custom)"
+        - generic [ref=e27]:
+          - generic [ref=e28]: LOC Limit
+          - spinbutton "LOC Limit" [ref=e29]: "50000"
+      - generic [ref=e30]:
+        - generic [ref=e31]: Expires In Days
+        - spinbutton "Expires In Days" [ref=e32]: "365"
+      - generic [ref=e33]:
+        - generic [ref=e34]: Notes (optional)
+        - textbox "Notes (optional)" [ref=e35]:
+          - /placeholder: Internal notes about this license...
+      - button "Sign License" [ref=e37] [cursor=pointer]

@@ -49,6 +49,16 @@ async def clone_branch_local(
 
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    # Ensure a local tracking branch exists — git clone --local --branch
+    # requires a local branch, not just a remote tracking ref.
+    track_proc = await asyncio.create_subprocess_exec(
+        "git", "-C", source_repo_path,
+        "branch", "--track", branch, f"origin/{branch}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await track_proc.communicate()
+
     proc = await asyncio.create_subprocess_exec(
         "git", "clone", "--local", "--branch", branch,
         source_repo_path, str(target),

@@ -121,7 +121,7 @@ class BitbucketProvider(GitProvider):
                 f"{self._api_base}/repositories/{full_name}/hooks",
                 headers=self._headers,
                 json={
-                    "description": "CodeLens PR Analysis",
+                    "description": "ChangeSafe PR Analysis",
                     "url": webhook_url,
                     "active": True,
                     "secret": secret,

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     auth_disabled: bool = False  # FLIPPED: default deny, set AUTH_DISABLED=true for dev
     base_url: str = "http://localhost:3000"
 
+    # Licensing (CHAN-15)
+    license_file_path: str = "/app/license.jwt"
+    # PEM-encoded Ed25519 public key; empty => validation fails
+    license_public_key_v1: str = ""
+    # Set LICENSE_DISABLED=true to bypass license checks (dev)
+    license_disabled: bool = False
+
     # Repository storage
     repo_storage_path: str = "/home/ubuntu/repos"
     git_clone_timeout: int = 600

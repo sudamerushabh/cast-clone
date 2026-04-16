@@ -8,8 +8,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_accessible_project
-from app.models.db import AnalysisRun, Project
+from app.api.dependencies import (
+    get_accessible_project,
+    get_current_user,
+    require_license_writable,
+)
+from app.models.db import AnalysisRun, Project, User
+from app.services.activity import log_activity
 from app.orchestrator.pipeline import PipelineServices, run_analysis_pipeline
 from app.schemas.analysis import (
     AnalysisStageStatus,
@@ -89,12 +94,14 @@ router = APIRouter(prefix="/api/v1/projects", tags=["analysis"])
     "/{project_id}/analyze",
     response_model=AnalysisTriggerResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def trigger_analysis(
     project_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     project: Project = Depends(get_accessible_project),
+    user: User = Depends(get_current_user),
 ) -> AnalysisTriggerResponse:
     """Trigger analysis for a project. Runs as a background task.
 
@@ -111,8 +118,6 @@ async def trigger_analysis(
     # Create analysis run
     run = AnalysisRun(project_id=project_id, status="pending")
     session.add(run)
-
-    # Update project status
     project.status = "analyzing"
     await session.commit()
     await session.refresh(run)
@@ -123,6 +128,13 @@ async def trigger_analysis(
         source_path=Path(project.source_path),
     )
     background_tasks.add_task(run_analysis_pipeline, project_id, run.id, services)
+
+    # Log activity using independent connection (fire-and-forget, never fails)
+    await log_activity(
+        session, "analysis.started", user_id=user.id,
+        resource_type="project", resource_id=project_id,
+        details={"run_id": run.id, "project_name": project.name},
+    )
 
     return AnalysisTriggerResponse(
         project_id=project_id,

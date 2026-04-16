@@ -13,10 +13,12 @@ from typing import Any
 
 import structlog
 from anthropic import AsyncAnthropicBedrock
+from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from app.ai.tools import ChatToolContext, get_source_code, object_details
 from app.models.db import AiSummary
+from app.services.ai_provider import EffectiveAiConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -84,17 +86,44 @@ async def assemble_node_context(
 
 
 async def generate_summary(
-    client: AsyncAnthropicBedrock,
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
     model: str,
     max_tokens: int,
     node_context: dict[str, Any],
+    ai_config: EffectiveAiConfig | None = None,
 ) -> tuple[str, int]:
-    """Make a single Claude call to generate a node summary.
+    """Make a single AI call to generate a node summary.
 
+    Supports both Anthropic (Bedrock) and OpenAI providers.
     Returns (summary_text, total_tokens_used).
     """
     user_content = json.dumps(node_context, default=str)
 
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(**kwargs)
+        summary_text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens_used = (
+            (
+                (usage.prompt_tokens or 0)
+                + (usage.completion_tokens or 0)
+            )
+            if usage
+            else 0
+        )
+        return summary_text, tokens_used
+
+    # Anthropic / Bedrock path
     response = await client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -109,9 +138,10 @@ async def generate_summary(
 async def get_or_create_summary(
     ctx: ChatToolContext,
     node_fqn: str,
-    client: AsyncAnthropicBedrock,
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
     model: str,
     max_tokens: int,
+    ai_config: EffectiveAiConfig | None = None,
 ) -> dict[str, Any]:
     """Get cached summary or generate a new one.
 
@@ -156,6 +186,7 @@ async def get_or_create_summary(
         model=model,
         max_tokens=max_tokens,
         node_context=node_context,
+        ai_config=ai_config,
     )
 
     # Upsert via SQLAlchemy dialect-specific insert
@@ -191,3 +222,197 @@ async def get_or_create_summary(
         "model": model,
         "tokens_used": tokens_used,
     }
+
+
+TRACE_SUMMARY_SYSTEM_PROMPT = (
+    "You are an expert software architect analyzing a code "
+    "execution trace.\n"
+    "Describe the flow in 2-3 concise paragraphs:\n"
+    "- Name specific classes and methods\n"
+    "- State which architectural layers are involved\n"
+    "- Mention database tables touched and whether they are "
+    "read or written\n"
+    "- Note any patterns: fan-out, circular calls, "
+    "cross-layer shortcuts\n"
+    "Use markdown formatting. Be specific, not generic."
+)
+
+
+def compute_trace_hash(trace_context: dict[str, Any]) -> str:
+    """Compute SHA-256 hash of trace topology for caching."""
+    center = trace_context["center"]["fqn"]
+    up = sorted(n["fqn"] for n in trace_context["upstream"])
+    down = sorted(
+        n["fqn"] for n in trace_context["downstream"]
+    )
+    raw = f"{center}:{','.join(up)}:{','.join(down)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def generate_trace_summary_text(
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
+    model: str,
+    max_tokens: int,
+    trace_context: dict[str, Any],
+    ai_config: EffectiveAiConfig | None = None,
+) -> tuple[str, int]:
+    """Call the LLM to generate a trace flow summary.
+
+    Same dual-provider pattern as generate_summary().
+    Returns (summary_text, tokens_used).
+    """
+    user_content = json.dumps(trace_context, default=str)
+
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": TRACE_SUMMARY_SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(
+            **kwargs
+        )
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens = (
+            (
+                (usage.prompt_tokens or 0)
+                + (usage.completion_tokens or 0)
+            )
+            if usage
+            else 0
+        )
+        return text, tokens
+
+    # Anthropic / Bedrock path
+    response = await client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=TRACE_SUMMARY_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    text = response.content[0].text
+    tokens = (
+        response.usage.input_tokens
+        + response.usage.output_tokens
+    )
+    return text, tokens
+
+
+# ──────────────────────────────────────────────────────────────────
+# Trace Route Follow-up Chat
+# ──────────────────────────────────────────────────────────────────
+
+TRACE_CHAT_SYSTEM_PROMPT = (
+    "You are an expert software architect helping a developer "
+    "understand a specific code execution trace. You have been "
+    "given:\n"
+    "- The trace topology: upstream callers, downstream callees, "
+    "architectural layers, tables touched.\n"
+    "- A prior AI-generated summary of this trace (treat it as "
+    "established context).\n"
+    "- The developer's conversation history about this trace.\n\n"
+    "Answer their follow-up questions grounded in the trace "
+    "context. Rules:\n"
+    "1. Cite specific class/method names from the trace.\n"
+    "2. If the question isn't answerable from the trace alone, "
+    "say so and suggest what additional context would help.\n"
+    "3. Do not invent methods or tables not present in the trace.\n"
+    "4. Be concise but technical. Use markdown for formatting.\n"
+    "5. If the user asks about generic concepts, relate them back "
+    "to this specific trace when possible."
+)
+
+
+async def generate_trace_chat_reply(
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
+    model: str,
+    max_tokens: int,
+    trace_context: dict[str, Any],
+    summary_text: str | None,
+    history: list[dict[str, str]],
+    question: str,
+    ai_config: EffectiveAiConfig | None = None,
+) -> tuple[str, int]:
+    """Generate a follow-up answer grounded in the trace context.
+
+    Args:
+        client: Anthropic Bedrock or OpenAI async client.
+        model: Model identifier.
+        max_tokens: Response cap.
+        trace_context: Same structured trace topology used for the
+            summary. Serialized as JSON and injected as the first
+            user turn so the LLM treats it as durable context.
+        summary_text: Prior AI summary text, if any. Injected as
+            the first assistant turn so the model doesn't re-summarize.
+        history: Prior chat turns, oldest-first, as
+            [{"role": "user"|"assistant", "content": str}, ...].
+        question: The new user question.
+        ai_config: Provider config (temperature, etc).
+
+    Returns:
+        (answer_text, tokens_used)
+    """
+    context_json = json.dumps(trace_context, default=str)
+
+    context_primer_user = (
+        "Trace topology (JSON):\n"
+        f"```json\n{context_json}\n```"
+    )
+    context_primer_assistant = (
+        summary_text.strip()
+        if summary_text
+        else "Got it — I have the trace context. Ask your question."
+    )
+
+    # Assemble messages: context primer → prior history → new question
+    messages: list[dict[str, str]] = [
+        {"role": "user", "content": context_primer_user},
+        {"role": "assistant", "content": context_primer_assistant},
+    ]
+    for msg in history:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": question})
+
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": TRACE_CHAT_SYSTEM_PROMPT},
+                *messages,
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(**kwargs)
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens = (
+            (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
+            if usage
+            else 0
+        )
+        return text, tokens
+
+    # Anthropic / Bedrock path
+    response = await client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=TRACE_CHAT_SYSTEM_PROMPT,
+        messages=messages,
+    )
+    text = response.content[0].text
+    tokens = response.usage.input_tokens + response.usage.output_tokens
+    return text, tokens

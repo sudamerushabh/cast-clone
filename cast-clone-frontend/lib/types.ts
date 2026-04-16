@@ -264,6 +264,73 @@ export interface ImpactAnalysisResponse {
   affected: AffectedNode[];
 }
 
+// ── Phase 3: Trace Route ───────────────────────────────
+
+export interface TraceNode {
+  fqn: string;
+  name: string;
+  kind: string;
+  file: string | null;
+  language: string | null;
+  depth: number;
+  sequence: number;
+  direction: "upstream" | "downstream";
+  layer: "api" | "service" | "repository" | "database" | "other";
+}
+
+export interface TraceEdge {
+  source: string;
+  target: string;
+  type: string;
+  sequence: number | null;
+}
+
+export interface TraceRouteResponse {
+  center_fqn: string;
+  center_name: string;
+  center_kind: string;
+  center_layer: string;
+  max_depth: number;
+  upstream: TraceNode[];
+  downstream: TraceNode[];
+  edges: TraceEdge[];
+  upstream_count: number;
+  downstream_count: number;
+  layers_present: string[];
+}
+
+export interface TraceSummaryResponse {
+  fqn: string;
+  summary: string;
+  layers_involved: string[];
+  tables_touched: string[];
+  cached: boolean;
+  model: string | null;
+  tokens_used: number | null;
+}
+
+// ── Trace follow-up chat ────────────────────────────────
+
+export interface TraceChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  model: string | null;
+  tokens_used: number | null;
+}
+
+export interface TraceChatHistoryResponse {
+  fqn: string;
+  messages: TraceChatMessage[];
+}
+
+export interface TraceChatSendResponse {
+  fqn: string;
+  user_message: TraceChatMessage;
+  assistant_message: TraceChatMessage;
+}
+
 // ── Phase 3: Path Finder ────────────────────────────────
 
 export interface PathNode {
@@ -455,6 +522,8 @@ export interface RepositoryResponse {
   last_synced_at: string | null;
   created_at: string;
   projects: ProjectBranchResponse[];
+  billable_loc: number | null;
+  max_loc_branch: string | null;
 }
 
 export interface RepositoryListResponse {
@@ -590,6 +659,23 @@ export interface ActivityLogEntry {
   resource_id: string | null;
   details: Record<string, unknown> | null;
   created_at: string;
+}
+
+export interface ActivityActionCount {
+  action: string;
+  count: number;
+}
+
+export interface ActivityDailyCount {
+  date: string;
+  count: number;
+}
+
+export interface ActivityStatsResponse {
+  total: number;
+  by_action: ActivityActionCount[];
+  by_day: ActivityDailyCount[];
+  unique_users: number;
 }
 
 // ── Phase 5a: PR Analysis Types ──
@@ -766,4 +852,206 @@ export interface SavedViewListItem {
   author: { id: string; username: string };
   created_at: string;
   updated_at: string;
+}
+
+// ── License Management ──
+
+export type LicenseState =
+  | "UNLICENSED"
+  | "LICENSED_HEALTHY"
+  | "LICENSED_WARN"
+  | "LICENSED_GRACE"
+  | "LICENSED_BLOCKED";
+
+export interface LicenseStatusResponse {
+  state: LicenseState;
+  installation_id: string;
+  license_disabled: boolean;
+  tier: number | string | null;
+  loc_limit: number | null;
+  loc_used: number | null;
+  loc_breakdown: RepoLocBreakdown[];
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_organization: string | null;
+  issued_by: string | null;
+  expires_at: number | null;
+  issued_at: number | null;
+  notes: string | null;
+}
+
+export interface InstallationIdResponse {
+  installation_id: string;
+}
+
+export interface RepoLocBreakdown {
+  repository_id: string;
+  repo_full_name: string;
+  billable_loc: number;
+  max_branch: string | null;
+  branches: Record<string, number>;
+}
+
+// ─── Email config types ─────────────────────────────────────────────────────
+
+export interface EmailConfigResponse {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string; // "***" if stored, "" if not
+  smtp_use_tls: boolean;
+  from_address: string;
+  from_name: string;
+  recipients: string[];
+  flentas_bcc_enabled: boolean;
+  cadence: string; // "off" | "weekly" | "monthly"
+  cadence_day: number;
+  cadence_hour_utc: number;
+}
+
+export interface EmailConfigUpdateRequest {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_use_tls: boolean;
+  from_address: string;
+  from_name: string;
+  recipients: string[];
+  flentas_bcc_enabled: boolean;
+  cadence: string;
+  cadence_day: number;
+  cadence_hour_utc: number;
+}
+
+export interface TestSendResponse {
+  status: string;
+  error: string | null;
+}
+
+// ─── System Info types ─────────────────────────────────────────────────────
+
+export interface SystemHealthInfo {
+  status: "healthy" | "degraded";
+  services: Record<string, "up" | "down">;
+}
+
+export interface SystemInstanceInfo {
+  installation_id: string | null;
+  auth_disabled: boolean;
+  license_disabled: boolean;
+  python_version: string;
+  os: string;
+  cpu_count: number | null;
+}
+
+export interface SystemAnalysisConfig {
+  total_timeout_seconds: number;
+  scip_timeout_seconds: number;
+  git_clone_timeout_seconds: number;
+  max_traversal_depth: number;
+  treesitter_workers: number;
+  repo_storage_path: string;
+}
+
+export interface SystemAiConfig {
+  pr_analysis_model: string;
+  chat_model: string;
+  chat_timeout_seconds: number;
+  chat_max_response_tokens: number;
+  mcp_port: number;
+}
+
+export interface SystemConnectionsInfo {
+  neo4j_uri: string;
+  redis_url: string;
+  minio_endpoint: string;
+  database_host: string;
+}
+
+export interface SystemInfoResponse {
+  health: SystemHealthInfo;
+  instance: SystemInstanceInfo;
+  analysis: SystemAnalysisConfig;
+  ai: SystemAiConfig;
+  connections: SystemConnectionsInfo;
+}
+
+// ─── AI Configuration types ──────────────────────────────────────────────────
+
+export interface AiConfigResponse {
+  provider: "bedrock" | "openai";
+  // Bedrock
+  aws_region: string;
+  bedrock_use_iam_role: boolean;
+  aws_access_key_id: string | null;
+  has_aws_secret_key: boolean;
+  // OpenAI
+  has_openai_api_key: boolean;
+  openai_base_url: string | null;
+  // Model assignments
+  chat_model: string;
+  pr_analysis_model: string;
+  summary_model: string;
+  // Advanced params
+  temperature: number;
+  top_p: number;
+  max_response_tokens: number;
+  thinking_budget_tokens: number;
+  chat_timeout_seconds: number;
+  max_tool_calls: number;
+  // Cost
+  cost_input_per_mtok: number;
+  cost_output_per_mtok: number;
+}
+
+export interface AiConfigUpdateRequest {
+  provider: string;
+  aws_region: string;
+  bedrock_use_iam_role: boolean;
+  aws_access_key_id: string | null;
+  aws_secret_access_key: string | null;
+  openai_api_key: string | null;
+  openai_base_url: string | null;
+  chat_model: string;
+  pr_analysis_model: string;
+  summary_model: string;
+  temperature: number;
+  top_p: number;
+  max_response_tokens: number;
+  thinking_budget_tokens: number;
+  chat_timeout_seconds: number;
+  max_tool_calls: number;
+  cost_input_per_mtok: number;
+  cost_output_per_mtok: number;
+}
+
+export interface AiModelInfo {
+  model_id: string;
+  name: string;
+  provider_name: string;
+  supports_streaming: boolean;
+  supports_tool_use: boolean;
+}
+
+export interface AiModelsListResponse {
+  provider: string;
+  models: AiModelInfo[];
+}
+
+export interface AiTestConnectionRequest {
+  provider: string;
+  aws_region: string;
+  bedrock_use_iam_role: boolean;
+  aws_access_key_id: string | null;
+  aws_secret_access_key: string | null;
+  openai_api_key: string | null;
+  openai_base_url: string | null;
+}
+
+export interface AiTestConnectionResponse {
+  success: boolean;
+  message: string;
 }

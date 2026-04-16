@@ -1,4 +1,4 @@
-"""FastMCP server — exposes CodeLens architecture tools via MCP protocol.
+"""FastMCP server — exposes ChangeSafe architecture tools via MCP protocol.
 
 This is a thin wrapper (~200 lines) over the shared tool functions in
 app.ai.tools. Each @mcp.tool() decorated function builds a ChatToolContext
@@ -32,7 +32,7 @@ from app.services.postgres import close_postgres, get_background_session, init_p
 logger = structlog.get_logger(__name__)
 
 _settings = get_settings()
-mcp = FastMCP("codelens", host="0.0.0.0", port=_settings.mcp_port)
+mcp = FastMCP("changesafe", host="0.0.0.0", port=_settings.mcp_port)
 
 # Module-level state initialized during server startup
 _graph_store: Neo4jGraphStore | None = None
@@ -81,7 +81,7 @@ def _build_context(app_name: str = "", repo_path: str | None = None) -> ChatTool
 
 @mcp.tool()
 async def list_applications() -> list[dict]:
-    """List all analyzed applications in CodeLens with languages and module count."""
+    """List all analyzed applications in ChangeSafe with languages and module count."""
     ctx = _build_context()
     return await tools.list_applications(ctx)
 

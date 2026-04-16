@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import require_license_writable
 from app.main import app
 from app.services.postgres import get_session
 
@@ -28,9 +29,14 @@ def override_get_session(mock_session):
     async def _override():
         yield mock_session
 
+    async def _override_license() -> None:
+        return None
+
     app.dependency_overrides[get_session] = _override
+    app.dependency_overrides[require_license_writable] = _override_license
     yield
     app.dependency_overrides.pop(get_session, None)
+    app.dependency_overrides.pop(require_license_writable, None)
 
 
 @pytest.fixture

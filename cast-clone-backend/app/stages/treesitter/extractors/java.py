@@ -113,35 +113,49 @@ def _get_annotations(node: Node) -> list[str]:
     return annotations
 
 
-def _extract_first_string_arg(args_node: Node) -> str | None:
-    """Return the first string value from an annotation_argument_list.
+def _extract_annotation_value(val_node: Node) -> str | list[str] | None:
+    """Extract a value from an annotation element_value_pair or bare argument.
 
-    Handles:
-    - @Annotation("value")          → bare string literal
-    - @Annotation(value = "value")  → element_value_pair with key 'value'
-    - @Annotation(path = "value")   → element_value_pair with key 'path'
+    Handles string literals, boolean/integer/enum literals, and array
+    initializers (returning a list of strings for arrays).
     """
-    for child in args_node.children:
-        if child.type == "string_literal":
-            text = _node_text(child)
-            if text.startswith('"') and text.endswith('"'):
-                return text[1:-1]
-        elif child.type == "element_value_pair":
-            key_node = child.child_by_field_name("key")
-            val_node = child.child_by_field_name("value")
-            if key_node and val_node and _node_text(key_node) in ("value", "path"):
-                val_text = _node_text(val_node)
-                if val_text.startswith('"') and val_text.endswith('"'):
-                    return val_text[1:-1]
-    return None
+    if val_node.type == "string_literal":
+        text = _node_text(val_node)
+        if text.startswith('"') and text.endswith('"'):
+            return text[1:-1]
+        return text
+    if val_node.type == "element_value_array_initializer":
+        # e.g., topics = {"orders", "payments"}
+        values: list[str] = []
+        for child in val_node.children:
+            extracted = _extract_annotation_value(child)
+            if isinstance(extracted, str):
+                values.append(extracted)
+            elif isinstance(extracted, list):
+                values.extend(extracted)
+        return values if values else None
+    if val_node.type in (
+        "true", "false", "decimal_integer_literal",
+        "decimal_floating_point_literal", "identifier",
+        "field_access", "scoped_identifier",
+    ):
+        return _node_text(val_node)
+    # Fallback: return raw text for other expression types
+    text = _node_text(val_node).strip()
+    return text if text else None
 
 
 def _get_annotation_args(node: Node) -> dict[str, str]:
-    """Extract first string argument for each annotation on a declaration node.
+    """Extract primary string argument for each annotation.
 
-    Returns a dict mapping annotation name -> first string argument.
+    Returns a dict mapping annotation name -> primary string value.
+    This is backward-compatible: always returns strings.
+
     Example: @RequestMapping("/api") -> {"RequestMapping": "/api"}
-    Marker annotations (@Override) are omitted (no arguments).
+    For multi-param, extracts "value" or first string:
+        @Column(name="user_id") -> {"Column": "user_id"}
+
+    Marker annotations (@Override) are omitted.
     """
     args: dict[str, str] = {}
     for child in node.children:
@@ -155,10 +169,86 @@ def _get_annotation_args(node: Node) -> dict[str, str]:
                     args_node = mod_child.child_by_field_name("arguments")
                     if args_node is None:
                         continue
-                    value = _extract_first_string_arg(args_node)
+
+                    bare_value: str | None = None
+                    first_pair_value: str | None = None
+
+                    for arg_child in args_node.children:
+                        if arg_child.type == "string_literal":
+                            text = _node_text(arg_child)
+                            if text.startswith('"') and text.endswith('"'):
+                                bare_value = text[1:-1]
+                        elif arg_child.type == "element_value_pair":
+                            key_node = arg_child.child_by_field_name("key")
+                            val_node = arg_child.child_by_field_name("value")
+                            if key_node and val_node:
+                                k = _node_text(key_node)
+                                v = _extract_annotation_value(val_node)
+                                if k in ("value", "path") and isinstance(v, str):
+                                    bare_value = v
+                                elif first_pair_value is None and isinstance(v, str):
+                                    first_pair_value = v
+
+                    value = bare_value or first_pair_value
                     if value is not None:
                         args[ann_name] = value
     return args
+
+
+AnnotationParams = dict[str, str | list[str] | None]
+
+
+def _get_annotation_params(
+    node: Node,
+) -> dict[str, AnnotationParams]:
+    """Extract ALL named parameters for each annotation.
+
+    Returns a dict mapping annotation name -> dict of all params.
+
+    Example:
+        @KafkaListener(topics={"a","b"}, groupId="g")
+        -> {"KafkaListener": {"topics": ["a", "b"], "groupId": "g"}}
+
+        @Scheduled(fixedRate=5000)
+        -> {"Scheduled": {"fixedRate": "5000"}}
+
+        @Column(name="user_id", nullable=false)
+        -> {"Column": {"name": "user_id", "nullable": "false"}}
+
+    Single-value annotations store the value under the "value" key:
+        @RequestMapping("/api")
+        -> {"RequestMapping": {"value": "/api"}}
+    """
+    result: dict[str, AnnotationParams] = {}
+    for child in node.children:
+        if child.type == "modifiers":
+            for mod_child in child.children:
+                if mod_child.type == "annotation":
+                    name_node = mod_child.child_by_field_name("name")
+                    if name_node is None:
+                        continue
+                    ann_name = _node_text(name_node)
+                    args_node = mod_child.child_by_field_name("arguments")
+                    if args_node is None:
+                        continue
+
+                    params: AnnotationParams = {}
+                    for arg_child in args_node.children:
+                        if arg_child.type == "element_value_pair":
+                            key_node = arg_child.child_by_field_name("key")
+                            val_node = arg_child.child_by_field_name("value")
+                            if key_node and val_node:
+                                extracted = _extract_annotation_value(val_node)
+                                if extracted is not None:
+                                    params[_node_text(key_node)] = extracted
+                        elif arg_child.type == "string_literal":
+                            text = _node_text(arg_child)
+                            if text.startswith('"') and text.endswith('"'):
+                                params["value"] = text[1:-1]
+
+                    if params:
+                        result[ann_name] = params
+    return result
 
 
 def _visibility_from_modifiers(modifiers: list[str]) -> str:
@@ -496,6 +586,7 @@ class JavaExtractor:
             modifiers = _get_modifiers(class_node)
             annotations = _get_annotations(class_node)
             annotation_args = _get_annotation_args(class_node)
+            annotation_params = _get_annotation_params(class_node)
 
             properties: dict[str, Any] = {
                 "visibility": _visibility_from_modifiers(modifiers),
@@ -505,6 +596,8 @@ class JavaExtractor:
                 properties["annotations"] = annotations
             if annotation_args:
                 properties["annotation_args"] = annotation_args
+            if annotation_params:
+                properties["annotation_params"] = annotation_params
 
             nodes.append(
                 GraphNode(
@@ -647,6 +740,7 @@ class JavaExtractor:
             modifiers = _get_modifiers(method_node)
             annotations = _get_annotations(method_node)
             annotation_args = _get_annotation_args(method_node)
+            annotation_params = _get_annotation_params(method_node)
 
             # Return type
             type_node = method_node.child_by_field_name("type")
@@ -669,6 +763,8 @@ class JavaExtractor:
                 properties["annotations"] = annotations
             if annotation_args:
                 properties["annotation_args"] = annotation_args
+            if annotation_params:
+                properties["annotation_params"] = annotation_params
 
             nodes.append(
                 GraphNode(
@@ -781,6 +877,8 @@ class JavaExtractor:
 
             modifiers = _get_modifiers(field_node)
             annotations = _get_annotations(field_node)
+            annotation_args = _get_annotation_args(field_node)
+            annotation_params = _get_annotation_params(field_node)
 
             type_node = field_node.child_by_field_name("type")
             field_type = _node_text(type_node) if type_node is not None else "unknown"
@@ -793,6 +891,10 @@ class JavaExtractor:
             }
             if annotations:
                 properties["annotations"] = annotations
+            if annotation_args:
+                properties["annotation_args"] = annotation_args
+            if annotation_params:
+                properties["annotation_params"] = annotation_params
 
             nodes.append(
                 GraphNode(

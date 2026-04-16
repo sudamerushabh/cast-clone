@@ -256,7 +256,7 @@ async def write_to_neo4j(
     edges_written = 0
     for i in range(0, total_edges, batch_size):
         batch = all_edges[i : i + batch_size]
-        edges_written += await store.write_edges_batch(batch)
+        edges_written += await store.write_edges_batch(batch, app_name=project_id)
         pct = 45 + int(50 * min(i + batch_size, total_edges) / max(total_edges, 1))
         await _report(pct)
 

@@ -20,9 +20,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings
-from app.models.db import AnalysisRun, GitConnector, Project, Repository, User
+from app.models.db import (
+    AnalysisRun,
+    GitConnector,
+    Project,
+    Repository,
+    RepositoryLocTracking,
+    User,
+)
+from app.services.activity import log_activity
 
 # Reusable eager-load option: Repository → projects → analysis_runs
 _REPO_LOAD = (
@@ -75,7 +83,10 @@ def _ensure_repo_access(repo: Repository, user: User) -> None:
         )
 
 
-def _repo_to_response(repo: Repository) -> RepositoryResponse:
+def _repo_to_response(
+    repo: Repository,
+    tracking: RepositoryLocTracking | None = None,
+) -> RepositoryResponse:
     projects = []
     for p in repo.projects:
         # Find latest completed run for this project
@@ -114,6 +125,8 @@ def _repo_to_response(repo: Repository) -> RepositoryResponse:
         last_synced_at=repo.last_synced_at,
         created_at=repo.created_at,
         projects=projects,
+        billable_loc=tracking.billable_loc if tracking else None,
+        max_loc_branch=tracking.max_loc_branch_name if tracking else None,
     )
 
 
@@ -167,7 +180,10 @@ async def _background_clone(
 
 
 @router.post(
-    "", response_model=RepositoryResponse, status_code=status.HTTP_201_CREATED
+    "",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def create_repository(
     body: RepositoryCreate,
@@ -247,11 +263,10 @@ async def create_repository(
         target_dir,
     )
 
-    await logger.ainfo(
-        "repository_created",
-        repo_id=repo.id,
-        full_name=remote_repo.full_name,
-        branches=body.branches,
+    await log_activity(
+        session, "repository.created", user_id=user.id,
+        resource_type="repository", resource_id=repo.id,
+        details={"full_name": remote_repo.full_name, "branches": body.branches},
     )
     return _repo_to_response(repo)
 
@@ -271,8 +286,26 @@ async def list_repositories(
     query = query.order_by(Repository.created_at.desc())
     result = await session.execute(query)
     repos = result.scalars().all()
+
+    # Bulk-load LOC tracking for all repos
+    repo_ids = [r.id for r in repos]
+    if repo_ids:
+        tracking_result = await session.execute(
+            select(RepositoryLocTracking).where(
+                RepositoryLocTracking.repository_id.in_(repo_ids)
+            )
+        )
+        tracking_map = {
+            t.repository_id: t for t in tracking_result.scalars().all()
+        }
+    else:
+        tracking_map = {}
+
     return RepositoryListResponse(
-        repositories=[_repo_to_response(r) for r in repos],
+        repositories=[
+            _repo_to_response(r, tracking_map.get(r.id))
+            for r in repos
+        ],
         total=len(repos),
     )
 
@@ -296,10 +329,20 @@ async def get_repository(
             detail=f"Repository {repo_id} not found",
         )
     _ensure_repo_access(repo, user)
-    return _repo_to_response(repo)
+    tracking_result = await session.execute(
+        select(RepositoryLocTracking).where(
+            RepositoryLocTracking.repository_id == repo_id
+        )
+    )
+    tracking = tracking_result.scalar_one_or_none()
+    return _repo_to_response(repo, tracking)
 
 
-@router.delete("/{repo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{repo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_license_writable)],
+)
 async def delete_repository(
     repo_id: str,
     user: User = Depends(get_current_user),
@@ -317,8 +360,20 @@ async def delete_repository(
         )
     _ensure_repo_access(repo, user)
     local_path = repo.local_path
+    repo_name = repo.repo_full_name
     await session.delete(repo)
     await session.commit()
+
+    await log_activity(
+        session, "repository.deleted", user_id=user.id,
+        resource_type="repository", resource_id=repo_id,
+        details={"full_name": repo_name},
+    )
+
+    # CASCADE deleted the tracking row; invalidate cache so cumulative_loc()
+    # picks up the removal.
+    from app.services.loc_usage import invalidate_cumulative_loc_cache
+    invalidate_cumulative_loc_cache()
 
     try:
         await cleanup_repo_dirs(local_path)
@@ -356,6 +411,7 @@ async def sync_repository(
     repo_id: str,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
 ) -> CloneStatusResponse:
     """Pull latest changes for a cloned repository."""
     result = await session.execute(
@@ -379,6 +435,11 @@ async def sync_repository(
         repo.last_synced_at = datetime.now(UTC)
         repo.clone_error = None
         await session.commit()
+        await log_activity(
+            session, "repository.synced", user_id=user.id,
+            resource_type="repository", resource_id=repo_id,
+            details={"full_name": repo.repo_full_name},
+        )
     except Exception as exc:
         repo.clone_error = str(exc)
         await session.commit()
@@ -397,6 +458,7 @@ async def sync_repository(
     "/{repo_id}/branches",
     response_model=ProjectBranchResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
 )
 async def add_branch(
     repo_id: str,
@@ -435,6 +497,20 @@ async def add_branch(
         branch=body.branch,
     )
     session.add(project)
+
+    # Clone the branch directory from the main repo clone
+    if repo.local_path and repo.clone_status == "cloned":
+        try:
+            from app.services.clone import fetch_all_refs
+            await fetch_all_refs(repo.local_path)
+            await clone_branch_local(repo.local_path, body.branch, branch_dir)
+        except Exception as exc:
+            await logger.awarning(
+                "add_branch_clone_failed",
+                branch=body.branch,
+                error=str(exc),
+            )
+
     await session.commit()
     await session.refresh(project)
 
@@ -443,6 +519,75 @@ async def add_branch(
         branch=project.branch,
         status=project.status,
     )
+
+
+@router.delete(
+    "/{repo_id}/projects/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_branch_project(
+    repo_id: str,
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Delete a branch project, its graph data, analysis runs, and clone directory."""
+    result = await session.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.repository_id == repo_id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Branch project {project_id} not found in repository {repo_id}",
+        )
+
+    source_path = project.source_path
+
+    # Clear graph data from Neo4j
+    try:
+        from app.services.neo4j import Neo4jGraphStore, get_driver
+
+        store = Neo4jGraphStore(get_driver())
+        await store.clear_project(project_id)
+        await logger.ainfo(
+            "branch_graph_cleared", project_id=project_id, branch=project.branch
+        )
+    except Exception:
+        await logger.awarning(
+            "branch_graph_clear_failed",
+            project_id=project_id,
+            exc_info=True,
+        )
+
+    # Delete DB record (cascades to analysis_runs)
+    await session.delete(project)
+    await session.commit()
+
+    # Recalculate repo LOC tracking after branch removal
+    from app.services.loc_tracking import recalculate_repo_loc
+    await recalculate_repo_loc(repo_id, session)
+
+    # Remove branch clone directory from disk
+    if source_path:
+        import shutil
+        from pathlib import Path
+
+        branch_dir = Path(source_path)
+        if branch_dir.exists() and branch_dir.is_dir():
+            try:
+                shutil.rmtree(branch_dir)
+                await logger.ainfo("branch_dir_removed", path=source_path)
+            except Exception:
+                await logger.awarning(
+                    "branch_dir_cleanup_failed",
+                    path=source_path,
+                    exc_info=True,
+                )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{repo_id}/projects", response_model=list[ProjectBranchResponse])

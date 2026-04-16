@@ -7,19 +7,29 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_accessible_project, get_current_user
+from app.api.dependencies import (
+    get_accessible_project,
+    get_current_user,
+    require_license_writable,
+)
 from app.models.db import Project, Repository, User
 from app.schemas.projects import (
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 
-@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_license_writable)],
+)
 async def create_project(
     body: ProjectCreate,
     user: User = Depends(get_current_user),
@@ -33,6 +43,12 @@ async def create_project(
     session.add(project)
     await session.commit()
     await session.refresh(project)
+
+    await log_activity(
+        session, "project.created", user_id=user.id,
+        resource_type="project", resource_id=project.id,
+        details={"name": body.name},
+    )
 
     return ProjectResponse(
         id=project.id,
@@ -105,12 +121,26 @@ async def get_project(
     )
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_license_writable)],
+)
 async def delete_project(
+    project_id: str,
     session: AsyncSession = Depends(get_session),
     project: Project = Depends(get_accessible_project),
+    user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a project by ID."""
+    project_name = project.name
     await session.delete(project)
     await session.commit()
+
+    await log_activity(
+        session, "project.deleted", user_id=user.id,
+        resource_type="project", resource_id=project_id,
+        details={"name": project_name},
+    )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)

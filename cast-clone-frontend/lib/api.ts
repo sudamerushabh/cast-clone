@@ -16,6 +16,8 @@ import type {
   CreateProjectRequest,
   CreateRepositoryRequest,
   DeadCodeResponse,
+  EmailConfigResponse,
+  EmailConfigUpdateRequest,
   EvolutionTimelineResponse,
   GitConfig,
   GitConfigCreateResponse,
@@ -41,6 +43,7 @@ import type {
   RemoteRepoResponse,
   RepositoryListResponse,
   RepositoryResponse,
+  TestSendResponse,
   TransactionDetailResponse,
   TransactionListResponse,
   LoginResponse,
@@ -54,10 +57,23 @@ import type {
   SavedViewResponse,
   SavedViewListItem,
   ActivityLogEntry,
+  ActivityStatsResponse,
   WebhookUrlInfo,
   ApiKeyResponse,
   ApiKeyCreateResponse,
   UsageSummaryResponse,
+  LicenseStatusResponse,
+  InstallationIdResponse,
+  SystemInfoResponse,
+  AiConfigResponse,
+  AiConfigUpdateRequest,
+  AiModelsListResponse,
+  AiTestConnectionRequest,
+  AiTestConnectionResponse,
+  TraceRouteResponse,
+  TraceSummaryResponse,
+  TraceChatHistoryResponse,
+  TraceChatSendResponse,
 } from "./types";
 
 const BASE_URL =
@@ -93,7 +109,7 @@ async function apiFetch<T>(
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
   const { headers: callerHeaders, ...restOptions } = options;
-  const needsContentType = options.body !== undefined && options.body !== null;
+  const needsContentType = options.body !== undefined && options.body !== null && !(options.body instanceof FormData);
   const res = await fetch(url, {
     headers: {
       ...(needsContentType ? { "Content-Type": "application/json" } : {}),
@@ -316,6 +332,66 @@ export async function getImpactAnalysis(
   );
 }
 
+export async function getTraceRoute(
+  projectId: string,
+  nodeFqn: string,
+  maxDepth: number = 5,
+): Promise<TraceRouteResponse> {
+  const params = new URLSearchParams({
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<TraceRouteResponse>(
+    `/api/v1/analysis/${projectId}/trace/${encodeURIComponent(nodeFqn)}?${params}`,
+  );
+}
+
+export async function getTraceSummary(
+  projectId: string,
+  nodeFqn: string,
+  maxDepth: number = 5,
+): Promise<TraceSummaryResponse> {
+  const params = new URLSearchParams({
+    max_depth: String(maxDepth),
+  });
+  return apiFetch<TraceSummaryResponse>(
+    `/api/v1/analysis/${projectId}/trace-summary/${encodeURIComponent(nodeFqn)}?${params}`,
+  );
+}
+
+export async function getTraceChatHistory(
+  projectId: string,
+  nodeFqn: string,
+): Promise<TraceChatHistoryResponse> {
+  return apiFetch<TraceChatHistoryResponse>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+  );
+}
+
+export async function sendTraceChatMessage(
+  projectId: string,
+  nodeFqn: string,
+  question: string,
+  maxDepth: number = 5,
+): Promise<TraceChatSendResponse> {
+  return apiFetch<TraceChatSendResponse>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ question, max_depth: maxDepth }),
+    },
+  );
+}
+
+export async function clearTraceChatHistory(
+  projectId: string,
+  nodeFqn: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function getShortestPath(
   projectId: string,
   fromFqn: string,
@@ -455,6 +531,15 @@ export async function addBranch(
   return apiFetch<ProjectBranchResponse>(`/api/v1/repositories/${repoId}/branches`, {
     method: "POST",
     body: JSON.stringify({ branch }),
+  });
+}
+
+export async function deleteBranchProject(
+  repoId: string,
+  projectId: string,
+): Promise<void> {
+  return apiFetch<void>(`/api/v1/repositories/${repoId}/projects/${projectId}`, {
+    method: "DELETE",
   });
 }
 
@@ -691,12 +776,21 @@ export async function getActivityFeed(params?: {
   limit?: number;
   user_id?: string;
   action?: string;
+  category?: string;
+  days?: number;
 }): Promise<ActivityLogEntry[]> {
   const searchParams = new URLSearchParams();
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.user_id) searchParams.set("user_id", params.user_id);
   if (params?.action) searchParams.set("action", params.action);
+  if (params?.category) searchParams.set("category", params.category);
+  if (params?.days) searchParams.set("days", String(params.days));
   return apiFetch<ActivityLogEntry[]>(`/api/v1/activity?${searchParams}`);
+}
+
+export async function getActivityStats(days?: number): Promise<ActivityStatsResponse> {
+  const params = days ? `?days=${days}` : "";
+  return apiFetch<ActivityStatsResponse>(`/api/v1/activity/stats${params}`);
 }
 
 // ── Phase 5a: PR Analysis API (repository-level) ──
@@ -901,4 +995,84 @@ export async function getAiUsageSummary(
   return apiFetch<UsageSummaryResponse>(
     `/api/v1/admin/ai-usage?days=${days}`,
   );
+}
+
+// ── License Management ──
+
+export async function getLicenseStatus(): Promise<LicenseStatusResponse> {
+  return apiFetch<LicenseStatusResponse>("/api/v1/license/status");
+}
+
+export async function getInstallationId(): Promise<InstallationIdResponse> {
+  return apiFetch<InstallationIdResponse>("/api/v1/license/installation-id");
+}
+
+export async function uploadLicense(file: File): Promise<LicenseStatusResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<LicenseStatusResponse>("/api/v1/license/upload", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+// ── System Info ──
+
+export async function getSystemInfo(): Promise<SystemInfoResponse> {
+  return apiFetch<SystemInfoResponse>("/api/v1/system/info");
+}
+
+// ── Email Config ──
+
+export async function getEmailConfig(): Promise<EmailConfigResponse> {
+  return apiFetch<EmailConfigResponse>("/api/v1/email/config");
+}
+
+export async function updateEmailConfig(data: EmailConfigUpdateRequest): Promise<EmailConfigResponse> {
+  return apiFetch<EmailConfigResponse>("/api/v1/email/config", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testSendEmail(to: string): Promise<TestSendResponse> {
+  return apiFetch<TestSendResponse>("/api/v1/email/test-send", {
+    method: "POST",
+    body: JSON.stringify({ to }),
+  });
+}
+
+// ── AI Config ──
+
+export async function getAiConfig(): Promise<AiConfigResponse> {
+  return apiFetch<AiConfigResponse>("/api/v1/ai/config");
+}
+
+export async function updateAiConfig(data: AiConfigUpdateRequest): Promise<AiConfigResponse> {
+  return apiFetch<AiConfigResponse>("/api/v1/ai/config", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getAiModels(): Promise<AiModelsListResponse> {
+  return apiFetch<AiModelsListResponse>("/api/v1/ai/models");
+}
+
+export async function testAiConnection(data: AiTestConnectionRequest): Promise<AiTestConnectionResponse> {
+  return apiFetch<AiTestConnectionResponse>("/api/v1/ai/test-connection", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ── Health Check ──
+
+export interface HealthResponse {
+  status: "healthy" | "unhealthy";
+  services: Record<string, "up" | "down">;
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  return apiFetch<HealthResponse>("/health");
 }

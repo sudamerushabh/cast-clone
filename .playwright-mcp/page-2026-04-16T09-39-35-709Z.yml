@@ -1,0 +1,102 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - link "CodeLens" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - img [ref=e5]
+        - generic [ref=e10]: CodeLens
+      - navigation "Breadcrumb" [ref=e11]:
+        - generic [ref=e12]: /
+        - link "Repositories" [ref=e13] [cursor=pointer]:
+          - /url: /repositories
+        - generic [ref=e14]: /
+        - generic [ref=e15]: 3110ce26-22af-4a43-86be-6c59f9e71364
+      - button "anonymous" [ref=e64]:
+        - img
+        - generic [ref=e65]: anonymous
+        - img
+      - button "Toggle theme" [ref=e16]:
+        - img
+    - generic [ref=e17]:
+      - navigation "Global navigation" [ref=e18]:
+        - generic [ref=e19]:
+          - link "Home" [ref=e20] [cursor=pointer]:
+            - /url: /
+            - img [ref=e21]
+            - generic [ref=e26]: Home
+          - link "Repositories" [ref=e27] [cursor=pointer]:
+            - /url: /repositories
+            - img [ref=e28]
+            - generic [ref=e33]: Repositories
+          - link "Connectors" [ref=e34] [cursor=pointer]:
+            - /url: /connectors
+            - img [ref=e35]
+            - generic [ref=e39]: Connectors
+          - link "Settings" [ref=e40] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e41]
+            - generic [ref=e44]: Settings
+        - button "Collapse navigation" [ref=e46]:
+          - img [ref=e47]
+          - generic [ref=e49]: Collapse
+      - main [ref=e50]:
+        - generic [ref=e66]:
+          - generic [ref=e67]:
+            - generic [ref=e68]:
+              - heading "sudamerushabh/Spring-Boot-Application-Template" [level=1] [ref=e69]
+              - paragraph [ref=e70]: Spring Boot Web App, Flyway, MySQL, H2DB, Bootstrap, Thymeleaf, JWT, Swagger, API Rate Limiting, Docker, RBAC, i18n
+            - button "Sync" [ref=e71]:
+              - img
+              - text: Sync
+          - heading "Branches" [level=2] [ref=e72]
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - generic [ref=e76]:
+                - img [ref=e77]
+                - link "master" [ref=e81] [cursor=pointer]:
+                  - /url: /repositories/3110ce26-22af-4a43-86be-6c59f9e71364/master
+                - generic [ref=e82]: analyzed
+                - button "Delete branch" [ref=e83]:
+                  - img [ref=e84]
+              - generic [ref=e88]:
+                - generic [ref=e89]: 794 nodes
+                - generic [ref=e90]: 3319 edges
+                - generic [ref=e91]: Analyzed 4/16/2026
+            - generic [ref=e94]:
+              - img [ref=e95]
+              - link "feature/audit-log-api" [ref=e99] [cursor=pointer]:
+                - /url: /repositories/3110ce26-22af-4a43-86be-6c59f9e71364/feature%2Faudit-log-api
+              - generic [ref=e100]: failed
+              - button "Delete branch" [ref=e101]:
+                - img [ref=e102]
+            - button "Add Branch" [ref=e105]:
+              - img [ref=e106]
+              - generic [ref=e107]: Add Branch
+          - heading "Pull Requests" [level=2] [ref=e109]:
+            - img [ref=e110]
+            - text: Pull Requests
+          - generic [ref=e115]:
+            - generic [ref=e116]:
+              - img [ref=e117]
+              - generic [ref=e121]: PR Analysis Active
+              - generic [ref=e122]: "|"
+              - generic [ref=e123]: github
+              - generic [ref=e124]: "|"
+              - generic [ref=e125]: All branches
+              - generic [ref=e126]: "|"
+              - generic [ref=e127] [cursor=pointer]:
+                - checkbox "PR comments" [checked] [ref=e128]
+                - generic [ref=e129]: PR comments
+            - generic [ref=e130]:
+              - button "Setup guide" [ref=e131]:
+                - img [ref=e132]
+                - text: Setup guide
+              - button "Disable" [ref=e135]:
+                - img [ref=e136]
+                - text: Disable
+          - generic [ref=e139]: No pull request analyses yet.
+        - button "Open AI chat" [ref=e140]:
+          - img
+  - button "Open Next.js Dev Tools" [ref=e58] [cursor=pointer]:
+    - img [ref=e59]
+  - alert [ref=e62]

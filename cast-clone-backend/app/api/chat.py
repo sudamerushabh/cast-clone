@@ -17,6 +17,7 @@ from app.api.dependencies import get_current_user
 from app.config import Settings, get_settings
 from app.models.db import Project, User
 from app.schemas.chat import ChatRequest
+from app.services.ai_provider import get_ai_config
 from app.services.neo4j import Neo4jGraphStore, get_driver
 from app.services.postgres import get_session
 
@@ -118,6 +119,8 @@ async def chat(
         db_session=session,
     )
 
+    ai_config = await get_ai_config(session)
+
     async def event_generator():
         async with user_lock:
             try:
@@ -126,6 +129,7 @@ async def chat(
                     message=body.message,
                     history=body.history,
                     system_prompt=system_prompt,
+                    ai_config=ai_config,
                 ):
                     if await request.is_disconnected():
                         break

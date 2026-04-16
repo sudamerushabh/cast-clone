@@ -30,6 +30,11 @@ dependencies = [
     "mcp[cli]>=1.25,<2",
     "alembic>=1.18.4",
     "psycopg2-binary>=2.9.11",
+    "pyjwt[crypto]>=2.12.1",
+    "aiosmtplib>=2.0",
+    "apscheduler>=3.10,<4",
+    "jinja2>=3.1",
+    "openai>=2.32.0",
 ]
 
 [dependency-groups]
@@ -41,6 +46,7 @@ dev = [
     "httpx",
     "testcontainers>=4.14.1",
     "respx>=0.22.0",
+    "aiosqlite>=0.22.1",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,59 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - heading "ChangeSafe License Portal" [level=1] [ref=e3]
+    - generic [ref=e16]:
+      - generic [ref=e17]: rushabh.sudame@flentas.com
+      - button "Sign Out" [ref=e18] [cursor=pointer]
+  - generic [ref=e20]:
+    - heading "Sign License" [level=2] [ref=e21]
+    - generic [ref=e50]: License signed successfully.
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24]: Installation ID
+        - textbox "Installation ID" [ref=e25]:
+          - /placeholder: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+          - text: 1faeed36-7ba8-4c6e-8571-70c89e4ee019
+      - generic [ref=e26]:
+        - generic [ref=e27]: Customer Name
+        - textbox "Customer Name" [ref=e28]: Rushabh Sudame
+      - generic [ref=e29]:
+        - generic [ref=e30]: Customer Email
+        - textbox "Customer Email" [ref=e31]: rushabh.sudame@flentas.com
+      - generic [ref=e32]:
+        - generic [ref=e33]: Customer Organization
+        - textbox "Customer Organization" [ref=e34]: Flentas Technologies
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: Tier
+          - combobox "Tier" [ref=e38]:
+            - option "Trial (50k LOC, 30 days)"
+            - option "Tier 1 — Up to 250k LOC ($6,000/yr)"
+            - option "Tier 2 — Up to 500k LOC ($10,800/yr)" [selected]
+            - option "Tier 3 — Up to 1M LOC ($19,200/yr)"
+            - option "Tier 4 — Up to 2M LOC ($33,600/yr)"
+            - option "Tier 5 — 2M+ LOC (Custom)"
+        - generic [ref=e39]:
+          - generic [ref=e40]: LOC Limit
+          - spinbutton "LOC Limit" [ref=e41]: "500000"
+      - generic [ref=e42]:
+        - generic [ref=e43]: Expires In Days
+        - spinbutton "Expires In Days" [ref=e44]: "365"
+      - generic [ref=e45]:
+        - generic [ref=e46]: Notes (optional)
+        - textbox "Notes (optional)" [ref=e47]:
+          - /placeholder: Internal notes about this license...
+          - text: E2E test license — Playwright automated signing
+      - button "Sign License" [ref=e49] [cursor=pointer]
+    - generic [ref=e51]:
+      - heading "Signed License Token" [level=3] [ref=e53]
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - strong [ref=e56]: "JTI:"
+          - text: lic_7c7955a488f1
+        - generic [ref=e57]:
+          - strong [ref=e58]: "Expires:"
+          - text: "1807866086"
+      - textbox [ref=e59]: eyJhbGciOiJFZERTQSIsImtpZCI6InYxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJmbGVudGFzLWxpY2Vuc2UtYXV0aG9yaXR5Iiwic3ViIjoiMWZhZWVkMzYtN2JhOC00YzZlLTg1NzEtNzBjODllNGVlMDE5IiwiYXVkIjoiMWZhZWVkMzYtN2JhOC00YzZlLTg1NzEtNzBjODllNGVlMDE5IiwiaWF0IjoxNzc2MzMwMDg2LCJuYmYiOjE3NzYzMzAwODYsImV4cCI6MTgwNzg2NjA4NiwianRpIjoibGljXzdjNzk1NWE0ODhmMSIsImxpY2Vuc2UiOnsidmVyc2lvbiI6MSwidGllciI6MiwibG9jX2xpbWl0Ijo1MDAwMDAsImN1c3RvbWVyIjp7Im5hbWUiOiJSdXNoYWJoIFN1ZGFtZSIsImVtYWlsIjoicnVzaGFiaC5zdWRhbWVAZmxlbnRhcy5jb20iLCJvcmdhbml6YXRpb24iOiJGbGVudGFzIFRlY2hub2xvZ2llcyJ9LCJpc3N1ZWRfYnkiOiJvcGVyYXRvciIsIm5vdGVzIjoiRTJFIHRlc3QgbGljZW5zZSBcdTIwMTQgUGxheXdyaWdodCBhdXRvbWF0ZWQgc2lnbmluZyJ9fQ.CD3OmKS7HMyOyz2Hm_fBHHHUKWBu5jlDodg0ESnHTvHTFIw9PL0NXhMVrWMh3qvfR11Kw6XN70hk6GrBK0pOBA
+      - generic [ref=e60]:
+        - button "Download license.jwt" [ref=e61] [cursor=pointer]
+        - button "Copy to Clipboard" [ref=e62] [cursor=pointer]

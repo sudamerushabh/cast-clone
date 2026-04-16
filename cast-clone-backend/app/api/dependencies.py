@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.config import Settings, get_settings
 from app.models.db import Project, Repository, User
 from app.services.auth import decode_access_token
+from app.services.license import LicenseState
 from app.services.postgres import get_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -179,3 +180,43 @@ async def get_accessible_repository(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Forbidden",
     )
+
+
+# ---------------------------------------------------------------------------
+# License gating (CHAN-17)
+# ---------------------------------------------------------------------------
+_BLOCKED_WRITE_STATES = frozenset({
+    LicenseState.UNLICENSED,
+    LicenseState.LICENSED_BLOCKED,
+})
+
+
+async def require_license_writable(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Gate write endpoints on license state.
+
+    Returns quietly when license is HEALTHY / WARN / GRACE (or when
+    LICENSE_DISABLED=true).  Raises 402 Payment Required when UNLICENSED
+    or LICENSED_BLOCKED.
+    """
+    if settings.license_disabled:
+        return  # dev escape hatch — mirrors auth_disabled pattern
+
+    current_state: LicenseState = getattr(
+        request.app.state, "license_state", LicenseState.UNLICENSED
+    )
+    if current_state in _BLOCKED_WRITE_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "license_required",
+                "state": current_state.value,
+                "message": (
+                    "No valid license. Upload a license file at /settings/license."
+                    if current_state == LicenseState.UNLICENSED
+                    else "License limit exceeded or expired beyond grace period."
+                ),
+            },
+        )

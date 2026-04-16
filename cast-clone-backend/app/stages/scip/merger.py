@@ -40,6 +40,7 @@ class MergeStats:
     resolved_count: int = 0
     new_nodes: int = 0
     upgraded_edges: int = 0
+    new_call_edges: int = 0
     new_implements_edges: int = 0
 
 
@@ -326,7 +327,7 @@ def merge_scip_into_context(
                     symbol_docs[occ.symbol]
                 )
 
-    # -- Pass 2: Process references (upgrade call edges) ---------------------
+    # -- Pass 2: Process references (upgrade call edges or create new ones) --
     for doc in scip_index.documents:
         for occ in doc.occurrences:
             if occ.is_definition:
@@ -348,6 +349,22 @@ def merge_scip_into_context(
             # Try to upgrade an existing edge
             if _upgrade_edge(graph, caller_node.fqn, callee_fqn):
                 stats.upgraded_edges += 1
+            else:
+                # SCIP found a cross-file reference that tree-sitter missed.
+                # Create a new HIGH-confidence CALLS edge if the callee exists
+                # in the graph (i.e., it's not an external library symbol).
+                callee_node = graph.get_node(callee_fqn)
+                if callee_node is not None and callee_node.kind == NodeKind.FUNCTION:
+                    graph.add_edge(
+                        GraphEdge(
+                            source_fqn=caller_node.fqn,
+                            target_fqn=callee_fqn,
+                            kind=EdgeKind.CALLS,
+                            confidence=Confidence.HIGH,
+                            evidence="scip",
+                        )
+                    )
+                    stats.new_call_edges += 1
 
     # -- Pass 3: Process implementation relationships ------------------------
     for scip_symbol, relationships in symbol_rels.items():
@@ -397,6 +414,7 @@ def merge_scip_into_context(
         language=language,
         resolved=stats.resolved_count,
         upgraded_edges=stats.upgraded_edges,
+        new_call_edges=stats.new_call_edges,
         new_implements=stats.new_implements_edges,
         project_id=context.project_id,
     )

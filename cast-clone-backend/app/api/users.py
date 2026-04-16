@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import require_admin
 from app.models.db import User
 from app.schemas.auth import UserCreateRequest, UserResponse, UserUpdateRequest
+from app.services.activity import log_activity
 from app.services.auth import hash_password
 from app.services.postgres import get_session
 
@@ -54,7 +55,11 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    logger.info("user_created", user_id=user.id, username=user.username, role=user.role)
+    await log_activity(
+        session, "user.admin_created", user_id=_admin.id,
+        resource_type="user", resource_id=user.id,
+        details={"username": user.username, "role": user.role},
+    )
     return UserResponse.model_validate(user, from_attributes=True)
 
 
@@ -108,7 +113,11 @@ async def update_user(
 
     await session.commit()
     await session.refresh(user)
-    logger.info("user_updated", user_id=user.id, username=user.username)
+    await log_activity(
+        session, "user.updated", user_id=_admin.id,
+        resource_type="user", resource_id=user.id,
+        details={"username": user.username},
+    )
     return UserResponse.model_validate(user, from_attributes=True)
 
 
@@ -130,4 +139,9 @@ async def deactivate_user(
         raise HTTPException(status_code=404, detail="User not found")
     user.is_active = False
     await session.commit()
-    logger.info("user_deactivated", user_id=user.id, username=user.username)
+
+    await log_activity(
+        session, "user.deactivated", user_id=admin.id,
+        resource_type="user", resource_id=user.id,
+        details={"username": user.username},
+    )

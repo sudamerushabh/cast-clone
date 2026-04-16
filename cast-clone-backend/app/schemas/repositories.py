@@ -44,6 +44,8 @@ class RepositoryResponse(BaseModel):
     last_synced_at: datetime | None = None
     created_at: datetime
     projects: list[ProjectBranchResponse] = Field(default_factory=list)
+    billable_loc: int | None = None
+    max_loc_branch: str | None = None
 
 
 class RepositoryListResponse(BaseModel):

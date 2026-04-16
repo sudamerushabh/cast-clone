@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings, get_settings
 from app.models.db import PrAnalysis, RepositoryGitConfig, User
 from app.schemas.pull_requests import (
@@ -16,6 +16,7 @@ from app.schemas.pull_requests import (
     PrDriftResponse,
     PrImpactResponse,
 )
+from app.services.activity import log_activity
 from app.services.postgres import get_session
 
 logger = structlog.get_logger(__name__)
@@ -127,11 +128,22 @@ async def delete_pr_analysis(
 ) -> None:
     """Delete a PR analysis record."""
     pr = await _get_pr_or_404(repo_id, pr_analysis_id, session)
+    pr_number = pr.pr_number
     await session.delete(pr)
     await session.commit()
 
+    await log_activity(
+        session, "pr_analysis.deleted", user_id=_user.id,
+        resource_type="pr_analysis", resource_id=pr_analysis_id,
+        details={"pr_number": pr_number},
+    )
 
-@router.post("/{pr_analysis_id}/reanalyze", status_code=202)
+
+@router.post(
+    "/{pr_analysis_id}/reanalyze",
+    status_code=202,
+    dependencies=[Depends(require_license_writable)],
+)
 async def reanalyze_pr(
     repo_id: str,
     pr_analysis_id: str,
@@ -164,6 +176,12 @@ async def reanalyze_pr(
         api_token_encrypted=config.api_token_encrypted,
         platform=config.platform,
         secret_key=settings.secret_key,
+    )
+
+    await log_activity(
+        session, "pr_analysis.reanalyzed", user_id=_user.id,
+        resource_type="pr_analysis", resource_id=pr.id,
+        details={"pr_number": pr.pr_number},
     )
 
     return {"status": "queued", "pr_analysis_id": pr.id}
