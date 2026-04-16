@@ -121,6 +121,8 @@ services:
     ports:
       - "${MCP_PORT:-8090}:8090"
     environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
       DATABASE_URL: "postgresql+asyncpg://codelens:codelens@postgres:5432/codelens"
       NEO4J_URI: "bolt://neo4j:7687"
       NEO4J_USER: "neo4j"

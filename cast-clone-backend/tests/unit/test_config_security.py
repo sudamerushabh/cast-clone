@@ -133,6 +133,15 @@ def test_cors_wildcard_mixed_with_explicit_rejected_when_auth_enabled(
         Settings(cors_origins=["https://app.example.com", "*"])
 
 
+def test_cors_percent_encoded_wildcard_rejected_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    with pytest.raises(ValidationError, match="CORS wildcard"):
+        Settings(cors_origins=["%2A"])
+
+
 def test_cors_origins_string_is_stripped_and_split(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

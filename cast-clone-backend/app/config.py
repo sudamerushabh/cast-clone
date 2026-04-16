@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -129,7 +130,10 @@ class Settings(BaseSettings):
         """
         if self.auth_disabled:
             return self
-        if any(origin.strip() == "*" for origin in self.cors_origins):
+        if any(
+            urllib.parse.unquote(origin.strip()) == "*"
+            for origin in self.cors_origins
+        ):
             raise ValueError(
                 "CORS wildcard '*' is forbidden when auth is enabled. "
                 "Set CORS_ORIGINS to an explicit comma-separated allow-list "
