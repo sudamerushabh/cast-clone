@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.dependencies import require_admin
 from app.config import Settings, get_settings
@@ -34,6 +34,14 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/license", tags=["license"])
 
 
+class RepoLocBreakdown(BaseModel):
+    repository_id: str
+    repo_full_name: str
+    billable_loc: int
+    max_branch: str | None
+    branches: dict[str, int]
+
+
 class LicenseStatusResponse(BaseModel):
     state: Literal[
         "UNLICENSED",
@@ -47,6 +55,7 @@ class LicenseStatusResponse(BaseModel):
     tier: int | str | None = None
     loc_limit: int | None = None
     loc_used: int | None = None
+    loc_breakdown: list[RepoLocBreakdown] = Field(default_factory=list)
     customer_name: str | None = None
     customer_email: str | None = None
     customer_organization: str | None = None
@@ -92,10 +101,7 @@ async def _build_status_response(
     request: Request,
     settings: Settings,
 ) -> LicenseStatusResponse:
-    """Build a ``LicenseStatusResponse`` from current app state.
-
-    Shared by ``GET /status`` and ``POST /upload`` to avoid duplication.
-    """
+    """Build a ``LicenseStatusResponse`` from current app state."""
     state: LicenseState = getattr(
         request.app.state, "license_state", LicenseState.UNLICENSED
     )
@@ -111,11 +117,37 @@ async def _build_status_response(
         return LicenseStatusResponse(**base)
 
     loc_used = await cumulative_loc()
+
+    # Build per-repo LOC breakdown
+    from sqlalchemy import select as sa_select
+    from app.models.db import Repository, RepositoryLocTracking
+    from app.services.postgres import get_background_session
+
+    breakdown_list: list[RepoLocBreakdown] = []
+    async with get_background_session() as session:
+        result = await session.execute(
+            sa_select(RepositoryLocTracking, Repository.repo_full_name)
+            .join(Repository, Repository.id == RepositoryLocTracking.repository_id)
+            .where(RepositoryLocTracking.billable_loc > 0)
+            .order_by(RepositoryLocTracking.billable_loc.desc())
+        )
+        for tracking, repo_name in result.all():
+            breakdown_list.append(
+                RepoLocBreakdown(
+                    repository_id=tracking.repository_id,
+                    repo_full_name=repo_name,
+                    billable_loc=tracking.billable_loc,
+                    max_branch=tracking.max_loc_branch_name,
+                    branches=tracking.breakdown or {},
+                )
+            )
+
     return LicenseStatusResponse(
         **base,
         tier=info.license.tier,
         loc_limit=info.license.loc_limit,
         loc_used=loc_used,
+        loc_breakdown=breakdown_list,
         customer_name=info.license.customer.name,
         customer_email=info.license.customer.email,
         customer_organization=info.license.customer.organization,
