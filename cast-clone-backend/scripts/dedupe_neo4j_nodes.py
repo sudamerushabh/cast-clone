@@ -52,18 +52,39 @@ from app.services.neo4j import (
 logger = structlog.get_logger(__name__)
 
 
+async def count_null_app_name(
+    driver: AsyncDriver, label: str, database: str = "neo4j"
+) -> int:
+    """Return the number of nodes for ``label`` whose ``app_name`` is NULL.
+
+    Null-``app_name`` rows cannot be safely grouped across projects (they would
+    collapse into a single cross-tenant bucket), so the dedupe queries skip
+    them. This helper surfaces them separately for operator triage.
+    """
+    cypher = f"MATCH (n:`{label}`) WHERE n.app_name IS NULL RETURN count(n) AS c"
+    async with driver.session(database=database) as session:
+        result = await session.run(cypher)
+        record = await result.single()
+        if record is None or record["c"] is None:
+            return 0
+        return int(record["c"])
+
+
 async def count_duplicates(
-    driver: AsyncDriver, label: str, key: str, database: str = "neo4j"
+    driver: AsyncDriver, label: str, database: str = "neo4j"
 ) -> int:
     """Return the number of duplicate nodes for ``label``.
 
     Legacy pre-MERGE data only has ``fqn`` + ``app_name``; ``_id`` (the
     post-fix composite key) is NULL on those rows. We group on the tuple
     ``(fqn, app_name)`` so the script cleans up legacy duplicates without
-    collapsing nodes across projects.
+    collapsing nodes across projects. Nodes with ``app_name IS NULL`` are
+    excluded from the grouping — otherwise null-app_name rows from different
+    projects would land in the same bucket and get cross-tenant merged.
     """
     cypher = (
         f"MATCH (n:`{label}`) "
+        "WHERE n.app_name IS NOT NULL "
         "WITH n.fqn AS fqn, n.app_name AS app_name, collect(n) AS nodes "
         "WHERE fqn IS NOT NULL AND size(nodes) > 1 "
         "RETURN sum(size(nodes) - 1) AS dup_count"
@@ -79,7 +100,6 @@ async def count_duplicates(
 async def delete_duplicates(
     driver: AsyncDriver,
     label: str,
-    key: str,
     batch_size: int,
     database: str = "neo4j",
 ) -> int:
@@ -87,10 +107,13 @@ async def delete_duplicates(
 
     Keeps the first node in each ``collect()`` bucket and deletes the rest.
     Uses ``LIMIT`` inside the query to bound the transaction size and loops
-    until no more duplicates remain (idempotent fixed-point).
+    until no more duplicates remain (idempotent fixed-point). Nodes with
+    ``app_name IS NULL`` are skipped to avoid cross-tenant merges — those are
+    surfaced separately via :func:`count_null_app_name`.
     """
     cypher = (
         f"MATCH (n:`{label}`) "
+        "WHERE n.app_name IS NOT NULL "
         "WITH n.fqn AS fqn, n.app_name AS app_name, collect(n) AS nodes "
         "WHERE fqn IS NOT NULL AND size(nodes) > 1 "
         "UNWIND nodes[1..] AS dup "
@@ -119,14 +142,21 @@ async def delete_duplicates(
 async def dedupe_label(
     driver: AsyncDriver,
     label: str,
-    key: str,
     *,
     dry_run: bool,
     batch_size: int,
     database: str = "neo4j",
 ) -> tuple[int, int]:
     """Dedupe a single label. Returns ``(duplicates_found, deleted)``."""
-    dup_count = await count_duplicates(driver, label, key, database=database)
+    null_count = await count_null_app_name(driver, label, database=database)
+    if null_count > 0:
+        await logger.awarning(
+            "dedupe.null_app_name_nodes_skipped",
+            label=label,
+            count=null_count,
+        )
+
+    dup_count = await count_duplicates(driver, label, database=database)
     if dup_count == 0:
         await logger.ainfo("dedupe.label_clean", label=label)
         return 0, 0
@@ -136,7 +166,7 @@ async def dedupe_label(
         return dup_count, 0
 
     deleted = await delete_duplicates(
-        driver, label, key, batch_size=batch_size, database=database
+        driver, label, batch_size=batch_size, database=database
     )
     await logger.ainfo(
         "dedupe.label_done", label=label, duplicates=dup_count, deleted=deleted
@@ -166,13 +196,12 @@ async def run(
     try:
         driver = get_driver()
         results: dict[str, tuple[int, int]] = {}
-        for label, key in NODE_LABELS_UNIQUE_KEY.items():
+        for label in NODE_LABELS_UNIQUE_KEY:
             if label_filter is not None and label != label_filter:
                 continue
             results[label] = await dedupe_label(
                 driver,
                 label,
-                key,
                 dry_run=dry_run,
                 batch_size=batch_size,
                 database=database,

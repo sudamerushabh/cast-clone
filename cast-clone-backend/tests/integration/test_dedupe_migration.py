@@ -81,6 +81,7 @@ def _make_driver(
 async def test_dedupe_preserves_first_node() -> None:
     """For a label with 3 duplicate buckets, DETACH DELETE runs until drained."""
     results = [
+        _FakeRecord({"c": 0}),  # count_null_app_name
         _FakeRecord({"dup_count": 3}),  # count_duplicates
         _FakeRecord({"deleted": 3}),  # first batch deletes 3
         _FakeRecord({"deleted": 0}),  # second batch: nothing left -> exit
@@ -88,20 +89,22 @@ async def test_dedupe_preserves_first_node() -> None:
     driver, calls = _make_driver(results)
 
     found, deleted = await dedupe.dedupe_label(
-        driver, "Class", "fqn", dry_run=False, batch_size=1000
+        driver, "Class", dry_run=False, batch_size=1000
     )
 
     assert found == 3
     assert deleted == 3
 
-    # 1 count + 2 delete cypher runs
-    assert len(calls) == 3
-    count_cypher, _ = calls[0]
-    delete_cypher, delete_params = calls[1]
+    # 1 null-count + 1 dup-count + 2 delete cypher runs
+    assert len(calls) == 4
+    count_cypher, _ = calls[1]
+    delete_cypher, delete_params = calls[2]
 
     assert "MATCH (n:`Class`)" in count_cypher
     assert "collect(n) AS nodes" in count_cypher
+    assert "app_name IS NOT NULL" in count_cypher
     assert "MATCH (n:`Class`)" in delete_cypher
+    assert "app_name IS NOT NULL" in delete_cypher
     # Slice [1..] preserves nodes[0] and only deletes the rest.
     assert "nodes[1..] AS dup" in delete_cypher
     assert "DETACH DELETE dup" in delete_cypher
@@ -111,19 +114,23 @@ async def test_dedupe_preserves_first_node() -> None:
 @pytest.mark.asyncio
 async def test_dry_run_does_not_delete() -> None:
     """--dry-run runs the COUNT query but never issues DETACH DELETE."""
-    results = [_FakeRecord({"dup_count": 7})]
+    results = [
+        _FakeRecord({"c": 0}),  # count_null_app_name
+        _FakeRecord({"dup_count": 7}),  # count_duplicates
+    ]
     driver, calls = _make_driver(results)
 
     found, deleted = await dedupe.dedupe_label(
-        driver, "Function", "fqn", dry_run=True, batch_size=1000
+        driver, "Function", dry_run=True, batch_size=1000
     )
 
     assert found == 7
     assert deleted == 0
-    assert len(calls) == 1
-    cypher, _ = calls[0]
-    assert "DETACH DELETE" not in cypher
-    assert "RETURN sum(size(nodes) - 1)" in cypher
+    assert len(calls) == 2
+    dup_cypher, _ = calls[1]
+    assert "DETACH DELETE" not in dup_cypher
+    assert "RETURN sum(size(nodes) - 1)" in dup_cypher
+    assert "app_name IS NOT NULL" in dup_cypher
 
 
 @pytest.mark.asyncio
@@ -132,7 +139,7 @@ async def test_labels_iterated_match_node_labels() -> None:
     visited: list[str] = []
 
     async def fake_dedupe_label(
-        _driver: Any, label: str, _key: str, **_kw: Any
+        _driver: Any, label: str, **_kw: Any
     ) -> tuple[int, int]:
         visited.append(label)
         return 0, 0
@@ -161,7 +168,7 @@ async def test_label_filter_runs_only_requested_label() -> None:
     visited: list[str] = []
 
     async def fake_dedupe_label(
-        _driver: Any, label: str, _key: str, **_kw: Any
+        _driver: Any, label: str, **_kw: Any
     ) -> tuple[int, int]:
         visited.append(label)
         return 0, 0
@@ -186,14 +193,81 @@ async def test_unknown_label_filter_raises() -> None:
 @pytest.mark.asyncio
 async def test_idempotent_second_run_reports_zero() -> None:
     """Running the dedupe a second time finds zero duplicates, zero deletes."""
-    results = [_FakeRecord({"dup_count": 0})]
+    results = [
+        _FakeRecord({"c": 0}),  # count_null_app_name
+        _FakeRecord({"dup_count": 0}),  # count_duplicates
+    ]
     driver, calls = _make_driver(results)
 
     found, deleted = await dedupe.dedupe_label(
-        driver, "Module", "fqn", dry_run=False, batch_size=1000
+        driver, "Module", dry_run=False, batch_size=1000
     )
 
     assert (found, deleted) == (0, 0)
-    # Only the count query runs; no delete cypher.
+    # Only the null-count + dup-count queries run; no delete cypher.
+    assert len(calls) == 2
+    assert all("DETACH DELETE" not in call[0] for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_null_app_name_nodes_not_merged() -> None:
+    """Nodes with ``app_name IS NULL`` are excluded from the dedupe Cypher and
+    surfaced via a warning log so operators can triage cross-tenant leftovers.
+
+    Scenario: two legacy records share the same ``fqn`` but live in different
+    projects, and both have ``app_name = NULL``. Merging them would collapse
+    tenants, so the WHERE clause must filter them out and the warning must fire.
+    """
+    # Two null-app_name nodes exist; zero non-null duplicates to delete.
+    results = [
+        _FakeRecord({"c": 2}),  # count_null_app_name -> 2 null rows
+        _FakeRecord({"dup_count": 0}),  # count_duplicates (filtered)
+    ]
+    driver, calls = _make_driver(results)
+
+    # Structlog's stdlib integration may not be configured under pytest, so
+    # assert on the logger invocation directly instead of going through caplog.
+    warn_mock = AsyncMock(return_value=None)
+    with patch.object(dedupe.logger, "awarning", warn_mock):
+        found, deleted = await dedupe.dedupe_label(
+            driver, "Class", dry_run=False, batch_size=1000
+        )
+
+    # No duplicates after filtering null-app_name; nothing deleted.
+    assert (found, deleted) == (0, 0)
+
+    # Warning must fire naming the label and null count.
+    warn_mock.assert_awaited_once()
+    event, *_ = warn_mock.await_args.args
+    assert event == "dedupe.null_app_name_nodes_skipped"
+    kwargs = warn_mock.await_args.kwargs
+    assert kwargs == {"label": "Class", "count": 2}
+
+    # Both the null-count query and the dup-count query must filter out nulls
+    # from the grouping — the dup query's WHERE clause must include it.
+    null_count_cypher, _ = calls[0]
+    dup_count_cypher, _ = calls[1]
+    assert "n.app_name IS NULL" in null_count_cypher
+    assert "app_name IS NOT NULL" in dup_count_cypher
+    # No DETACH DELETE was issued (nothing past the null-count + dup-count).
+    assert all("DETACH DELETE" not in call[0] for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_delete_duplicates_cypher_filters_null_app_name() -> None:
+    """Direct test of ``delete_duplicates``: its Cypher must include
+    ``app_name IS NOT NULL`` so null-app_name nodes cannot be cross-tenant
+    merged even when the function is invoked in isolation."""
+    results = [_FakeRecord({"deleted": 0})]
+    driver, calls = _make_driver(results)
+
+    deleted = await dedupe.delete_duplicates(
+        driver, "Class", batch_size=500
+    )
+
+    assert deleted == 0
     assert len(calls) == 1
-    assert "DETACH DELETE" not in calls[0][0]
+    cypher, params = calls[0]
+    assert "app_name IS NOT NULL" in cypher
+    assert "DETACH DELETE dup" in cypher
+    assert params == {"batch_size": 500}
