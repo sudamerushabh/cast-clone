@@ -358,11 +358,15 @@ async def test_admin_can_read_any_repo(
     repo.created_by = uid_a  # owned by Alice
     repo.projects = []
 
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = repo
+    repo_result = MagicMock()
+    repo_result.scalar_one_or_none.return_value = repo
+    tracking_result = MagicMock()
+    tracking_result.scalar_one_or_none.return_value = None
 
     mock_session = MagicMock()
-    mock_session.execute = AsyncMock(return_value=mock_result)
+    # First execute() returns the Repository; subsequent calls (tracking fetch
+    # post-licensing merge) return None so billable_loc stays null.
+    mock_session.execute = AsyncMock(side_effect=[repo_result, tracking_result])
 
     async def override_get_session():
         yield mock_session
