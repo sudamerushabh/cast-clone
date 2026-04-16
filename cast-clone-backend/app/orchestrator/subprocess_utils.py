@@ -43,33 +43,38 @@ async def run_subprocess(
         SubprocessResult with returncode, stdout, stderr.
 
     Raises:
+        FileNotFoundError: If the executable is not found on PATH.
         TimeoutError: If the command exceeds the timeout.
     """
     merged_env = {**os.environ, **(env or {})}
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=merged_env,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=merged_env,
+        )
+    except FileNotFoundError as err:
+        # Binary missing from PATH -- re-raise with a clear, structured message
+        # so callers can catch FileNotFoundError specifically and degrade gracefully.
+        binary = command[0] if command else "<unknown>"
+        raise FileNotFoundError(f"Executable not found on PATH: {binary!r}") from err
 
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return SubprocessResult(
             returncode=proc.returncode or 0,
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as err:
         proc.kill()
         await proc.wait()
         raise TimeoutError(
             f"Command timed out after {timeout}s: {' '.join(command)}"
-        )
+        ) from err
 
 
 async def run_in_process_pool(

@@ -178,7 +178,9 @@ async def _run_scip_in_directory(
         MergeStats from the merger.
 
     Raises:
-        RuntimeError: If the indexer subprocess exits with non-zero code.
+        FileNotFoundError: If the SCIP indexer binary is missing from PATH.
+        TimeoutError: If the indexer subprocess exceeds its configured timeout.
+        RuntimeError: If the indexer subprocess exits with a non-zero code.
     """
     command = build_scip_command(indexer_config, project_name, cwd, build_tool)
 
@@ -200,14 +202,48 @@ async def _run_scip_in_directory(
     timeout = indexer_config.timeout_seconds
     if timeout <= 0:
         from app.config import get_settings
+
         timeout = get_settings().scip_timeout
 
-    result = await run_subprocess(
-        command=command,
-        cwd=cwd,
-        timeout=timeout,
-        env=env_overrides,
-    )
+    subprocess_start = time.perf_counter()
+    try:
+        result = await run_subprocess(
+            command=command,
+            cwd=cwd,
+            timeout=timeout,
+            env=env_overrides,
+        )
+    except FileNotFoundError as err:
+        # CHAN-69: SCIP binary missing from PATH -- skip this language so that
+        # Stage 4b (LSP fallback) can take over. Non-fatal by design.
+        logger.warning(
+            "scip.indexer.binary_missing",
+            language=indexer_config.language,
+            indexer=indexer_config.name,
+            binary=command[0] if command else None,
+            cwd=str(cwd),
+            error=str(err),
+            project_id=context.project_id,
+            message="SCIP indexer binary not installed; falling back to LSP",
+        )
+        raise
+    except TimeoutError as err:
+        # CHAN-70: SCIP indexer hung past its timeout -- surface distinctly
+        # from RuntimeError so operators can tune `scip_timeout` or exclude
+        # the language.
+        elapsed = round(time.perf_counter() - subprocess_start, 3)
+        logger.warning(
+            "scip.indexer.timeout",
+            language=indexer_config.language,
+            indexer=indexer_config.name,
+            timeout_seconds=timeout,
+            elapsed_seconds=elapsed,
+            cwd=str(cwd),
+            error=str(err),
+            project_id=context.project_id,
+            message="SCIP indexer timed out; falling back to LSP",
+        )
+        raise
 
     # Log stdout/stderr regardless of exit code for observability
     if result.stdout.strip():
@@ -227,6 +263,17 @@ async def _run_scip_in_directory(
         )
 
     if result.returncode != 0:
+        # CHAN-70: non-zero exit is a RuntimeError, distinct from the timeout
+        # path above. Log exit code + stderr for diagnosis.
+        logger.warning(
+            "scip.indexer.nonzero_exit",
+            language=indexer_config.language,
+            indexer=indexer_config.name,
+            returncode=result.returncode,
+            stderr=result.stderr[:500],
+            cwd=str(cwd),
+            project_id=context.project_id,
+        )
         raise RuntimeError(
             f"{indexer_config.name} exited with code {result.returncode}: "
             f"{result.stderr[:500]}"
@@ -343,8 +390,10 @@ async def run_single_scip_indexer(
     build_tool: str | None = None
     if indexer_config.name == "scip-java" and context.manifest:
         java_build_tools = [
-            bt.name for bt in context.manifest.build_tools
-            if bt.language == "java" and bt.name in ("maven", "gradle")
+            bt.name
+            for bt in context.manifest.build_tools
+            if bt.language == "java"
+            and bt.name in ("maven", "gradle")
             and bt.subproject_root == "."
         ]
         if len(java_build_tools) > 1:
@@ -366,13 +415,23 @@ async def run_single_scip_indexer(
     if root_has_build:
         try:
             return await _run_scip_in_directory(
-                context, indexer_config, project_name, root_path, build_tool,
+                context,
+                indexer_config,
+                project_name,
+                root_path,
+                build_tool,
             )
-        except RuntimeError as root_err:
+        except FileNotFoundError:
+            # CHAN-69: If the SCIP binary is missing, trying subprojects won't
+            # help -- propagate so the top-level orchestrator routes this
+            # language to LSP fallback.
+            raise
+        except (RuntimeError, TimeoutError) as root_err:
             logger.warning(
                 "scip.indexer.root_failed",
                 language=indexer_config.language,
                 error=str(root_err)[:200],
+                error_type=type(root_err).__name__,
                 project_id=context.project_id,
             )
             # Fall through to try subprojects
@@ -384,9 +443,7 @@ async def run_single_scip_indexer(
             raise RuntimeError(
                 f"{indexer_config.name} failed at root and no subprojects found"
             )
-        raise RuntimeError(
-            f"No build tool found for {indexer_config.language}"
-        )
+        raise RuntimeError(f"No build tool found for {indexer_config.language}")
 
     logger.info(
         "scip.indexer.subprojects",
@@ -399,7 +456,11 @@ async def run_single_scip_indexer(
     # Run SCIP in each subproject in parallel
     tasks = [
         _run_scip_in_directory(
-            context, indexer_config, d.name, d, build_tool,
+            context,
+            indexer_config,
+            d.name,
+            d,
+            build_tool,
         )
         for d in sub_dirs
     ]
