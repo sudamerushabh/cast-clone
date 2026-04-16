@@ -3,6 +3,8 @@ from functools import lru_cache
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_KNOWN_BAD_SECRETS = frozenset({"", "change-me-in-production"})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -65,7 +67,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_placeholder_secret(self) -> "Settings":
-        if not self.auth_disabled and self.secret_key == "change-me-in-production":
+        if self.auth_disabled:
+            return self
+        normalized = self.secret_key.strip().lower()
+        if normalized in _KNOWN_BAD_SECRETS:
             raise ValueError(
                 "secret_key must be overridden via SECRET_KEY env var "
                 "when AUTH_DISABLED is false"
