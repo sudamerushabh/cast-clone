@@ -116,9 +116,8 @@ async def get_accessible_project(
 
     Admins see all projects. Non-admins see projects whose parent repository
     has ``created_by == user.id``. Projects without a linked repository are
-    currently accessible to any authenticated user — tracked as a schema
-    gap (Project needs ``created_by`` column; see xfail in
-    tests/integration/test_idor_protection.py).
+    denied to non-admins (403) until a ``created_by`` column is added to the
+    Project model; only admins can reach standalone projects today.
 
     Raises 404 if the project doesn't exist.
     Raises 403 if the caller is not admin and not the repo creator.

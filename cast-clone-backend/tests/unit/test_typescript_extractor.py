@@ -743,3 +743,19 @@ class User extends Base {}
         inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
         assert inherits is not None
         assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_resolves_explicit_tsx_extension(
+        self, extractor: TypeScriptExtractor
+    ):
+        """Same as the .ts case for React .tsx components — stripping must
+        cover all of `_MODULE_EXTENSIONS`, not just `.ts`."""
+        source = b"""\
+import { Comp } from './Comp.tsx';
+class Specialized extends Comp {}
+"""
+        nodes, edges = extractor.extract(source, "src/ui/specialized.tsx", "/project")
+        inherits = _find_edge(
+            edges, kind=EdgeKind.INHERITS, source_contains="Specialized"
+        )
+        assert inherits is not None
+        assert inherits.target_fqn == "src/ui/Comp.Comp"

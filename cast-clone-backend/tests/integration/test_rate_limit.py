@@ -57,10 +57,15 @@ class _FakePipeline:
         return self
 
     async def execute(self) -> list[Any]:
+        # Mirror redis-py MULTI/EXEC atomicity: hold the fake's lock across
+        # the entire op batch so concurrent pipelines don't interleave and
+        # the fake faithfully simulates the contract the production code
+        # relies on.
         results: list[Any] = []
-        for name, args in self._ops:
-            method = getattr(self._redis, f"_pipe_{name}")
-            results.append(method(*args))
+        async with self._redis._lock:
+            for name, args in self._ops:
+                method = getattr(self._redis, f"_pipe_{name}")
+                results.append(method(*args))
         return results
 
 

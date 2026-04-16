@@ -130,8 +130,16 @@ class Settings(BaseSettings):
         """
         if self.auth_disabled:
             return self
+
+        def _fully_unquote(s: str) -> str:
+            prev = None
+            while prev != s:
+                prev = s
+                s = urllib.parse.unquote(s)
+            return s
+
         if any(
-            urllib.parse.unquote(origin.strip()) == "*"
+            _fully_unquote(origin.strip()) == "*"
             for origin in self.cors_origins
         ):
             raise ValueError(

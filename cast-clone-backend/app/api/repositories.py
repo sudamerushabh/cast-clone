@@ -414,7 +414,6 @@ async def sync_repository(
     repo_id: str,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(get_current_user),
 ) -> CloneStatusResponse:
     """Pull latest changes for a cloned repository."""
     result = await session.execute(select(Repository).where(Repository.id == repo_id))

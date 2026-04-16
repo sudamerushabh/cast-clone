@@ -142,6 +142,18 @@ def test_cors_percent_encoded_wildcard_rejected_when_auth_enabled(
         Settings(cors_origins=["%2A"])
 
 
+def test_cors_double_encoded_wildcard_rejected_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    # %252A -> %2A -> * under recursive unquote.
+    with pytest.raises(ValidationError, match="CORS wildcard"):
+        Settings(cors_origins=["%252A"])
+    with pytest.raises(ValidationError, match="CORS wildcard"):
+        Settings(cors_origins=["%25252A"])
+
+
 def test_cors_origins_string_is_stripped_and_split(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
