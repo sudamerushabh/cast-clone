@@ -713,3 +713,33 @@ class Derived extends C.Base {}
         # Namespace head `C` maps to the resolved module path; the member
         # tail `Base` is preserved.
         assert inherits.target_fqn == "src/models/c.Base"
+
+    def test_class_extends_resolves_import_type(
+        self, extractor: TypeScriptExtractor
+    ):
+        """`import type { Base }` must still populate the import map so that
+        INHERITS edges resolve to the imported module's FQN."""
+        source = b"""\
+import type { Base } from './base';
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_resolves_explicit_ts_extension(
+        self, extractor: TypeScriptExtractor
+    ):
+        """Regression for CHAN-78: explicit `.ts` extension in the import
+        specifier must resolve to the same FQN as the unextensioned variant;
+        otherwise INHERITS edge targets won't match class FQNs produced by
+        `_module_path_from_file` (which always strips the extension)."""
+        source = b"""\
+import { Base } from './base.ts';
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        assert inherits.target_fqn == "src/models/base.Base"

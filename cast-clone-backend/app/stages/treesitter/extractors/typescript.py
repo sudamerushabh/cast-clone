@@ -37,6 +37,21 @@ log = structlog.get_logger(__name__)
 _TS_LANGUAGE = Language(tstypescript.language_typescript())
 _TSX_LANGUAGE = Language(tstypescript.language_tsx())
 
+# Module file extensions stripped when deriving FQNs from file paths or
+# resolving relative import specifiers. ``.d.ts`` is listed before ``.ts``
+# so the longer suffix wins during the prefix scan.
+_MODULE_EXTENSIONS = (
+    ".d.ts",
+    ".tsx",
+    ".ts",
+    ".jsx",
+    ".js",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+)
+
 
 @dataclass
 class _ImportInfo:
@@ -69,7 +84,7 @@ def _module_path_from_file(file_path: str) -> str:
     Example: 'src/user/user.service.ts' -> 'src/user/user.service'
     """
     path = file_path
-    for ext in (".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs"):
+    for ext in _MODULE_EXTENSIONS:
         if path.endswith(ext):
             path = path[: -len(ext)]
             break
@@ -121,6 +136,14 @@ def _resolve_relative_module(current_module: str, spec: str) -> str:
         parts.append(segment)
 
     resolved = "/".join(parts)
+    # Strip explicit module extensions so ``./base.ts`` resolves to the same
+    # FQN prefix as ``./base``; otherwise INHERITS edge targets would not
+    # match class FQNs produced by ``_module_path_from_file`` (which always
+    # strips the extension).
+    for ext in _MODULE_EXTENSIONS:
+        if resolved.endswith(ext):
+            resolved = resolved[: -len(ext)]
+            break
     if resolved.endswith("/index"):
         resolved = resolved[: -len("/index")]
     return resolved
