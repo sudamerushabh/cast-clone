@@ -145,13 +145,38 @@ class EntityFrameworkPlugin(FrameworkPlugin):
             if node.kind in (NodeKind.CLASS, NodeKind.INTERFACE):
                 name_to_fqn[node.name] = node.fqn
 
-        # Step 1: Find all DbContext subclasses and their DbSet<T> registrations
+        # Step 1: Find all DbContext subclasses and their DbSet<T> registrations.
+        # Multi-level inheritance: also match classes whose base_class
+        # is itself a DbContext subclass (e.g., AppDb : ProjectDbContext
+        # : IdentityDbContext<User> : DbContext).
         db_contexts: list[_DbContextInfo] = []
-        for node in graph.nodes.values():
-            if node.kind != NodeKind.CLASS:
-                continue
+
+        # Pass 1: direct DbContext descendants (base_class contains "DbContext")
+        dbcontext_class_names: set[str] = set()
+        class_nodes = [
+            n for n in graph.nodes.values() if n.kind == NodeKind.CLASS
+        ]
+        for node in class_nodes:
             base_class = node.properties.get("base_class", "")
-            if not base_class or "DbContext" not in base_class:
+            if base_class and "DbContext" in base_class:
+                dbcontext_class_names.add(node.name)
+            elif node.name.endswith("DbContext"):
+                dbcontext_class_names.add(node.name)
+
+        # Pass 2: transitive descendants (base_class is a known DbContext)
+        changed = True
+        while changed:
+            changed = False
+            for node in class_nodes:
+                if node.name in dbcontext_class_names:
+                    continue
+                base_class = node.properties.get("base_class", "")
+                if base_class and base_class in dbcontext_class_names:
+                    dbcontext_class_names.add(node.name)
+                    changed = True
+
+        for node in class_nodes:
+            if node.name not in dbcontext_class_names:
                 continue
 
             ctx_info = _DbContextInfo(fqn=node.fqn, name=node.name)

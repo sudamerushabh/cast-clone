@@ -309,6 +309,28 @@ export interface TraceSummaryResponse {
   tokens_used: number | null;
 }
 
+// ── Trace follow-up chat ────────────────────────────────
+
+export interface TraceChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  model: string | null;
+  tokens_used: number | null;
+}
+
+export interface TraceChatHistoryResponse {
+  fqn: string;
+  messages: TraceChatMessage[];
+}
+
+export interface TraceChatSendResponse {
+  fqn: string;
+  user_message: TraceChatMessage;
+  assistant_message: TraceChatMessage;
+}
+
 // ── Phase 3: Path Finder ────────────────────────────────
 
 export interface PathNode {

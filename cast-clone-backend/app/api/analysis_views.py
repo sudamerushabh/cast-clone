@@ -8,17 +8,23 @@ from collections import Counter
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.summaries import (
     compute_trace_hash,
+    generate_trace_chat_reply,
     generate_trace_summary_text,
 )
 from app.api.dependencies import get_current_user
 from app.config import get_settings
-from app.models.db import AiSummary, User
+from app.models.db import (
+    AiSummary,
+    AiTraceChatMessage,
+    AnalysisRun,
+    User,
+)
 from app.schemas.analysis_views import (
     AffectedNode,
     CircularDependenciesResponse,
@@ -36,6 +42,10 @@ from app.schemas.analysis_views import (
     PathFinderResponse,
     PathNode,
     RankedItem,
+    TraceChatHistoryResponse,
+    TraceChatMessage,
+    TraceChatSendRequest,
+    TraceChatSendResponse,
     TraceEdge,
     TraceNode,
     TraceRouteResponse,
@@ -250,10 +260,11 @@ _TRACE_NODE_KINDS = (
 )
 
 # Execution-flow + data-access edges (READS/WRITES connect repo → table).
+# IMPLEMENTS bridges .NET interface methods to concrete implementations.
 # Structural edges (CONTAINS, DEPENDS_ON, IMPORTS) are still excluded.
 # Node kind filtering prevents READS/WRITES noise from FIELDs/COLUMNs.
 _TRACE_EDGE_TYPES = (
-    "CALLS|HANDLES|CALLS_API|PRODUCES|CONSUMES|READS|WRITES"
+    "CALLS|HANDLES|CALLS_API|PRODUCES|CONSUMES|READS|WRITES|IMPLEMENTS"
 )
 
 # Canonical layer ordering for swim-lane display (top to bottom)
@@ -394,6 +405,37 @@ async def trace_route(
             if r["type"] in ("READS", "WRITES"):
                 rw_source_fqns.add(r["source"])
 
+        # ── Hide interface methods when concrete impl is in trace ─
+        # For each IMPLEMENTS edge whose source (interface method) and
+        # target (concrete method) are both in the trace, drop the
+        # interface method. This removes visually duplicate pairs like
+        # `IStockSubscriptionService.Foo` + `StockSubscriptionService.Foo`
+        # that appear whenever a trace crosses a .NET DI boundary.
+        trace_fqn_set = set(all_fqns)
+        iface_methods_to_hide: set[str] = set()
+        for r in edge_records:
+            if (
+                r["type"] == "IMPLEMENTS"
+                and r["source"] in trace_fqn_set
+                and r["target"] in trace_fqn_set
+            ):
+                iface_methods_to_hide.add(r["source"])
+
+        if iface_methods_to_hide:
+            down_records = [
+                r for r in down_records
+                if r["fqn"] not in iface_methods_to_hide
+            ]
+            up_records = [
+                r for r in up_records
+                if r["fqn"] not in iface_methods_to_hide
+            ]
+            edge_records = [
+                r for r in edge_records
+                if r["source"] not in iface_methods_to_hide
+                and r["target"] not in iface_methods_to_hide
+            ]
+
         # ── Build trace nodes with layer + sequence ────────────
         downstream_nodes = [
             TraceNode(
@@ -505,11 +547,67 @@ async def _parallel_queries(
     return results[0], results[1]
 
 
+def _friendly_ai_error(provider: str, exc: Exception) -> str:
+    """Translate provider exceptions into user-actionable messages.
+
+    These strings surface directly in the AI summary panel via the
+    503 response `detail` field. The frontend treats 503 as a
+    configuration error and renders a "Configure AI" link.
+    """
+    name = type(exc).__name__
+    msg = str(exc).lower()
+    provider_label = provider.title() if provider else "AI"
+
+    # Authentication / authorization
+    if name in ("PermissionDeniedError", "NoCredentialsError"):
+        return (
+            f"{provider_label} credentials are invalid or missing. "
+            "Update the provider configuration in Settings."
+        )
+    if name == "AuthenticationError" or "unauthorized" in msg:
+        return (
+            f"{provider_label} authentication failed. "
+            "Check your API key in Settings."
+        )
+
+    # Quota / rate limits
+    if name == "RateLimitError" or "quota" in msg or "rate limit" in msg:
+        return (
+            f"{provider_label} rate limit or quota exceeded. "
+            "Wait a moment and retry, or check quota in Settings."
+        )
+
+    # Network / connectivity
+    if name in (
+        "EndpointConnectionError",
+        "ConnectionError",
+        "APIConnectionError",
+        "ReadTimeoutError",
+    ):
+        return (
+            f"Cannot reach {provider_label}. "
+            "Check network connectivity and retry."
+        )
+
+    # Model availability
+    if "model" in msg and ("not found" in msg or "does not exist" in msg):
+        return (
+            f"{provider_label} model is unavailable in this region. "
+            "Pick a different model in Settings."
+        )
+
+    # Fallback
+    return (
+        f"{provider_label} request failed ({name}). "
+        "Check AI configuration in Settings."
+    )
+
+
 # ── 1c. Trace Summary ─────────────────────────────────
 
 
 @router.get(
-    "/{project_id}/trace/{node_fqn:path}/summary",
+    "/{project_id}/trace-summary/{node_fqn:path}",
     response_model=TraceSummaryResponse,
 )
 async def trace_summary(
@@ -541,10 +639,19 @@ async def trace_summary(
             cached=False,
         )
 
+    # Deduplicate tables by (name, access_type). The same table often
+    # gets hit by multiple READS edges in a trace — we only want to
+    # list each distinct (table, access) pair once for the AI prompt
+    # and for the response badge list.
+    seen_tables: set[tuple[str, str]] = set()
     tables_touched: list[dict[str, str]] = []
     for edge in trace_resp.edges:
         if edge.type in ("READS", "WRITES"):
             target_name = edge.target.split(":")[-1]
+            pair = (target_name, edge.type)
+            if pair in seen_tables:
+                continue
+            seen_tables.add(pair)
             tables_touched.append(
                 {
                     "name": target_name,
@@ -593,14 +700,16 @@ async def trace_summary(
     )
     cached = result.scalar_one_or_none()
 
+    unique_table_names = list(
+        dict.fromkeys(t["name"] for t in tables_touched)
+    )
+
     if cached and cached.graph_hash == current_hash:
         return TraceSummaryResponse(
             fqn=node_fqn,
             summary=cached.summary,
             layers_involved=trace_resp.layers_present,
-            tables_touched=[
-                t["name"] for t in tables_touched
-            ],
+            tables_touched=unique_table_names,
             cached=True,
             model=cached.model,
             tokens_used=cached.tokens_used,
@@ -613,24 +722,55 @@ async def trace_summary(
     else:
         client = create_bedrock_client(ai_config)
 
-    summary_text, tokens_used = (
-        await generate_trace_summary_text(
-            client=client,
-            model=ai_config.summary_model,
-            max_tokens=settings.summary_max_tokens,
-            trace_context=trace_context,
-            ai_config=ai_config,
+    try:
+        summary_text, tokens_used = (
+            await generate_trace_summary_text(
+                client=client,
+                model=ai_config.summary_model,
+                max_tokens=settings.summary_max_tokens,
+                trace_context=trace_context,
+                ai_config=ai_config,
+            )
         )
-    )
+    except Exception as exc:  # noqa: BLE001
+        # Surface AI provider failures as a structured response
+        # (invalid credentials, quota exceeded, network errors, etc.)
+        # so the frontend can display its "AI unavailable" state
+        # instead of crashing with a 500.
+        logger.error(
+            "trace_summary_ai_call_failed",
+            project_id=project_id,
+            node_fqn=node_fqn,
+            provider=ai_config.provider,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        detail = _friendly_ai_error(ai_config.provider, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        ) from exc
 
     from sqlalchemy.dialects.postgresql import (
         insert as pg_insert,
     )
 
+    # Link this summary to the latest completed analysis run for the
+    # project so we can audit "this cache entry was generated against
+    # which scan." Optional — fine if no run exists yet.
+    latest_run_result = await session.execute(
+        sa_select(AnalysisRun.id)
+        .where(AnalysisRun.project_id == project_id)
+        .order_by(AnalysisRun.started_at.desc())
+        .limit(1)
+    )
+    latest_run_id = latest_run_result.scalar_one_or_none()
+
     stmt = (
         pg_insert(AiSummary)
         .values(
             project_id=project_id,
+            analysis_run_id=latest_run_id,
             node_fqn=cache_key,
             summary=summary_text,
             model=ai_config.summary_model,
@@ -640,6 +780,7 @@ async def trace_summary(
         .on_conflict_do_update(
             index_elements=["project_id", "node_fqn"],
             set_={
+                "analysis_run_id": latest_run_id,
                 "summary": summary_text,
                 "model": ai_config.summary_model,
                 "graph_hash": current_hash,
@@ -654,12 +795,257 @@ async def trace_summary(
         fqn=node_fqn,
         summary=summary_text,
         layers_involved=trace_resp.layers_present,
-        tables_touched=[
-            t["name"] for t in tables_touched
-        ],
+        tables_touched=unique_table_names,
         cached=False,
         model=ai_config.summary_model,
         tokens_used=tokens_used,
+    )
+
+
+# ── 1d. Trace Follow-up Chat ─────────────────────────────
+
+
+def _chat_row_to_dto(row: AiTraceChatMessage) -> TraceChatMessage:
+    return TraceChatMessage(
+        id=row.id,
+        role=row.role,
+        content=row.content,
+        created_at=row.created_at.isoformat(),
+        model=row.model,
+        tokens_used=row.tokens_used,
+    )
+
+
+@router.get(
+    "/{project_id}/trace-chat/{node_fqn:path}",
+    response_model=TraceChatHistoryResponse,
+)
+async def trace_chat_history(
+    project_id: str,
+    node_fqn: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> TraceChatHistoryResponse:
+    """Load persisted follow-up Q&A messages for a trace node."""
+    result = await session.execute(
+        sa_select(AiTraceChatMessage)
+        .where(
+            AiTraceChatMessage.project_id == project_id,
+            AiTraceChatMessage.node_fqn == node_fqn,
+        )
+        .order_by(AiTraceChatMessage.created_at.asc())
+    )
+    rows = result.scalars().all()
+    return TraceChatHistoryResponse(
+        fqn=node_fqn,
+        messages=[_chat_row_to_dto(r) for r in rows],
+    )
+
+
+@router.delete(
+    "/{project_id}/trace-chat/{node_fqn:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def trace_chat_clear(
+    project_id: str,
+    node_fqn: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """Delete all follow-up messages for a node (user-initiated reset)."""
+    from sqlalchemy import delete as sa_delete
+
+    await session.execute(
+        sa_delete(AiTraceChatMessage).where(
+            AiTraceChatMessage.project_id == project_id,
+            AiTraceChatMessage.node_fqn == node_fqn,
+        )
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{project_id}/trace-chat/{node_fqn:path}",
+    response_model=TraceChatSendResponse,
+)
+async def trace_chat_send(
+    project_id: str,
+    node_fqn: str,
+    body: TraceChatSendRequest,
+    store: Neo4jGraphStore = Depends(get_graph_store),
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> TraceChatSendResponse:
+    """Ask a follow-up question about a trace route.
+
+    The endpoint is stateful-on-the-server: we load the stored
+    summary and conversation history for `(project_id, node_fqn)`,
+    append the new question, call the LLM, then persist both the
+    user message and the assistant's response. The client just
+    sends the question; server returns the assistant's reply.
+    """
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question cannot be empty",
+        )
+    if len(question) > 4000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question exceeds 4000 characters",
+        )
+
+    # Rebuild trace context (same as summary endpoint) so the
+    # chat is grounded in the actual trace topology, not stale data.
+    trace_resp = await trace_route(
+        project_id=project_id,
+        node_fqn=node_fqn,
+        max_depth=body.max_depth,
+        store=store,
+    )
+
+    seen_tables: set[tuple[str, str]] = set()
+    tables_touched: list[dict[str, str]] = []
+    for edge in trace_resp.edges:
+        if edge.type in ("READS", "WRITES"):
+            target_name = edge.target.split(":")[-1]
+            pair = (target_name, edge.type)
+            if pair in seen_tables:
+                continue
+            seen_tables.add(pair)
+            tables_touched.append(
+                {"name": target_name, "access_type": edge.type}
+            )
+
+    trace_context = {
+        "center": {
+            "name": trace_resp.center_name,
+            "kind": trace_resp.center_kind,
+            "layer": trace_resp.center_layer,
+            "fqn": trace_resp.center_fqn,
+        },
+        "upstream": [
+            {
+                "name": n.name,
+                "kind": n.kind,
+                "layer": n.layer,
+                "fqn": n.fqn,
+                "sequence": n.sequence,
+            }
+            for n in trace_resp.upstream
+        ],
+        "downstream": [
+            {
+                "name": n.name,
+                "kind": n.kind,
+                "layer": n.layer,
+                "fqn": n.fqn,
+                "sequence": n.sequence,
+            }
+            for n in trace_resp.downstream
+        ],
+        "tables_touched": tables_touched,
+        "layers_involved": trace_resp.layers_present,
+    }
+    current_hash = compute_trace_hash(trace_context)
+
+    # Load existing summary (used as the primer assistant turn).
+    summary_cache_key = f"trace:{node_fqn}"
+    summary_row_result = await session.execute(
+        sa_select(AiSummary).where(
+            AiSummary.project_id == project_id,
+            AiSummary.node_fqn == summary_cache_key,
+        )
+    )
+    summary_row = summary_row_result.scalar_one_or_none()
+    summary_text = summary_row.summary if summary_row else None
+
+    # Load prior chat history, oldest-first.
+    history_result = await session.execute(
+        sa_select(AiTraceChatMessage)
+        .where(
+            AiTraceChatMessage.project_id == project_id,
+            AiTraceChatMessage.node_fqn == node_fqn,
+        )
+        .order_by(AiTraceChatMessage.created_at.asc())
+    )
+    history_rows = history_result.scalars().all()
+    history_payload = [
+        {"role": r.role, "content": r.content} for r in history_rows
+    ]
+
+    # Call the LLM with the assembled context.
+    settings = get_settings()
+    ai_config = await get_ai_config(session)
+    if ai_config.provider == "openai":
+        client = create_openai_client(ai_config)
+    else:
+        client = create_bedrock_client(ai_config)
+
+    try:
+        answer_text, tokens_used = await generate_trace_chat_reply(
+            client=client,
+            model=ai_config.summary_model,
+            max_tokens=settings.summary_max_tokens,
+            trace_context=trace_context,
+            summary_text=summary_text,
+            history=history_payload,
+            question=question,
+            ai_config=ai_config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "trace_chat_ai_call_failed",
+            project_id=project_id,
+            node_fqn=node_fqn,
+            provider=ai_config.provider,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_friendly_ai_error(ai_config.provider, exc),
+        ) from exc
+
+    # Resolve analysis_run for audit.
+    latest_run_result = await session.execute(
+        sa_select(AnalysisRun.id)
+        .where(AnalysisRun.project_id == project_id)
+        .order_by(AnalysisRun.started_at.desc())
+        .limit(1)
+    )
+    latest_run_id = latest_run_result.scalar_one_or_none()
+
+    # Persist user + assistant messages atomically.
+    user_row = AiTraceChatMessage(
+        project_id=project_id,
+        analysis_run_id=latest_run_id,
+        node_fqn=node_fqn,
+        role="user",
+        content=question,
+        graph_hash=current_hash,
+    )
+    assistant_row = AiTraceChatMessage(
+        project_id=project_id,
+        analysis_run_id=latest_run_id,
+        node_fqn=node_fqn,
+        role="assistant",
+        content=answer_text,
+        model=ai_config.summary_model,
+        tokens_used=tokens_used,
+        graph_hash=current_hash,
+    )
+    session.add_all([user_row, assistant_row])
+    await session.commit()
+    await session.refresh(user_row)
+    await session.refresh(assistant_row)
+
+    return TraceChatSendResponse(
+        fqn=node_fqn,
+        user_message=_chat_row_to_dto(user_row),
+        assistant_message=_chat_row_to_dto(assistant_row),
     )
 
 

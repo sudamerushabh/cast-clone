@@ -25,7 +25,7 @@ Produces:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 
@@ -147,7 +147,21 @@ class ASPNetDIPlugin(FrameworkPlugin):
         edges.extend(ctor_edges)
         log.info("aspnet_di_constructor_injections", count=len(ctor_edges))
 
-        # Phase 5: Store shared DI map on context for downstream plugins
+        # Phase 5: Create method-level IMPLEMENTS bridge edges.
+        # .NET code calls interface methods (IService.DoSomething) but
+        # the implementation lives on the concrete class (ServiceImpl.DoSomething).
+        # Without method-to-method IMPLEMENTS edges, trace route queries
+        # hit a dead end at every interface boundary.
+        method_impl_edges = self._create_method_implements_edges(
+            graph, registrations
+        )
+        edges.extend(method_impl_edges)
+        log.info(
+            "aspnet_di_method_implements",
+            count=len(method_impl_edges),
+        )
+
+        # Phase 6: Store shared DI map on context for downstream plugins
         context.dotnet_di_map = di_lookup
 
         log.info(
@@ -362,3 +376,151 @@ class ASPNetDIPlugin(FrameworkPlugin):
                         )
 
         return edges, di_lookup
+
+    def _create_method_implements_edges(
+        self,
+        graph: SymbolGraph,
+        registrations: list[_DIRegistration],
+    ) -> list[GraphEdge]:
+        """Create IMPLEMENTS edges from interface methods to concrete methods.
+
+        Two sources of interface-implementation pairs:
+          1. DI registrations (IFoo → FooImpl via AddScoped/AddTransient)
+          2. Tree-sitter `implements` property on CLASS nodes (covers
+             non-DI-registered interfaces like IBackgroundJob and generic
+             interfaces like IRepository<T> whose class-level IMPLEMENTS
+             edges get lost due to namespace/generic arity mismatches)
+
+        For each pair, find methods by name and create method-level
+        bridge edges so trace route queries can cross interface
+        boundaries.
+        """
+        edges: list[GraphEdge] = []
+        seen_pairs: set[tuple[str, str]] = set()
+
+        # Source 1: DI registrations (explicit and resolved by plugin)
+        for reg in registrations:
+            if not reg.interface_fqn or not reg.implementation_fqn:
+                continue
+            if reg.interface_fqn == reg.implementation_fqn:
+                continue  # Skip self-registrations
+            self._bridge_methods(
+                graph,
+                iface_fqn=reg.interface_fqn,
+                impl_fqn=reg.implementation_fqn,
+                seen_pairs=seen_pairs,
+                edges=edges,
+                evidence="aspnet-di:method-bridge",
+            )
+
+        # Source 2: tree-sitter `implements` property (simple-name lookup).
+        # This catches interfaces that are not in the DI registrations list
+        # but are still declared via `class Foo : IFoo` syntax. Also works
+        # around namespace-resolution bugs where the tree-sitter
+        # class-level IMPLEMENTS edge points to the wrong namespace and
+        # gets dropped by the writer.
+        iface_name_to_fqn: dict[str, str] = {}
+        for node in graph.nodes.values():
+            if node.kind == NodeKind.INTERFACE:
+                # Simple name lookup. If names collide across namespaces,
+                # the last one indexed wins — acceptable trade-off for
+                # the common case where interface names are unique.
+                iface_name_to_fqn[node.name] = node.fqn
+
+        for node in graph.nodes.values():
+            if node.kind != NodeKind.CLASS:
+                continue
+            implements_list = node.properties.get("implements") or []
+            for impl_decl in implements_list:
+                # Strip generics: IRepository<T> -> IRepository
+                bare_iface_name = impl_decl.split("<", 1)[0].strip()
+                iface_fqn = iface_name_to_fqn.get(bare_iface_name)
+                if not iface_fqn or iface_fqn == node.fqn:
+                    continue
+                self._bridge_methods(
+                    graph,
+                    iface_fqn=iface_fqn,
+                    impl_fqn=node.fqn,
+                    seen_pairs=seen_pairs,
+                    edges=edges,
+                    evidence="aspnet-di:treesitter-bridge",
+                )
+
+        return edges
+
+    def _bridge_methods(
+        self,
+        graph: SymbolGraph,
+        iface_fqn: str,
+        impl_fqn: str,
+        seen_pairs: set[tuple[str, str]],
+        edges: list[GraphEdge],
+        evidence: str,
+    ) -> None:
+        """Create method-level IMPLEMENTS edges for a single iface→impl pair.
+
+        Walks INHERITS edges on the implementation side so that methods
+        inherited from a base class (common in .NET with
+        `RepositoryWithTypedId : Repository`) are included in the match.
+        """
+        # Collect methods on the interface (direct CONTAINS children)
+        iface_methods: dict[str, str] = {}
+        for edge in graph.get_edges_from(iface_fqn):
+            if edge.kind != EdgeKind.CONTAINS:
+                continue
+            child = graph.get_node(edge.target_fqn)
+            if child and child.kind == NodeKind.FUNCTION:
+                iface_methods[child.name] = child.fqn
+
+        if not iface_methods:
+            return
+
+        # Collect methods on the implementation class, walking up the
+        # INHERITS chain so inherited methods are bridged. Child class
+        # methods take priority (first-win) over base class methods.
+        impl_methods: dict[str, str] = {}
+        visited_classes: set[str] = set()
+        current_fqn: str | None = impl_fqn
+        while current_fqn and current_fqn not in visited_classes:
+            visited_classes.add(current_fqn)
+            for edge in graph.get_edges_from(current_fqn):
+                if edge.kind != EdgeKind.CONTAINS:
+                    continue
+                child = graph.get_node(edge.target_fqn)
+                if (
+                    child
+                    and child.kind == NodeKind.FUNCTION
+                    and child.name not in impl_methods
+                ):
+                    impl_methods[child.name] = child.fqn
+            # Walk up to base class via INHERITS
+            next_fqn: str | None = None
+            for edge in graph.get_edges_from(current_fqn):
+                if edge.kind == EdgeKind.INHERITS:
+                    next_fqn = edge.target_fqn
+                    break
+            current_fqn = next_fqn
+
+        # Match by name and create bridge edges
+        for method_name, iface_method_fqn in iface_methods.items():
+            impl_method_fqn = impl_methods.get(method_name)
+            if not impl_method_fqn:
+                continue
+            pair = (iface_method_fqn, impl_method_fqn)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+
+            edges.append(
+                GraphEdge(
+                    source_fqn=iface_method_fqn,
+                    target_fqn=impl_method_fqn,
+                    kind=EdgeKind.IMPLEMENTS,
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                    properties={
+                        "framework": "aspnet",
+                        "bridge_type": "interface_dispatch",
+                    },
+                )
+            )

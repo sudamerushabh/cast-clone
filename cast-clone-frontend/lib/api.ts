@@ -72,6 +72,8 @@ import type {
   AiTestConnectionResponse,
   TraceRouteResponse,
   TraceSummaryResponse,
+  TraceChatHistoryResponse,
+  TraceChatSendResponse,
 } from "./types";
 
 const BASE_URL =
@@ -352,7 +354,41 @@ export async function getTraceSummary(
     max_depth: String(maxDepth),
   });
   return apiFetch<TraceSummaryResponse>(
-    `/api/v1/analysis/${projectId}/trace/${encodeURIComponent(nodeFqn)}/summary?${params}`,
+    `/api/v1/analysis/${projectId}/trace-summary/${encodeURIComponent(nodeFqn)}?${params}`,
+  );
+}
+
+export async function getTraceChatHistory(
+  projectId: string,
+  nodeFqn: string,
+): Promise<TraceChatHistoryResponse> {
+  return apiFetch<TraceChatHistoryResponse>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+  );
+}
+
+export async function sendTraceChatMessage(
+  projectId: string,
+  nodeFqn: string,
+  question: string,
+  maxDepth: number = 5,
+): Promise<TraceChatSendResponse> {
+  return apiFetch<TraceChatSendResponse>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ question, max_depth: maxDepth }),
+    },
+  );
+}
+
+export async function clearTraceChatHistory(
+  projectId: string,
+  nodeFqn: string,
+): Promise<void> {
+  await apiFetch<void>(
+    `/api/v1/analysis/${projectId}/trace-chat/${encodeURIComponent(nodeFqn)}`,
+    { method: "DELETE" },
   );
 }
 

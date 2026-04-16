@@ -305,3 +305,114 @@ async def generate_trace_summary_text(
         + response.usage.output_tokens
     )
     return text, tokens
+
+
+# ──────────────────────────────────────────────────────────────────
+# Trace Route Follow-up Chat
+# ──────────────────────────────────────────────────────────────────
+
+TRACE_CHAT_SYSTEM_PROMPT = (
+    "You are an expert software architect helping a developer "
+    "understand a specific code execution trace. You have been "
+    "given:\n"
+    "- The trace topology: upstream callers, downstream callees, "
+    "architectural layers, tables touched.\n"
+    "- A prior AI-generated summary of this trace (treat it as "
+    "established context).\n"
+    "- The developer's conversation history about this trace.\n\n"
+    "Answer their follow-up questions grounded in the trace "
+    "context. Rules:\n"
+    "1. Cite specific class/method names from the trace.\n"
+    "2. If the question isn't answerable from the trace alone, "
+    "say so and suggest what additional context would help.\n"
+    "3. Do not invent methods or tables not present in the trace.\n"
+    "4. Be concise but technical. Use markdown for formatting.\n"
+    "5. If the user asks about generic concepts, relate them back "
+    "to this specific trace when possible."
+)
+
+
+async def generate_trace_chat_reply(
+    client: AsyncAnthropicBedrock | AsyncOpenAI,
+    model: str,
+    max_tokens: int,
+    trace_context: dict[str, Any],
+    summary_text: str | None,
+    history: list[dict[str, str]],
+    question: str,
+    ai_config: EffectiveAiConfig | None = None,
+) -> tuple[str, int]:
+    """Generate a follow-up answer grounded in the trace context.
+
+    Args:
+        client: Anthropic Bedrock or OpenAI async client.
+        model: Model identifier.
+        max_tokens: Response cap.
+        trace_context: Same structured trace topology used for the
+            summary. Serialized as JSON and injected as the first
+            user turn so the LLM treats it as durable context.
+        summary_text: Prior AI summary text, if any. Injected as
+            the first assistant turn so the model doesn't re-summarize.
+        history: Prior chat turns, oldest-first, as
+            [{"role": "user"|"assistant", "content": str}, ...].
+        question: The new user question.
+        ai_config: Provider config (temperature, etc).
+
+    Returns:
+        (answer_text, tokens_used)
+    """
+    context_json = json.dumps(trace_context, default=str)
+
+    context_primer_user = (
+        "Trace topology (JSON):\n"
+        f"```json\n{context_json}\n```"
+    )
+    context_primer_assistant = (
+        summary_text.strip()
+        if summary_text
+        else "Got it — I have the trace context. Ask your question."
+    )
+
+    # Assemble messages: context primer → prior history → new question
+    messages: list[dict[str, str]] = [
+        {"role": "user", "content": context_primer_user},
+        {"role": "assistant", "content": context_primer_assistant},
+    ]
+    for msg in history:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": question})
+
+    if isinstance(client, AsyncOpenAI):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": TRACE_CHAT_SYSTEM_PROMPT},
+                *messages,
+            ],
+        }
+        if ai_config and ai_config.temperature != 1.0:
+            kwargs["temperature"] = ai_config.temperature
+        response = await client.chat.completions.create(**kwargs)
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        tokens = (
+            (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
+            if usage
+            else 0
+        )
+        return text, tokens
+
+    # Anthropic / Bedrock path
+    response = await client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=TRACE_CHAT_SYSTEM_PROMPT,
+        messages=messages,
+    )
+    text = response.content[0].text
+    tokens = response.usage.input_tokens + response.usage.output_tokens
+    return text, tokens

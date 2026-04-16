@@ -165,3 +165,36 @@ class TraceSummaryResponse(BaseModel):
     cached: bool
     model: str | None = None
     tokens_used: int | None = None
+
+
+class TraceChatMessage(BaseModel):
+    """A single message in a trace-route Q&A thread."""
+
+    id: str
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: str
+    model: str | None = None
+    tokens_used: int | None = None
+
+
+class TraceChatHistoryResponse(BaseModel):
+    """Persisted conversation history for a trace-route node."""
+
+    fqn: str
+    messages: list[TraceChatMessage] = Field(default_factory=list)
+
+
+class TraceChatSendRequest(BaseModel):
+    """Body of POST trace-chat — one new user question."""
+
+    question: str
+    max_depth: int = 5
+
+
+class TraceChatSendResponse(BaseModel):
+    """Response after the AI has replied to a follow-up question."""
+
+    fqn: str
+    user_message: TraceChatMessage
+    assistant_message: TraceChatMessage

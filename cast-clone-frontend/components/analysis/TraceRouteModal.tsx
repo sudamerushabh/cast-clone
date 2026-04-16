@@ -19,6 +19,9 @@ import {
   Loader2,
   PanelRightOpen,
   PanelRightClose,
+  Send,
+  Trash2,
+  User as UserIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -32,7 +35,8 @@ import {
 import { ensureCytoscapeExtensions } from "@/lib/cytoscape-setup"
 import { useTraceRoute } from "@/hooks/useTraceRoute"
 import { useTraceSummary } from "@/hooks/useTraceSummary"
-import type { TraceNode, TraceEdge, TraceRouteResponse, TraceSummaryResponse } from "@/lib/types"
+import { useTraceChat } from "@/hooks/useTraceChat"
+import type { TraceNode, TraceEdge, TraceRouteResponse, TraceSummaryResponse, TraceChatMessage } from "@/lib/types"
 
 ensureCytoscapeExtensions()
 
@@ -445,6 +449,50 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
 
   const elements = useMemo(() => buildTraceElements(data), [data])
 
+  // Height (in model units, pre-zoom) of each swim lane. Nodes are
+  // snapped onto their layer's row after dagre runs so the visual
+  // banding always matches the data, regardless of call depth.
+  const LANE_HEIGHT_MODEL = 120
+
+  const snapNodesToLayers = useCallback(() => {
+    const cy = cyRef.current
+    if (!cy || cy.nodes().length === 0) return
+
+    const visibleLayers = LAYER_ORDER.filter(
+      (l) => cy.nodes(`[layer = "${l}"]`).length > 0,
+    )
+
+    // Minimum horizontal spacing between nodes in the same lane.
+    // Nodes are 50w; allow 30px gap for edge breathing room.
+    const MIN_X_SPACING = 80
+
+    visibleLayers.forEach((layer, laneIdx) => {
+      const laneCenterY = laneIdx * LANE_HEIGHT_MODEL + LANE_HEIGHT_MODEL / 2
+
+      // Collect non-parent nodes in this layer, sorted by dagre's X
+      // (preserves edge-crossing-minimized ordering).
+      const layerNodes: cytoscape.NodeSingular[] = []
+      cy.nodes(`[layer = "${layer}"]`).forEach(
+        (node: cytoscape.NodeSingular) => {
+          if (!node.isParent()) layerNodes.push(node)
+        },
+      )
+      layerNodes.sort((a, b) => a.position().x - b.position().x)
+
+      // Re-space to eliminate horizontal overlap while keeping the
+      // original centroid so the layout stays centered.
+      if (layerNodes.length === 0) return
+      const originalCentroidX =
+        layerNodes.reduce((sum, n) => sum + n.position().x, 0) /
+        layerNodes.length
+      const totalWidth = (layerNodes.length - 1) * MIN_X_SPACING
+      const startX = originalCentroidX - totalWidth / 2
+      layerNodes.forEach((node, i) => {
+        node.position({ x: startX + i * MIN_X_SPACING, y: laneCenterY })
+      })
+    })
+  }, [])
+
   const computeSwimLanes = useCallback(() => {
     const cy = cyRef.current
     if (!cy || cy.nodes().length === 0) return
@@ -452,48 +500,24 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
     const pan = cy.pan()
     const zoom = cy.zoom()
 
-    // Group nodes by layer
-    const layerNodes = new Map<string, cytoscape.NodeCollection>()
-    for (const layer of LAYER_ORDER) {
-      const nodes = cy.nodes(`[layer = "${layer}"]`)
-      if (nodes.length > 0) {
-        layerNodes.set(layer, nodes)
+    const visibleLayers = LAYER_ORDER.filter(
+      (l) => cy.nodes(`[layer = "${l}"]`).length > 0,
+    )
+
+    // After snap-to-layer, each layer's nodes share the same
+    // model-space Y band. We just convert that band to screen space.
+    const rawLanes: SwimLane[] = visibleLayers.map((layer, laneIdx) => {
+      const laneCenterYModel =
+        laneIdx * LANE_HEIGHT_MODEL + LANE_HEIGHT_MODEL / 2
+      const topModel = laneCenterYModel - LANE_HEIGHT_MODEL / 2
+      const topScreen = topModel * zoom + pan.y
+      const heightScreen = LANE_HEIGHT_MODEL * zoom
+      return {
+        layer,
+        top: topScreen,
+        height: heightScreen,
       }
-    }
-
-    const rawLanes: SwimLane[] = []
-    for (const [layer, nodes] of layerNodes.entries()) {
-      let minY = Infinity
-      let maxY = -Infinity
-
-      nodes.forEach((node: cytoscape.NodeSingular) => {
-        const pos = node.position()
-        const h = node.outerHeight() ?? 36
-        const nodeTopY = (pos.y - h / 2) * zoom + pan.y
-        const nodeBottomY = (pos.y + h / 2) * zoom + pan.y
-        if (nodeTopY < minY) minY = nodeTopY
-        if (nodeBottomY > maxY) maxY = nodeBottomY
-      })
-
-      if (minY !== Infinity) {
-        const padding = 25
-        rawLanes.push({
-          layer,
-          top: minY - padding,
-          height: maxY - minY + padding * 2,
-        })
-      }
-    }
-
-    // Ensure no overlap: push each lane below the previous
-    const minGap = 4
-    for (let i = 1; i < rawLanes.length; i++) {
-      const prev = rawLanes[i - 1]
-      const prevBottom = prev.top + prev.height
-      if (rawLanes[i].top < prevBottom + minGap) {
-        rawLanes[i].top = prevBottom + minGap
-      }
-    }
+    })
 
     setSwimLanes(rawLanes)
   }, [])
@@ -534,14 +558,16 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
         const layout = cy.layout({
           name: "dagre",
           rankDir: "TB",
-          nodeSep: 60,
-          rankSep: 80,
-          fit: true,
+          nodeSep: 50,
+          rankSep: 60,
+          fit: false,
           padding: 40,
           animate: false,
         } as cytoscape.LayoutOptions)
         layout.run()
-        // Compute swim lanes after layout
+        // Snap Y to layer rows, then fit to viewport
+        snapNodesToLayers()
+        cy.fit(undefined, 40)
         setTimeout(computeSwimLanes, 50)
       } catch {
         // Layout may fail with 0 nodes
@@ -549,7 +575,7 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
     }, 50)
 
     return () => clearTimeout(timer)
-  }, [computeSwimLanes])
+  }, [computeSwimLanes, snapNodesToLayers])
 
   // Re-run layout when elements change
   useEffect(() => {
@@ -561,13 +587,15 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
         const layout = cy.layout({
           name: "dagre",
           rankDir: "TB",
-          nodeSep: 60,
-          rankSep: 80,
-          fit: true,
+          nodeSep: 50,
+          rankSep: 60,
+          fit: false,
           padding: 40,
           animate: false,
         } as cytoscape.LayoutOptions)
         layout.run()
+        snapNodesToLayers()
+        cy.fit(undefined, 40)
         setTimeout(computeSwimLanes, 50)
       } catch {
         // noop
@@ -575,7 +603,24 @@ function TraceGraph({ data }: { data: TraceRouteResponse }) {
     }, 100)
 
     return () => clearTimeout(timer)
-  }, [elements, computeSwimLanes])
+  }, [elements, computeSwimLanes, snapNodesToLayers])
+
+  // Refit the graph when the container resizes (e.g. when the user
+  // drags the split-panel divider). Cytoscape doesn't auto-fit on
+  // container size change, so we detect it manually.
+  useEffect(() => {
+    const container = containerRef.current
+    const cy = cyRef.current
+    if (!container) return
+    const observer = new ResizeObserver(() => {
+      if (!cy) return
+      cy.resize()
+      cy.fit(undefined, 40)
+      computeSwimLanes()
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [computeSwimLanes])
 
   if (elements.length <= 1) {
     return (
@@ -719,14 +764,17 @@ function AiSummaryPanel({
   maxDepth: number
   hasConnections: boolean
 }) {
-  const { summary, isLoading, error, fetch: fetchSummary, retry, clear } = useTraceSummary()
+  const { summary, isLoading, error, errorStatus, fetch: fetchSummary, retry, clear } = useTraceSummary()
+  const chat = useTraceChat()
 
   useEffect(() => {
     if (nodeFqn && hasConnections) {
       fetchSummary(projectId, nodeFqn, maxDepth)
+      chat.load(projectId, nodeFqn)
     }
     return () => {
       clear()
+      chat.clear()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeFqn, projectId, maxDepth, hasConnections])
@@ -753,20 +801,30 @@ function AiSummaryPanel({
 
   // Error state
   if (error) {
-    const isAuthError = error.includes("401") || error.toLowerCase().includes("not configured")
+    // 401 = no auth token, 503 = provider misconfigured/unreachable.
+    // Both are resolved by visiting the Settings page.
+    const isConfigError =
+      errorStatus === 401 ||
+      errorStatus === 503 ||
+      error.toLowerCase().includes("not configured")
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
         <Sparkles className="size-8 text-muted-foreground/40" />
-        {isAuthError ? (
+        {isConfigError ? (
           <>
-            <p className="text-sm text-muted-foreground">AI provider not configured</p>
+            <p className="text-sm text-muted-foreground">AI summary unavailable</p>
+            <p className="text-xs text-muted-foreground/70 max-w-xs">{error}</p>
             <a
               href="/settings/system"
               className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
             >
               <Cog className="size-3" />
-              Configure AI provider in Settings
+              Open AI Settings
             </a>
+            <Button variant="outline" size="sm" onClick={retry} className="mt-1 gap-1.5">
+              <RefreshCw className="size-3" />
+              Retry
+            </Button>
           </>
         ) : (
           <>
@@ -785,9 +843,77 @@ function AiSummaryPanel({
   // Success state
   if (summary) {
     return (
-      <div className="flex h-full flex-col">
-        {/* Header */}
-        <div className="flex items-center gap-2 border-b pb-3">
+      <AiSummaryWithChat
+        summary={summary}
+        projectId={projectId}
+        nodeFqn={nodeFqn}
+        maxDepth={maxDepth}
+        chat={chat}
+      />
+    )
+  }
+
+  // Default / waiting state
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+      <Sparkles className="size-8 text-muted-foreground/40" />
+      <p className="text-sm text-muted-foreground">AI summary will appear here</p>
+    </div>
+  )
+}
+
+// ─── Summary + Chat composite ───────────────────────────────────────────────
+
+type ChatHook = ReturnType<typeof useTraceChat>
+
+function AiSummaryWithChat({
+  summary,
+  projectId,
+  nodeFqn,
+  maxDepth,
+  chat,
+}: {
+  summary: TraceSummaryResponse
+  projectId: string
+  nodeFqn: string | null
+  maxDepth: number
+  chat: ChatHook
+}) {
+  const [draft, setDraft] = useState("")
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Auto-scroll to the bottom when a new message arrives.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [chat.messages.length, chat.isSending])
+
+  const canSend =
+    !chat.isSending && draft.trim().length > 0 && nodeFqn !== null
+
+  const handleSend = useCallback(async () => {
+    if (!canSend || !nodeFqn) return
+    const question = draft.trim()
+    setDraft("")
+    await chat.send(projectId, nodeFqn, question, maxDepth)
+    textareaRef.current?.focus()
+  }, [canSend, draft, projectId, nodeFqn, maxDepth, chat])
+
+  const handleClearHistory = useCallback(async () => {
+    if (!nodeFqn) return
+    if (chat.messages.length === 0) return
+    const confirmed = window.confirm("Clear all follow-up messages for this node?")
+    if (!confirmed) return
+    await chat.clearServer(projectId, nodeFqn)
+  }, [nodeFqn, projectId, chat])
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Scrollable region: summary + metadata + chat thread */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pr-1">
+        {/* Summary header */}
+        <div className="sticky top-0 z-10 flex items-center gap-2 bg-background/95 backdrop-blur border-b pb-3">
           <Sparkles className="size-4 text-amber-500" />
           <span className="text-sm font-semibold">AI Flow Summary</span>
           {summary.cached && (
@@ -795,16 +921,26 @@ function AiSummaryPanel({
               Cached
             </Badge>
           )}
+          {chat.messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 gap-1 px-2 text-[10px] text-muted-foreground hover:text-destructive"
+              onClick={handleClearHistory}
+              title="Clear conversation"
+            >
+              <Trash2 className="size-3" />
+              Clear chat
+            </Button>
+          )}
         </div>
 
-        {/* Markdown content */}
-        <div className="mt-3 flex-1 overflow-y-auto">
-          <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
-            <ReactMarkdown>{summary.summary}</ReactMarkdown>
-          </div>
+        {/* Summary markdown */}
+        <div className="mt-3 prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
+          <ReactMarkdown>{summary.summary}</ReactMarkdown>
         </div>
 
-        {/* Footer metadata */}
+        {/* Layers/tables metadata */}
         {(summary.layers_involved.length > 0 || summary.tables_touched.length > 0) && (
           <div className="mt-3 border-t pt-3 space-y-2">
             {summary.layers_involved.length > 0 && (
@@ -830,7 +966,7 @@ function AiSummaryPanel({
                   Tables
                 </p>
                 <div className="flex flex-wrap gap-1">
-                  {summary.tables_touched.map((table) => (
+                  {Array.from(new Set(summary.tables_touched)).map((table) => (
                     <Badge
                       key={table}
                       variant="outline"
@@ -845,15 +981,113 @@ function AiSummaryPanel({
             )}
           </div>
         )}
-      </div>
-    )
-  }
 
-  // Default / waiting state
+        {/* Chat thread */}
+        {chat.messages.length > 0 && (
+          <>
+            <Separator className="my-4" />
+            <div className="flex items-center gap-2 mb-3">
+              <GitBranch className="size-3.5 text-blue-500" />
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Follow-up Q&amp;A
+              </span>
+            </div>
+            <div className="space-y-3">
+              {chat.messages.map((msg) => (
+                <ChatBubble key={msg.id} message={msg} />
+              ))}
+              {chat.isSending && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" />
+                  Thinking…
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Error surface */}
+        {chat.error && (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+            {chat.error}
+          </div>
+        )}
+      </div>
+
+      {/* Composer — pinned to the bottom */}
+      <div className="mt-2 border-t bg-background pt-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSend()
+          }}
+          className="flex items-end gap-2"
+        >
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="Ask a follow-up about this trace…"
+            rows={2}
+            disabled={chat.isSending}
+            className="flex-1 resize-none rounded-md border bg-background px-2.5 py-2 text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!canSend}
+            className="h-9 shrink-0 gap-1 px-3"
+          >
+            {chat.isSending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Send className="size-3.5" />
+            )}
+            Send
+          </Button>
+        </form>
+        <p className="mt-1 text-[10px] text-muted-foreground/60">
+          Enter to send · Shift+Enter for newline
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function ChatBubble({ message }: { message: TraceChatMessage }) {
+  const isUser = message.role === "user"
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-      <Sparkles className="size-8 text-muted-foreground/40" />
-      <p className="text-sm text-muted-foreground">AI summary will appear here</p>
+    <div className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+      <div
+        className={`flex size-6 shrink-0 items-center justify-center rounded-full ${
+          isUser
+            ? "bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-300"
+            : "bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-300"
+        }`}
+      >
+        {isUser ? <UserIcon className="size-3" /> : <Sparkles className="size-3" />}
+      </div>
+      <div
+        className={`max-w-[85%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
+          isUser
+            ? "bg-blue-50 text-blue-900 dark:bg-blue-950/50 dark:text-blue-100"
+            : "bg-muted/60 text-foreground"
+        }`}
+      >
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <div className="prose prose-xs dark:prose-invert max-w-none break-words">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -965,6 +1199,51 @@ export function TraceRouteModal({
   const [viewMode, setViewMode] = useState<"graph" | "list">("graph")
   const [maxDepth, setMaxDepth] = useState(5)
   const [summaryOpen, setSummaryOpen] = useState(true)
+  // AI summary panel width as % of the split area (20-70% range).
+  // Persisted to localStorage so the user's preference sticks.
+  const [summaryWidth, setSummaryWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 40
+    const stored = window.localStorage.getItem("traceroute:summaryWidth")
+    const parsed = stored ? Number(stored) : NaN
+    return Number.isFinite(parsed) && parsed >= 20 && parsed <= 70 ? parsed : 40
+  })
+  const splitContainerRef = useRef<HTMLDivElement | null>(null)
+  const isResizingRef = useRef(false)
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        "traceroute:summaryWidth",
+        String(summaryWidth),
+      )
+    }
+  }, [summaryWidth])
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isResizingRef.current = true
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const onMove = (ev: MouseEvent) => {
+      const container = splitContainerRef.current
+      if (!container || !isResizingRef.current) return
+      const rect = container.getBoundingClientRect()
+      const rightPct = ((rect.right - ev.clientX) / rect.width) * 100
+      // Clamp to usable range
+      const clamped = Math.min(70, Math.max(20, rightPct))
+      setSummaryWidth(clamped)
+    }
+    const onUp = () => {
+      isResizingRef.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }, [])
 
   // Fetch trace when modal opens or depth changes
   useEffect(() => {
@@ -1077,9 +1356,16 @@ export function TraceRouteModal({
             <span className="text-sm text-muted-foreground">Analyzing trace route...</span>
           </div>
         ) : (
-          <div className="flex flex-1 min-h-0">
+          <div ref={splitContainerRef} className="flex flex-1 min-h-0">
             {/* Left panel: graph or list */}
-            <div className={`relative transition-all duration-200 ${summaryOpen ? "w-[60%]" : "w-full"}`}>
+            <div
+              className="relative min-w-0"
+              style={{
+                flex: summaryOpen
+                  ? `0 0 ${100 - summaryWidth}%`
+                  : "1 1 100%",
+              }}
+            >
               {viewMode === "graph" ? (
                 <div className="relative h-full overflow-hidden">
                   {data && <TraceGraph data={data} />}
@@ -1149,9 +1435,31 @@ export function TraceRouteModal({
               )}
             </div>
 
-            {/* Right panel: AI summary (collapsible) */}
+            {/* Draggable divider */}
             {summaryOpen && (
-              <div className="w-[40%] border-l overflow-y-auto p-4">
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize AI summary panel"
+                onMouseDown={handleResizeStart}
+                className="group relative flex w-1 shrink-0 cursor-col-resize items-center justify-center bg-border transition-colors hover:bg-blue-400"
+              >
+                {/* Wider hit area + grip dots */}
+                <div className="absolute inset-y-0 -inset-x-1" />
+                <div className="pointer-events-none flex flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-60">
+                  <div className="size-0.5 rounded-full bg-white" />
+                  <div className="size-0.5 rounded-full bg-white" />
+                  <div className="size-0.5 rounded-full bg-white" />
+                </div>
+              </div>
+            )}
+
+            {/* Right panel: AI summary (resizable) */}
+            {summaryOpen && (
+              <div
+                className="min-w-0 overflow-y-auto p-4"
+                style={{ flex: `0 0 calc(${summaryWidth}% - 4px)` }}
+              >
                 <AiSummaryPanel
                   projectId={projectId}
                   nodeFqn={node?.fqn ?? null}

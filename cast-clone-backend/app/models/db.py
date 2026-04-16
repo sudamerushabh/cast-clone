@@ -11,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     Numeric,
@@ -412,11 +413,68 @@ class AiSummary(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
+    # Analysis run that produced this summary. Used for auditing
+    # ("this summary was generated against scan X") and for invalidation
+    # when the user wants to clear cache after a re-scan.
+    analysis_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="SET NULL"), nullable=True
+    )
     node_fqn: Mapped[str] = mapped_column(String(500), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     graph_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    project: Mapped[Project] = relationship()
+
+
+class AiTraceChatMessage(Base):
+    """Follow-up Q&A thread attached to a trace-route summary.
+
+    Messages persist across modal closes/reopens so the user's
+    conversation with the AI about a specific node survives. Tied
+    to both the project and (optionally) the analysis run that
+    produced the graph — when the user re-analyzes and the topology
+    changes, history remains visible but new answers reflect the
+    new graph.
+    """
+
+    __tablename__ = "ai_trace_chat_messages"
+    __table_args__ = (
+        Index(
+            "ix_trace_chat_project_node_created",
+            "project_id",
+            "node_fqn",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    analysis_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    node_fqn: Mapped[str] = mapped_column(String(500), nullable=False)
+    # "user" for questions, "assistant" for AI responses
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Hash of the trace topology at the time this message was created.
+    # Lets the UI flag "this Q&A is from a stale view of the code".
+    graph_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
