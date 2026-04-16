@@ -9,7 +9,7 @@ from collections.abc import Generator
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import get_current_user
@@ -19,6 +19,44 @@ from app.services.neo4j import get_driver
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/export", tags=["export"])
+
+
+# Whitelist of node property names allowed in the `fields` query param for
+# node exports. Only names in this set may be interpolated into Cypher —
+# anything else is rejected with 400 to prevent Cypher injection.
+_ALLOWED_NODE_FIELDS: frozenset[str] = frozenset({
+    "fqn", "name", "kind", "language", "path", "file", "line", "end_line",
+    "loc", "complexity", "fan_in", "fan_out", "community_id",
+    "layer", "visibility",
+})
+
+
+# Whitelist of edge field names allowed in the `fields` query param for
+# edge exports. The Cypher template is fixed; this whitelist is used to
+# filter the projected CSV columns (DictWriter fieldnames) only.
+_ALLOWED_EDGE_FIELDS: frozenset[str] = frozenset({
+    "source", "target", "type", "weight", "confidence", "evidence",
+})
+
+
+def _validate_fields(raw: str, allowed: frozenset[str]) -> list[str]:
+    """Validate and parse the `fields` query param against a whitelist.
+
+    Returns the ordered list of validated field names. Raises 400 if the
+    caller passes any name outside the whitelist. Empty input yields an
+    empty list.
+    """
+    fields = [f.strip() for f in raw.split(",") if f.strip()]
+    bad = [f for f in fields if f not in allowed]
+    if bad:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown field(s): {', '.join(bad)}. "
+                f"Allowed: {sorted(allowed)}"
+            ),
+        )
+    return fields
 
 
 async def _neo4j_query(
@@ -52,10 +90,13 @@ async def export_nodes_csv(
     project_id: str,
     types: str | None = Query(default=None, description="Comma-separated node kinds"),
     fields: str = Query(default="fqn,name,kind,language,loc,complexity"),
+    # TODO(CHAN-54): switch to get_accessible_project(project_id) once the
+    # per-project authorization dependency lands so exports are gated by
+    # project ownership, not just authentication.
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export node list as CSV."""
-    field_list = [f.strip() for f in fields.split(",")]
+    field_list = _validate_fields(fields, _ALLOWED_NODE_FIELDS)
 
     cypher = "MATCH (n) WHERE n.app_name = $app_name"
     params: dict[str, Any] = {"app_name": project_id}
@@ -65,6 +106,8 @@ async def export_nodes_csv(
         cypher += " AND n.kind IN $kinds"
         params["kinds"] = type_list
 
+    # Every name in field_list has been validated against the whitelist, so
+    # interpolating them here is safe — they cannot contain Cypher syntax.
     cypher += " RETURN " + ", ".join(f"n.{f} AS {f}" for f in field_list)
 
     rows = await _neo4j_query(cypher, params)
@@ -83,10 +126,12 @@ async def export_edges_csv(
     project_id: str,
     types: str | None = Query(default=None, description="Comma-separated edge types"),
     fields: str = Query(default="source,target,type,weight"),
+    # TODO(CHAN-54): switch to get_accessible_project(project_id) once the
+    # per-project authorization dependency lands.
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export edge list as CSV."""
-    field_list = [f.strip() for f in fields.split(",")]
+    field_list = _validate_fields(fields, _ALLOWED_EDGE_FIELDS)
 
     cypher = """
     MATCH (a)-[r]->(b)
@@ -121,6 +166,8 @@ async def export_graph_json(
     level: str = Query(
         default="class", description="Export level: 'module' or 'class'"
     ),
+    # TODO(CHAN-54): switch to get_accessible_project(project_id) once the
+    # per-project authorization dependency lands.
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export full graph data as JSON."""
@@ -170,6 +217,8 @@ async def export_impact_csv(
     node: str = Query(..., description="FQN of the starting node"),
     direction: str = Query(default="both", description="downstream, upstream, or both"),
     max_depth: int = Query(default=5, ge=1, le=10),
+    # TODO(CHAN-54): switch to get_accessible_project(project_id) once the
+    # per-project authorization dependency lands.
     _user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export impact analysis result as CSV."""
