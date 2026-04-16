@@ -18,12 +18,14 @@ from __future__ import annotations
 import asyncio
 
 import structlog
+import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from app.ai import tools
 from app.ai.tools import ChatToolContext
 from app.config import get_settings
 from app.mcp.auth import ApiKeyAuthenticator
+from app.mcp.auth_middleware import McpAuthMiddleware
 from app.services.neo4j import Neo4jGraphStore, close_neo4j, get_driver, init_neo4j
 from app.services.postgres import close_postgres, get_background_session, init_postgres
 
@@ -252,13 +254,18 @@ async def run_server() -> None:
     logger.info("mcp_server_starting", port=settings.mcp_port)
 
     try:
-        # Run with SSE transport on configured port
-        # NOTE: Auth is handled at the application level — the MCP server
-        # validates API keys via _authenticator in a custom middleware.
-        # For FastMCP >=1.25, use mcp.run() with transport params.
-        # If FastMCP doesn't support auth natively, wrap with a FastAPI
-        # app that validates Bearer tokens before proxying to MCP.
-        await mcp.run_sse_async()
+        # Wrap the FastMCP SSE Starlette app with Bearer-auth middleware so
+        # every HTTP request is validated against ApiKeyAuthenticator before
+        # reaching any MCP tool. Non-HTTP scopes (lifespan) pass through.
+        sse_app = mcp.sse_app()
+        authenticated_app = McpAuthMiddleware(sse_app, _authenticator)
+        config = uvicorn.Config(
+            authenticated_app,
+            host=mcp.settings.host,
+            port=mcp.settings.port,
+            log_level=mcp.settings.log_level.lower(),
+        )
+        await uvicorn.Server(config).serve()
     finally:
         flush_task.cancel()
         try:
