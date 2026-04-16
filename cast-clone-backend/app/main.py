@@ -34,6 +34,7 @@ from app.api import (
     webhooks_router,
     websocket_router,
 )
+from app.api.middleware import AuthEnforcerMiddleware
 from app.config import Settings
 from app.services.neo4j import close_neo4j, init_neo4j
 from app.services.postgres import close_postgres, init_postgres
@@ -144,6 +145,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    application.add_middleware(AuthEnforcerMiddleware, settings=settings)
 
     # Register routers
     application.include_router(activity_router)
