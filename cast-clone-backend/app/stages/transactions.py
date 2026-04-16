@@ -103,17 +103,26 @@ def trace_transaction_flow(
     while queue:
         current_fqn, current_depth = queue.popleft()
 
+        # Ordering invariant (CHAN-81): dedupe FIRST, then apply filters, then
+        # record in the flow. The `visited` set must be updated before filter
+        # `continue`s so a rejected node (wrong kind / constructor) is not
+        # re-examined every time it appears as a CALLS target from another
+        # caller. Filtering before dedupe caused repeated work and, in graphs
+        # where the same logical callee is reachable via multiple edges, could
+        # let the same edge be counted more than once downstream.
         if current_fqn in visited:
             continue
+        visited.add(current_fqn)
 
-        # Only include Function nodes in the flow; skip constructors
         node = graph.get_node(current_fqn)
+        # Filter: only Function nodes participate in transaction flows.
         if node is None or node.kind != NodeKind.FUNCTION:
             continue
+        # Filter: constructors add noise — record as visited (above) so we
+        # short-circuit future encounters, but do not include in the flow.
         if node.name in _CONSTRUCTOR_NAMES:
             continue
 
-        visited.add(current_fqn)
         flow.visited_fqns.append(current_fqn)
         flow.depth = max(flow.depth, current_depth)
 
@@ -132,7 +141,6 @@ def trace_transaction_flow(
                 # Follow CALLS, INJECTS (Spring DI), and DEPENDS_ON edges
                 if edge.kind in (EdgeKind.CALLS, EdgeKind.INJECTS, EdgeKind.DEPENDS_ON):
                     queue.append((edge.target_fqn, current_depth + 1))
-
 
     return flow
 
@@ -326,7 +334,11 @@ async def discover_transactions(
                 for edge in graph.get_edges_from(fn_fqn):
                     if edge.kind in (EdgeKind.WRITES, EdgeKind.READS):
                         table_node = graph.get_node(edge.target_fqn)
-                        if table_node is not None and table_node.kind == NodeKind.TABLE and edge.target_fqn not in seen_tables:
+                        if (
+                            table_node is not None
+                            and table_node.kind == NodeKind.TABLE
+                            and edge.target_fqn not in seen_tables
+                        ):
                             seen_tables.add(edge.target_fqn)
                             graph.add_edge(
                                 GraphEdge(

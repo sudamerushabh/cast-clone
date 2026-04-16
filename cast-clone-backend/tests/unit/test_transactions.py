@@ -268,10 +268,24 @@ class TestTraceTransactionFlow:
         g.add_node(_fn("svc.AccountServiceImpl.createAccount"))
         g.add_node(_fn("repo.AccountRepository.save"))
 
-        g.add_edge(_edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS))
+        g.add_edge(
+            _edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS)
+        )
         # Virtual dispatch CALLS edge (created by enricher)
-        g.add_edge(_edge("svc.AccountService.createAccount", "svc.AccountServiceImpl.createAccount", EdgeKind.CALLS))
-        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "repo.AccountRepository.save", EdgeKind.CALLS))
+        g.add_edge(
+            _edge(
+                "svc.AccountService.createAccount",
+                "svc.AccountServiceImpl.createAccount",
+                EdgeKind.CALLS,
+            )
+        )
+        g.add_edge(
+            _edge(
+                "svc.AccountServiceImpl.createAccount",
+                "repo.AccountRepository.save",
+                EdgeKind.CALLS,
+            )
+        )
 
         flow = trace_transaction_flow("ctrl.addAccount", g, max_depth=15)
 
@@ -285,9 +299,17 @@ class TestTraceTransactionFlow:
         g.add_node(_fn("svc.AccountService.createAccount"))
         g.add_node(_fn("svc.AccountServiceImpl.createAccount"))
 
-        g.add_edge(_edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS))
+        g.add_edge(
+            _edge("ctrl.addAccount", "svc.AccountService.createAccount", EdgeKind.CALLS)
+        )
         # Only IMPLEMENTS edge (no virtual dispatch CALLS) — should NOT be followed
-        g.add_edge(_edge("svc.AccountServiceImpl.createAccount", "svc.AccountService.createAccount", EdgeKind.IMPLEMENTS))
+        g.add_edge(
+            _edge(
+                "svc.AccountServiceImpl.createAccount",
+                "svc.AccountService.createAccount",
+                EdgeKind.IMPLEMENTS,
+            )
+        )
 
         flow = trace_transaction_flow("ctrl.addAccount", g, max_depth=15)
 
@@ -308,6 +330,82 @@ class TestTraceTransactionFlow:
 
         assert "B.<init>" not in flow.visited_fqns
         assert "C.process" in flow.visited_fqns
+
+    def test_filter_order_prevents_duplicate_transactions(self):
+        """Dedupe before filter: the same constructor reachable from N callers
+        must not be appended to the flow or re-processed N times.
+
+        Graph shape:
+            A -[:CALLS]-> X.<init>
+            A -[:CALLS]-> B
+            B -[:CALLS]-> X.<init>
+            B -[:CALLS]-> C
+            X.<init> -[:CALLS]-> D
+            D -[:WRITES]-> users
+        """
+        g = SymbolGraph()
+        g.add_node(_fn("A.handle", "handle"))
+        g.add_node(_fn("B.step", "step"))
+        g.add_node(_fn("C.leaf", "leaf"))
+        g.add_node(_fn("D.persist", "persist"))
+        g.add_node(_fn("X.<init>", "<init>"))
+        g.add_node(GraphNode(fqn="users", name="users", kind=NodeKind.TABLE))
+
+        g.add_edge(_edge("A.handle", "X.<init>", EdgeKind.CALLS))
+        g.add_edge(_edge("A.handle", "B.step", EdgeKind.CALLS))
+        g.add_edge(_edge("B.step", "X.<init>", EdgeKind.CALLS))
+        g.add_edge(_edge("B.step", "C.leaf", EdgeKind.CALLS))
+        g.add_edge(_edge("X.<init>", "D.persist", EdgeKind.CALLS))
+        g.add_edge(_edge("D.persist", "users", EdgeKind.WRITES))
+
+        flow = trace_transaction_flow("A.handle", g, max_depth=15)
+
+        # Constructor is filtered out of the flow regardless of how many
+        # callers reach it.
+        assert "X.<init>" not in flow.visited_fqns
+        # No duplicates in the flow list.
+        assert len(flow.visited_fqns) == len(set(flow.visited_fqns))
+        # Non-constructor nodes are all present exactly once.
+        assert sorted(flow.visited_fqns) == ["A.handle", "B.step", "C.leaf"]
+
+    def test_filter_applied_to_deduplicated_set(self, monkeypatch):
+        """Filter predicate (`name in _CONSTRUCTOR_NAMES`) must run at most once
+        per unique FQN — not once per incoming CALLS edge.
+
+        Same graph as above; counts `frozenset.__contains__` calls on
+        `_CONSTRUCTOR_NAMES` via a spy wrapper on `graph.get_node`.
+        """
+        g = SymbolGraph()
+        g.add_node(_fn("A.handle", "handle"))
+        g.add_node(_fn("B.step", "step"))
+        g.add_node(_fn("X.<init>", "<init>"))
+
+        g.add_edge(_edge("A.handle", "X.<init>", EdgeKind.CALLS))
+        g.add_edge(_edge("A.handle", "B.step", EdgeKind.CALLS))
+        g.add_edge(_edge("B.step", "X.<init>", EdgeKind.CALLS))
+
+        # Spy on get_node: it is called once per unique FQN popped from
+        # the queue after the dedupe guard. Constructor X.<init> is enqueued
+        # twice (from A.handle and B.step), but should only trigger a
+        # get_node + filter pass once.
+        original_get_node = g.get_node
+        calls: list[str] = []
+
+        def spy_get_node(fqn: str):
+            calls.append(fqn)
+            return original_get_node(fqn)
+
+        monkeypatch.setattr(g, "get_node", spy_get_node)
+
+        flow = trace_transaction_flow("A.handle", g, max_depth=15)
+
+        # Each unique FQN is inspected exactly once.
+        assert calls.count("X.<init>") == 1
+        assert calls.count("A.handle") == 1
+        assert calls.count("B.step") == 1
+        # Constructor excluded from flow.
+        assert "X.<init>" not in flow.visited_fqns
+        assert sorted(flow.visited_fqns) == ["A.handle", "B.step"]
 
     def test_terminal_node_still_continues_bfs(self):
         """BFS continues past terminal nodes."""
@@ -568,26 +666,42 @@ def _build_controller_service_repo_graph() -> tuple[SymbolGraph, list[EntryPoint
         ("com.example.AccountService.createAccount", "createAccount"),
         ("com.example.AccountRepository.save", "save"),
     ]:
-        graph.add_node(GraphNode(fqn=fqn, name=name, kind=NodeKind.FUNCTION, language="java"))
+        graph.add_node(
+            GraphNode(fqn=fqn, name=name, kind=NodeKind.FUNCTION, language="java")
+        )
 
-    table = GraphNode(fqn="table:accounts", name="accounts", kind=NodeKind.TABLE, properties={})
+    table = GraphNode(
+        fqn="table:accounts", name="accounts", kind=NodeKind.TABLE, properties={}
+    )
     graph.add_node(table)
 
-    graph.add_edge(GraphEdge(
-        source_fqn="com.example.AccountController.addAccount",
-        target_fqn="com.example.AccountService.createAccount",
-        kind=EdgeKind.CALLS, confidence=Confidence.HIGH, evidence="tree-sitter",
-    ))
-    graph.add_edge(GraphEdge(
-        source_fqn="com.example.AccountService.createAccount",
-        target_fqn="com.example.AccountRepository.save",
-        kind=EdgeKind.CALLS, confidence=Confidence.MEDIUM, evidence="tree-sitter",
-    ))
-    graph.add_edge(GraphEdge(
-        source_fqn="com.example.AccountRepository.save",
-        target_fqn="table:accounts",
-        kind=EdgeKind.WRITES, confidence=Confidence.HIGH, evidence="spring-data",
-    ))
+    graph.add_edge(
+        GraphEdge(
+            source_fqn="com.example.AccountController.addAccount",
+            target_fqn="com.example.AccountService.createAccount",
+            kind=EdgeKind.CALLS,
+            confidence=Confidence.HIGH,
+            evidence="tree-sitter",
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn="com.example.AccountService.createAccount",
+            target_fqn="com.example.AccountRepository.save",
+            kind=EdgeKind.CALLS,
+            confidence=Confidence.MEDIUM,
+            evidence="tree-sitter",
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn="com.example.AccountRepository.save",
+            target_fqn="table:accounts",
+            kind=EdgeKind.WRITES,
+            confidence=Confidence.HIGH,
+            evidence="spring-data",
+        )
+    )
 
     entry_points = [
         EntryPoint(
@@ -626,33 +740,47 @@ async def test_transaction_includes_table_nodes():
 
 @pytest.mark.asyncio
 async def test_transaction_no_duplicate_table_includes():
-    """If two functions WRITE to the same table, only one INCLUDES edge to that table."""
+    """Two functions writing to the same table produce only one INCLUDES edge."""
     graph, entry_points = _build_controller_service_repo_graph()
 
-    graph.add_node(GraphNode(
-        fqn="com.example.AccountRepository.deleteById",
-        name="deleteById",
-        kind=NodeKind.FUNCTION, language="java",
-    ))
-    graph.add_edge(GraphEdge(
-        source_fqn="com.example.AccountService.createAccount",
-        target_fqn="com.example.AccountRepository.deleteById",
-        kind=EdgeKind.CALLS, confidence=Confidence.MEDIUM, evidence="tree-sitter",
-    ))
-    graph.add_edge(GraphEdge(
-        source_fqn="com.example.AccountRepository.deleteById",
-        target_fqn="table:accounts",
-        kind=EdgeKind.WRITES, confidence=Confidence.HIGH, evidence="spring-data",
-    ))
+    graph.add_node(
+        GraphNode(
+            fqn="com.example.AccountRepository.deleteById",
+            name="deleteById",
+            kind=NodeKind.FUNCTION,
+            language="java",
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn="com.example.AccountService.createAccount",
+            target_fqn="com.example.AccountRepository.deleteById",
+            kind=EdgeKind.CALLS,
+            confidence=Confidence.MEDIUM,
+            evidence="tree-sitter",
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn="com.example.AccountRepository.deleteById",
+            target_fqn="table:accounts",
+            kind=EdgeKind.WRITES,
+            confidence=Confidence.HIGH,
+            evidence="spring-data",
+        )
+    )
 
     ctx = _make_context(graph)
     ctx.entry_points = entry_points
 
     await discover_transactions(ctx)
 
-    txn_fqn = next(n.fqn for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION)
+    txn_fqn = next(
+        n.fqn for n in ctx.graph.nodes.values() if n.kind == NodeKind.TRANSACTION
+    )
     table_includes = [
-        e for e in ctx.graph.edges
+        e
+        for e in ctx.graph.edges
         if e.kind == EdgeKind.INCLUDES
         and e.source_fqn == txn_fqn
         and e.target_fqn == "table:accounts"
