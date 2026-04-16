@@ -54,6 +54,15 @@ export function RepoCard({ repo, onDelete }: RepoCardProps) {
             </Link>
           ))}
         </div>
+        {/* LOC billing info */}
+        {repo.billable_loc != null && repo.billable_loc > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Billable: {repo.billable_loc.toLocaleString()} LOC
+            {repo.max_loc_branch && (
+              <span className="ml-1">({repo.max_loc_branch})</span>
+            )}
+          </p>
+        )}
         {repo.clone_error && <p className="mt-2 text-xs text-destructive">{repo.clone_error}</p>}
         <div className="mt-3 flex justify-end">
           <Button variant="ghost" size="sm" className="text-destructive" onClick={() => onDelete(repo.id)}>
