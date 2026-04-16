@@ -21,7 +21,7 @@ async def client(mock_session):
         return mock_session
 
     def _override_get_settings():
-        return Settings(auth_disabled=False)
+        return Settings(auth_disabled=False, secret_key="test-secret")
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_settings] = _override_get_settings

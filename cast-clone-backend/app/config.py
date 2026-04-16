@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = "change-me-in-production"
-    auth_disabled: bool = True  # Set AUTH_DISABLED=true to bypass auth (dev/testing)
+    auth_disabled: bool = False  # FLIPPED: default deny, set AUTH_DISABLED=true for dev
     base_url: str = "http://localhost:3000"
 
     # Repository storage
@@ -61,6 +62,15 @@ class Settings(BaseSettings):
     # Phase 5b-M5: AI usage cost estimation (Sonnet pricing, USD per million tokens)
     ai_cost_input_per_mtok: float = 3.0
     ai_cost_output_per_mtok: float = 15.0
+
+    @model_validator(mode="after")
+    def _reject_placeholder_secret(self) -> "Settings":
+        if not self.auth_disabled and self.secret_key == "change-me-in-production":
+            raise ValueError(
+                "secret_key must be overridden via SECRET_KEY env var "
+                "when AUTH_DISABLED is false"
+            )
+        return self
 
 
 @lru_cache

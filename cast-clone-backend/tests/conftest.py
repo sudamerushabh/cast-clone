@@ -1,8 +1,15 @@
 """Shared pytest fixtures for all test modules."""
 
+import os
 from pathlib import Path
 
 import pytest
+
+# Default to auth-disabled for the test suite. Individual tests that need to
+# exercise auth/authz can override via monkeypatch. This keeps the config
+# validator (which now requires SECRET_KEY when AUTH_DISABLED=false) happy
+# for tests that don't care about auth.
+os.environ.setdefault("AUTH_DISABLED", "true")
 
 
 @pytest.fixture
