@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { getLicenseStatus, uploadLicense } from "@/lib/api";
-import type { LicenseStatusResponse, LicenseState } from "@/lib/types";
+import type { LicenseStatusResponse, LicenseState, RepoLocBreakdown } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -116,6 +116,128 @@ function LocProgressBar({
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${pct}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+// ── LOC Breakdown Table ──
+
+function LocBreakdownTable({
+  breakdown,
+  totalUsed,
+}: {
+  breakdown: RepoLocBreakdown[];
+  totalUsed: number;
+}) {
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+
+  if (breakdown.length === 0) return null;
+
+  function toggleExpand(repoId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(repoId)) next.delete(repoId);
+      else next.add(repoId);
+      return next;
+    });
+  }
+
+  return (
+    <div className="space-y-2">
+      <h4 className="text-sm font-medium text-muted-foreground">
+        LOC by Repository
+      </h4>
+      <div className="rounded-md border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50">
+              <th className="px-3 py-2 text-left font-medium">Repository</th>
+              <th className="px-3 py-2 text-left font-medium">Max Branch</th>
+              <th className="px-3 py-2 text-right font-medium">LOC</th>
+              <th className="px-3 py-2 text-right font-medium">% of Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((repo) => {
+              const isExpanded = expanded.has(repo.repository_id);
+              const pct =
+                totalUsed > 0
+                  ? ((repo.billable_loc / totalUsed) * 100).toFixed(1)
+                  : "0.0";
+              const branches = Object.entries(repo.branches).sort(
+                ([, a], [, b]) => b - a
+              );
+              const hasMultipleBranches = branches.length > 1;
+
+              return (
+                <React.Fragment key={repo.repository_id}>
+                  <tr
+                    className={`border-b last:border-0 ${
+                      hasMultipleBranches
+                        ? "cursor-pointer hover:bg-muted/30"
+                        : ""
+                    }`}
+                    onClick={() =>
+                      hasMultipleBranches && toggleExpand(repo.repository_id)
+                    }
+                  >
+                    <td className="px-3 py-2">
+                      <span className="flex items-center gap-1">
+                        {hasMultipleBranches && (
+                          <span className="text-xs text-muted-foreground">
+                            {isExpanded ? "▼" : "▶"}
+                          </span>
+                        )}
+                        <span className="font-mono text-xs">
+                          {repo.repo_full_name}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {repo.max_branch}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">
+                      {formatNumber(repo.billable_loc)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+                      {pct}%
+                    </td>
+                  </tr>
+                  {isExpanded &&
+                    branches.map(([branch, loc]) => (
+                      <tr
+                        key={branch}
+                        className="border-b last:border-0 bg-muted/20"
+                      >
+                        <td className="pl-8 pr-3 py-1.5 text-xs text-muted-foreground">
+                          {branch}
+                        </td>
+                        <td className="px-3 py-1.5" />
+                        <td className="px-3 py-1.5 text-right text-xs tabular-nums">
+                          {formatNumber(loc)}
+                          {branch === repo.max_branch && (
+                            <span className="ml-1 text-emerald-600">← max</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5" />
+                      </tr>
+                    ))}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t bg-muted/50 font-medium">
+              <td className="px-3 py-2">Total</td>
+              <td className="px-3 py-2" />
+              <td className="px-3 py-2 text-right tabular-nums">
+                {formatNumber(totalUsed)}
+              </td>
+              <td className="px-3 py-2" />
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>
   );
@@ -386,11 +508,17 @@ export default function LicenseSettingsPage() {
                   <CardHeader>
                     <CardTitle>Usage</CardTitle>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
                     <LocProgressBar
                       used={status.loc_used}
                       limit={status.loc_limit}
                     />
+                    {status.loc_breakdown && status.loc_breakdown.length > 0 && (
+                      <LocBreakdownTable
+                        breakdown={status.loc_breakdown}
+                        totalUsed={status.loc_used}
+                      />
+                    )}
                   </CardContent>
                 </Card>
               )}
