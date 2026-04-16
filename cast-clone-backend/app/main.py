@@ -44,7 +44,12 @@ from app.api.middleware import AuthEnforcerMiddleware
 from app.config import Settings
 from app.services.deployment import init_deployment_id
 from app.services.license import LicenseState, get_license_state, load_license
-from app.services.neo4j import close_neo4j, init_neo4j
+from app.services.neo4j import (
+    close_neo4j,
+    ensure_schema_constraints,
+    get_driver,
+    init_neo4j,
+)
 from app.services.postgres import close_postgres, init_postgres
 from app.services.redis import close_redis, init_redis
 
@@ -194,6 +199,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register_state_change_listener(on_license_state_change)
 
     await init_neo4j(settings)
+    # Enforce UNIQUE constraints on every node label so the MERGE-based writer
+    # cannot create duplicates across re-runs. Idempotent (IF NOT EXISTS).
+    try:
+        await ensure_schema_constraints(get_driver())
+    except Exception as exc:  # noqa: BLE001 — log and continue; writer still degrades safely
+        await logger.aerror("neo4j.schema_constraints_failed", error=str(exc))
     await init_redis(settings)
 
     # Clean up any analyses left in "running" state from a previous crash/restart
