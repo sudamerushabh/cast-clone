@@ -427,6 +427,22 @@ except ImportError:
         assert len(foo_classes) == 2
         assert all(n.fqn == "mod.Foo" for n in foo_classes)
 
+    def test_with_statement_class(self, extractor):
+        """Classes defined inside a ``with`` block share the outer-scope FQN."""
+        source = b"with open('f') as f:\n    class X:\n        pass\n"
+        nodes, _ = extractor.extract(source, "/code/mod.py", "/code")
+        xs = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "X"]
+        assert len(xs) == 1
+        assert xs[0].fqn == "mod.X"
+
+    def test_match_statement_class(self, extractor):
+        """Classes defined inside a ``match``/``case`` share the outer-scope FQN."""
+        source = b"match v:\n    case _:\n        class X:\n            pass\n"
+        nodes, _ = extractor.extract(source, "/code/mod.py", "/code")
+        xs = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "X"]
+        assert len(xs) == 1
+        assert xs[0].fqn == "mod.X"
+
     def test_nested_class_fqn_unchanged(self, extractor):
         """Standard nested-class FQN must remain ``module.Outer.Inner``."""
         source = b"""\
