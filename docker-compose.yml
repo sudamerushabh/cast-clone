@@ -80,8 +80,11 @@ services:
       MINIO_ACCESS_KEY: "codelens"
       MINIO_SECRET_KEY: "codelens123"
       MINIO_SECURE: "false"
-      CORS_ORIGINS: '["*"]'
-      AUTH_DISABLED: "true"
+      # CORS_ORIGINS + AUTH_DISABLED must be set via `.env` file; see .env.example.
+      # Do NOT hardcode permissive values here — they would bypass the
+      # auth-wildcard validator in app.config._reject_cors_wildcard_when_auth_enabled.
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
       LOG_LEVEL: "info"
     volumes:
       - /home/ubuntu/repos:/home/ubuntu/repos

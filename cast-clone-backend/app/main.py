@@ -264,10 +264,15 @@ def create_app() -> FastAPI:
         allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         allow_headers = ["Authorization", "Content-Type", "X-Request-ID"]
 
+    # Credentials + wildcard origin is a non-sensical combination: browsers
+    # refuse it per the CORS spec, and emitting both leaks intent. Disable
+    # credentials in dev-wildcard mode; prod mode already forbids wildcards.
+    allow_credentials = not settings.auth_disabled
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origin_regex=None,
+        allow_credentials=allow_credentials,
         allow_methods=allow_methods,
         allow_headers=allow_headers,
     )
