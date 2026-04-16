@@ -16,10 +16,12 @@ Multi-project context:
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
 import structlog
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from app.ai import tools
 from app.ai.tools import ChatToolContext
@@ -163,7 +165,7 @@ async def get_source_code(app_name: str, node_fqn: str) -> dict:
 async def impact_analysis(
     app_name: str,
     node_fqn: str,
-    depth: int = 5,
+    depth: Annotated[int, Field(ge=1, le=5)] = 5,
     direction: str = "both",
 ) -> dict:
     """Compute the blast radius of changing a specific code object.

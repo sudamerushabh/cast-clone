@@ -305,3 +305,49 @@ async def test_graph_nodes_limit_above_cap_rejected(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 422, resp.text
+
+
+# ── POST body cap: trace-chat ``max_depth`` ──────────────────────────────
+
+
+async def test_trace_chat_max_depth_above_cap_rejected(
+    async_client: AsyncClient,
+    auth_enabled_app: FastAPI,
+    admin_token: tuple[str, str],
+) -> None:
+    """POST trace-chat with max_depth=999 must 422 (Pydantic cap = 5).
+
+    Validates the Pydantic ``Field(ge=1, le=5)`` constraint on
+    ``TraceChatSendRequest.max_depth`` — the POST body is a variable-length
+    graph-traversal parameter and is as much a DoS vector as the query
+    string counterparts tested above.
+    """
+    token, uid = admin_token
+    _override_admin(auth_enabled_app, _admin(uid, "root"))
+
+    resp = await async_client.post(
+        "/api/v1/analysis/test-project/trace-chat/some.node.fqn",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"question": "why?", "max_depth": 999},
+    )
+    assert resp.status_code == 422, resp.text
+    assert _is_validation_error_response(resp), resp.text
+
+
+# ── Pull-requests list: ``offset`` upper bound ───────────────────────────
+
+
+async def test_pull_requests_offset_above_cap_rejected(
+    async_client: AsyncClient,
+    auth_enabled_app: FastAPI,
+    admin_token: tuple[str, str],
+) -> None:
+    """GET pull-requests with offset=99999 must 422 (cap = 10000)."""
+    token, uid = admin_token
+    _override_admin(auth_enabled_app, _admin(uid, "root"))
+
+    resp = await async_client.get(
+        "/api/v1/repositories/test-repo/pull-requests?offset=99999",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422, resp.text

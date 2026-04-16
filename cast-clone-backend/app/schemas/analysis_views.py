@@ -189,7 +189,7 @@ class TraceChatSendRequest(BaseModel):
     """Body of POST trace-chat — one new user question."""
 
     question: str
-    max_depth: int = 5
+    max_depth: int = Field(default=5, ge=1, le=5)
 
 
 class TraceChatSendResponse(BaseModel):
