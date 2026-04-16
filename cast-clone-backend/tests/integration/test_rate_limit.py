@@ -72,7 +72,9 @@ class FakeRedis:
         self._strings: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
-    def pipeline(self) -> _FakePipeline:
+    def pipeline(self, transaction: bool = True) -> _FakePipeline:
+        # Accept the ``transaction`` kwarg for parity with redis-py so callers
+        # using MULTI/EXEC-style pipelines work against the fake.
         return _FakePipeline(self)
 
     # Pipeline-underlying sync helpers (called while holding a logical pipeline)
@@ -169,6 +171,9 @@ async def rate_limit_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr("app.api.auth.get_redis", lambda: fake)
     monkeypatch.setattr("app.api.chat.get_redis", lambda: fake)
     monkeypatch.setattr("app.services.redis.get_redis", lambda: fake)
+    # Expose the fake on app state so tests can access it directly without
+    # relying on monkeypatch persistence through module re-fetching.
+    app.state.fake_redis = fake
     return app
 
 
@@ -315,7 +320,6 @@ async def test_chat_lock_blocks_concurrent_streams(
     rate_limit_app: FastAPI,
 ) -> None:
     """Hold the lock manually, then verify a second request is rejected."""
-    import app.api.chat as chat_mod
     from app.services.auth import create_access_token
     from app.services.rate_limit import chat_lock
 
@@ -326,7 +330,7 @@ async def test_chat_lock_blocks_concurrent_streams(
     )
     headers = {"Authorization": f"Bearer {token}"}
 
-    fake = chat_mod.get_redis()
+    fake: FakeRedis = rate_limit_app.state.fake_redis
 
     # Acquire the lock out-of-band and hold it for the duration of the test.
     lock_ctx = chat_lock(fake, str(user.id), ttl_seconds=300)
@@ -350,10 +354,9 @@ async def test_rate_limiter_sliding_window_unit(
     rate_limit_app: FastAPI,
 ) -> None:
     """Directly exercise ``check_rate_limit`` against the fake."""
-    import app.api.chat as chat_mod
     from app.services.rate_limit import RateLimitExceeded, check_rate_limit
 
-    fake = chat_mod.get_redis()
+    fake: FakeRedis = rate_limit_app.state.fake_redis
     key = f"rl:unit:{time.time_ns()}"
     for _ in range(3):
         await check_rate_limit(fake, key, window_seconds=60, max_requests=3)

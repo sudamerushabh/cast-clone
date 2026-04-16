@@ -54,7 +54,9 @@ async def check_rate_limit(
     window_ms = window_seconds * 1000
     member = f"{now_ms}:{uuid4().hex}"
 
-    pipe = redis.pipeline()
+    # MULTI/EXEC so concurrent workers cannot interleave ZADD/ZCARD and
+    # produce spurious 429s under load.
+    pipe = redis.pipeline(transaction=True)
     # Evict entries strictly older than the window; keep boundary entries
     # (score == now_ms - window_ms) so exact-boundary requests still count.
     pipe.zremrangebyscore(key, 0, now_ms - window_ms - 1)
