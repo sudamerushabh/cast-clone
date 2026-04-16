@@ -134,6 +134,7 @@ async def _license_state_refresher(app: FastAPI) -> None:
                     _notify_state_change,
                     get_current_license,
                 )
+
                 lic = get_current_license()
                 await _notify_state_change(old_state, new_state, lic)
         except asyncio.CancelledError:
@@ -189,6 +190,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Register email service as listener for license state transitions
         from app.services.email import on_license_state_change
         from app.services.license import register_state_change_listener
+
         register_state_change_listener(on_license_state_change)
 
     await init_neo4j(settings)
@@ -251,12 +253,23 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # In dev mode (AUTH_DISABLED=true) keep the permissive wildcards for
+    # local tooling. In production (auth enabled) use an explicit allow-list
+    # for methods/headers — the config validator already rejects an
+    # origin wildcard in that mode.
+    if settings.auth_disabled:
+        allow_methods: list[str] = ["*"]
+        allow_headers: list[str] = ["*"]
+    else:
+        allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        allow_headers = ["Authorization", "Content-Type", "X-Request-ID"]
+
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=allow_methods,
+        allow_headers=allow_headers,
     )
 
     application.add_middleware(AuthEnforcerMiddleware, settings=settings)

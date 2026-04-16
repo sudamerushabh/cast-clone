@@ -88,3 +88,76 @@ def test_secret_key_real_looking_secret_accepted_when_auth_enabled(
     settings = Settings()
     assert settings.auth_disabled is False
     assert settings.secret_key.startswith("a3f1c9d8")
+
+
+# ---------------------------------------------------------------------------
+# CHAN-63: CORS wildcard rejected when auth is enabled
+# ---------------------------------------------------------------------------
+
+_VALID_SECRET = "a3f1c9d8e2b47056ab1c4d2f9e8b7a6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a"
+
+
+def test_cors_wildcard_rejected_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    with pytest.raises(ValidationError, match="CORS wildcard"):
+        Settings(cors_origins=["*"])
+
+
+def test_cors_wildcard_allowed_when_auth_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTH_DISABLED", "true")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    settings = Settings(cors_origins=["*"])
+    assert settings.cors_origins == ["*"]
+
+
+def test_cors_explicit_origin_accepted_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    settings = Settings(cors_origins=["https://app.example.com"])
+    assert settings.cors_origins == ["https://app.example.com"]
+
+
+def test_cors_wildcard_mixed_with_explicit_rejected_when_auth_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    with pytest.raises(ValidationError, match="CORS wildcard"):
+        Settings(cors_origins=["https://app.example.com", "*"])
+
+
+def test_cors_origins_string_is_stripped_and_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    monkeypatch.setenv("CORS_ORIGINS", "  http://a.com , http://b.com  ")
+    settings = Settings()
+    assert settings.cors_origins == ["http://a.com", "http://b.com"]
+
+
+def test_cors_origins_empty_string_produces_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    monkeypatch.setenv("CORS_ORIGINS", "")
+    settings = Settings()
+    assert settings.cors_origins == []
+
+
+def test_cors_origins_json_list_still_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", _VALID_SECRET)
+    monkeypatch.setenv("CORS_ORIGINS", '["http://localhost:3000"]')
+    settings = Settings()
+    assert settings.cors_origins == ["http://localhost:3000"]

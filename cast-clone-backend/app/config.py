@@ -1,7 +1,9 @@
+import json
 from functools import lru_cache
+from typing import Annotated, Any
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _KNOWN_BAD_SECRETS = frozenset({"", "change-me-in-production"})
 
@@ -20,7 +22,14 @@ class Settings(BaseSettings):
     minio_access_key: str = "codelens"
     minio_secret_key: str = "codelens123"
     minio_secure: bool = False
-    cors_origins: list[str] = ["*"]
+    # NoDecode disables pydantic-settings' built-in JSON decoding so the
+    # field_validator below can handle both JSON list and comma-separated
+    # env-var forms.
+    #
+    # Default is an empty allow-list (deny-all) so production deployments
+    # that forget to set CORS_ORIGINS fail closed rather than open. The
+    # dev docker-compose and .env.example set CORS_ORIGINS explicitly.
+    cors_origins: Annotated[list[str], NoDecode] = []
 
     # Security
     secret_key: str = "change-me-in-production"
@@ -72,6 +81,31 @@ class Settings(BaseSettings):
     ai_cost_input_per_mtok: float = 3.0
     ai_cost_output_per_mtok: float = 15.0
 
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: Any) -> Any:
+        """Accept either a JSON list or comma-separated string.
+
+        Empty strings produce an empty list, and each origin is stripped
+        of surrounding whitespace.
+        """
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                try:
+                    decoded = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"cors_origins env var is not valid JSON: {exc}"
+                    ) from exc
+                if not isinstance(decoded, list):
+                    raise ValueError("cors_origins JSON must be a list of strings")
+                return [str(item).strip() for item in decoded if str(item).strip()]
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
     @model_validator(mode="after")
     def _reject_placeholder_secret(self) -> "Settings":
         if self.auth_disabled:
@@ -81,6 +115,26 @@ class Settings(BaseSettings):
             raise ValueError(
                 "secret_key must be overridden via SECRET_KEY env var "
                 "when AUTH_DISABLED is false"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_cors_wildcard_when_auth_enabled(self) -> "Settings":
+        """Forbid CORS wildcard origin when authentication is enforced.
+
+        A wildcard (``*``) origin combined with ``allow_credentials=True``
+        is rejected by browsers and masks misconfiguration. Require an
+        explicit allow-list in production; only permit ``*`` in dev mode
+        (``AUTH_DISABLED=true``).
+        """
+        if self.auth_disabled:
+            return self
+        if any(origin.strip() == "*" for origin in self.cors_origins):
+            raise ValueError(
+                "CORS wildcard '*' is forbidden when auth is enabled. "
+                "Set CORS_ORIGINS to an explicit comma-separated allow-list "
+                "(e.g. CORS_ORIGINS=https://app.example.com,https://admin.example.com) "
+                "or enable dev mode with AUTH_DISABLED=true."
             )
         return self
 
