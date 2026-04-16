@@ -434,25 +434,31 @@ class TestSubprojectGatherTimeout:
             # were missing.
             raise RuntimeError("scip-java exited with code 1")
 
-        # Configure structlog for capture_logs to work reliably.
+        # Configure structlog for capture_logs to work reliably. Save the
+        # prior config so we can restore it — otherwise other tests that
+        # rely on async logger methods (logger.ainfo / awarning) break.
+        prior_config = structlog.get_config()
         structlog.configure(
             processors=[structlog.testing.LogCapture()],
             wrapper_class=structlog.BoundLogger,
             cache_logger_on_first_use=False,
         )
 
-        with patch(
-            "app.stages.scip.indexer._run_scip_in_directory",
-            side_effect=fake_run,
-        ):
-            cfg = SCIP_INDEXER_CONFIGS["java"]
-            with capture_logs() as cap:
-                with pytest.raises(TimeoutError) as exc_info:
-                    await run_single_scip_indexer(
-                        context=ctx,
-                        indexer_config=cfg,
-                        project_name="myapp",
-                    )
+        try:
+            with patch(
+                "app.stages.scip.indexer._run_scip_in_directory",
+                side_effect=fake_run,
+            ):
+                cfg = SCIP_INDEXER_CONFIGS["java"]
+                with capture_logs() as cap:
+                    with pytest.raises(TimeoutError) as exc_info:
+                        await run_single_scip_indexer(
+                            context=ctx,
+                            indexer_config=cfg,
+                            project_name="myapp",
+                        )
+        finally:
+            structlog.configure(**prior_config)
 
         # Re-raised as-is (not collapsed into RuntimeError).
         assert not isinstance(exc_info.value, RuntimeError)
