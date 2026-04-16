@@ -220,6 +220,24 @@ def test_sanitize_leaves_source_dict_unmodified() -> None:
     assert math.isnan(src["x"])  # original untouched
 
 
+def test_sanitize_handles_frozenset() -> None:
+    """frozenset is not Bolt-serializable; sanitizer must coerce to a list.
+
+    Order is not guaranteed (frozenset is unordered), so we compare as a set.
+    """
+    out = _sanitize_props({"a": frozenset({"x", "y"})})
+    assert isinstance(out["a"], list)
+    assert set(out["a"]) == {"x", "y"}
+
+
+def test_sanitize_handles_frozenset_with_nan() -> None:
+    """Sanitization must recurse into frozenset members (NaN -> None)."""
+    nan = float("nan")
+    out = _sanitize_props({"a": frozenset([nan])})
+    assert isinstance(out["a"], list)
+    assert out["a"] == [None]
+
+
 @pytest.mark.asyncio
 async def test_edge_writer_sanitizes_props() -> None:
     """NaN/Inf in edge properties are stripped before the Cypher call."""

@@ -47,6 +47,7 @@ from app.services.deployment import init_deployment_id
 from app.services.license import LicenseState, get_license_state, load_license
 from app.services.neo4j import (
     close_neo4j,
+    ensure_apoc_available,
     ensure_schema_constraints,
     get_driver,
     init_neo4j,
@@ -200,6 +201,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register_state_change_listener(on_license_state_change)
 
     await init_neo4j(settings)
+    # Probe APOC availability before any Cypher that depends on it. The edge
+    # writer uses apoc.merge.relationship unconditionally, so a missing plugin
+    # would crash Stage 8 of every analysis. Same classification policy as the
+    # schema-constraint step below:
+    #   * TransientError / ServiceUnavailable -> log and continue
+    #   * RuntimeError (from ensure_apoc_available on ClientError) -> FAIL STARTUP
+    try:
+        await ensure_apoc_available(get_driver())
+    except (TransientError, ServiceUnavailable) as exc:
+        await logger.awarning(
+            "neo4j.apoc_probe_transient",
+            error=str(exc),
+            note="APOC probe skipped due to connectivity; writer will surface later",
+        )
     # Enforce UNIQUE constraints on every node label so the MERGE-based writer
     # cannot create duplicates across re-runs. Idempotent (IF NOT EXISTS).
     #

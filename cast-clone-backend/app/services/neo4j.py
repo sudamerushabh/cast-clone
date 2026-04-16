@@ -116,6 +116,43 @@ async def ensure_schema_constraints(
     await logger.ainfo("neo4j.schema_constraints_ensured", count=len(statements))
 
 
+async def ensure_apoc_available(
+    driver: AsyncDriver, database: str = "neo4j"
+) -> None:
+    """Verify the APOC plugin is installed on the target Neo4j database.
+
+    The edge writer uses ``apoc.merge.relationship`` unconditionally. Neo4j
+    Community ships without APOC, so a missing plugin would crash every edge
+    write at Stage 8 (fatal). Probing once at startup turns that runtime
+    surprise into a clear startup failure.
+
+    Raises:
+        RuntimeError: if ``CALL apoc.version()`` fails with a ``ClientError``
+            (APOC procedure missing / not registered). The caller is expected
+            to surface this as a fatal startup error.
+        neo4j.exceptions.TransientError / ServiceUnavailable: propagated
+            unchanged — connectivity issues are the caller's policy.
+    """
+    async with driver.session(database=database) as session:
+        try:
+            result = await session.run(
+                "CALL apoc.version() YIELD version RETURN version"
+            )
+            record = await result.single()
+        except ClientError as exc:
+            await logger.aerror(
+                "neo4j.apoc_unavailable",
+                detail=str(exc),
+                code=getattr(exc, "code", None),
+            )
+            raise RuntimeError(
+                "APOC plugin required but not installed on the Neo4j database. "
+                "See deployment docs."
+            ) from exc
+    version = record["version"] if record else None
+    await logger.ainfo("neo4j.apoc_available", version=version)
+
+
 def _sanitize_props(props: dict[str, Any]) -> dict[str, Any]:
     """Replace NaN/Inf float values with None (Neo4j rejects them).
 
@@ -135,6 +172,11 @@ def _sanitize_props(props: dict[str, Any]) -> dict[str, Any]:
             return [_sanitize(v) for v in value]
         if isinstance(value, tuple):
             return tuple(_sanitize(v) for v in value)
+        if isinstance(value, frozenset):
+            # Neo4j Bolt cannot serialize frozensets; coerce to a list of
+            # sanitized members. Order is not preserved (frozenset is
+            # unordered) — callers that need order should pass a list.
+            return [_sanitize(v) for v in value]
         return value
 
     return {k: _sanitize(v) for k, v in props.items()}

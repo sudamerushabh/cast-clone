@@ -11,6 +11,7 @@ from app.models.graph import _KIND_TO_LABEL
 from app.services.neo4j import (
     NODE_LABELS_UNIQUE_KEY,
     build_constraint_statements,
+    ensure_apoc_available,
     ensure_schema_constraints,
 )
 
@@ -141,3 +142,64 @@ async def test_constraint_failure_raises_startup_error() -> None:
     driver = _FailingDriver()
     with pytest.raises(RuntimeError, match="dedupe_neo4j_nodes.py"):
         await ensure_schema_constraints(driver)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_apoc_available_returns_normally() -> None:
+    """When APOC responds, ensure_apoc_available completes without raising."""
+
+    class _ApocSession(_FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            result = MagicMock()
+            result.single = AsyncMock(return_value={"version": "5.13.0"})
+
+            async def _respond(stmt: str, params: dict[str, Any] | None = None) -> Any:  # noqa: ARG001
+                self.statements.append(stmt)
+                return result
+
+            self.run.side_effect = _respond
+
+    class _ApocDriver:
+        def __init__(self) -> None:
+            self.session_instance = _ApocSession()
+
+        def session(self, database: str = "neo4j") -> _ApocSession:  # noqa: ARG002
+            return self.session_instance
+
+    driver = _ApocDriver()
+    await ensure_apoc_available(driver)  # type: ignore[arg-type]
+    assert any(
+        "apoc.version()" in stmt for stmt in driver.session_instance.statements
+    )
+
+
+@pytest.mark.asyncio
+async def test_apoc_unavailable_raises_runtime_error() -> None:
+    """A neo4j ClientError from CALL apoc.version() must surface as RuntimeError.
+
+    Neo4j Community ships without APOC; the edge writer depends on
+    apoc.merge.relationship. We must fail startup with a clear, actionable
+    message rather than letting every edge write crash later at Stage 8.
+    """
+    from neo4j.exceptions import ClientError
+
+    class _NoApocSession(_FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+
+            async def _raise(stmt: str, params: dict[str, Any] | None = None) -> Any:  # noqa: ARG001
+                raise ClientError("There is no procedure with the name `apoc.version`")
+
+            self.run.side_effect = _raise
+
+    class _NoApocDriver:
+        def __init__(self) -> None:
+            self.session_instance = _NoApocSession()
+
+        def session(self, database: str = "neo4j") -> _NoApocSession:  # noqa: ARG002
+            return self.session_instance
+
+    driver = _NoApocDriver()
+    with pytest.raises(RuntimeError, match="APOC plugin required"):
+        await ensure_apoc_available(driver)  # type: ignore[arg-type]
