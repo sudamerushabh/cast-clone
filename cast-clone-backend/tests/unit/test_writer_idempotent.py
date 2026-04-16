@@ -58,7 +58,11 @@ class _FakeDriver:
 
 @pytest.mark.asyncio
 async def test_writer_rerunning_does_not_duplicate_nodes() -> None:
-    """Two back-to-back writes of the same node batch both emit MERGE Cypher."""
+    """Two back-to-back writes of the same node batch both emit MERGE Cypher.
+
+    The MERGE key must be the composite ``_id`` (``{app_name}::{fqn}``), not
+    ``fqn`` — else two projects sharing an FQN would collapse into one node.
+    """
     driver = _FakeDriver()
     store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
 
@@ -78,9 +82,64 @@ async def test_writer_rerunning_does_not_duplicate_nodes() -> None:
         cypher, params = sess.cypher_calls[0]
         low = cypher.lower()
         assert "merge" in low, f"expected MERGE in Cypher, got: {cypher}"
+        # MERGE key must be the composite _id, not fqn.
+        assert "_id: n._id" in cypher, (
+            f"expected MERGE on composite _id, got: {cypher}"
+        )
+        assert "{fqn: n.fqn}" not in cypher, (
+            "MERGE on fqn alone would cross-collapse projects"
+        )
         # A naked CREATE (outside an ON CREATE clause) would be a regression.
         assert "create (" not in low.replace(" ", "") or "oncreate" in low
-        assert params["batch"][0]["fqn"] == "com.example.UserService"
+        rec = params["batch"][0]
+        assert rec["_id"] == "proj-1::com.example.UserService"
+        assert rec["props"]["_id"] == "proj-1::com.example.UserService"
+        assert rec["props"]["fqn"] == "com.example.UserService"
+
+
+@pytest.mark.asyncio
+async def test_two_projects_same_fqn_produces_two_distinct_ids() -> None:
+    """Writing the same FQN under two projects must emit two distinct ``_id``s.
+
+    This is the regression test for the cross-project MERGE collapse bug:
+    with uniqueness on ``fqn``, MERGE would fold both writes into one node.
+    With uniqueness on ``_id = f"{app_name}::{fqn}"`` the two writes remain
+    separate.
+    """
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+
+    node = GraphNode(
+        fqn="com.example.Shared",
+        name="Shared",
+        kind=NodeKind.CLASS,
+    )
+
+    await store.write_nodes_batch([node], app_name="proj-alpha")
+    await store.write_nodes_batch([node], app_name="proj-beta")
+
+    ids_sent: list[str] = []
+    for sess in driver.sessions:
+        _cypher, params = sess.cypher_calls[0]
+        ids_sent.append(params["batch"][0]["_id"])
+
+    assert ids_sent == [
+        "proj-alpha::com.example.Shared",
+        "proj-beta::com.example.Shared",
+    ], f"expected two distinct composite ids, got {ids_sent}"
+    # And they must differ — else the constraint would collapse them.
+    assert ids_sent[0] != ids_sent[1]
+
+
+@pytest.mark.asyncio
+async def test_writer_requires_app_name_tenant_boundary() -> None:
+    """Empty app_name must be rejected — we cannot compute _id without it."""
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+    nodes = [GraphNode(fqn="x", name="x", kind=NodeKind.CLASS)]
+
+    with pytest.raises(ValueError, match="app_name"):
+        await store.write_nodes_batch(nodes, app_name="")
 
 
 @pytest.mark.asyncio

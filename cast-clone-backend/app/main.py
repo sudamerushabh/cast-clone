@@ -7,6 +7,7 @@ import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from neo4j.exceptions import ServiceUnavailable, TransientError
 
 from app.api import (
     activity_router,
@@ -201,10 +202,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_neo4j(settings)
     # Enforce UNIQUE constraints on every node label so the MERGE-based writer
     # cannot create duplicates across re-runs. Idempotent (IF NOT EXISTS).
+    #
+    # Error handling policy:
+    #   * TransientError / ServiceUnavailable  -> log and continue; Neo4j
+    #     may be in a transient state (restarting, leader election). The
+    #     writer itself is a critical stage and will re-raise later if the
+    #     DB is still down, so we don't block startup on flakiness.
+    #   * RuntimeError (raised by ensure_schema_constraints on ClientError) ->
+    #     FAIL STARTUP. This means existing data violates a UNIQUE constraint
+    #     (likely duplicate nodes from a pre-composite-_id pipeline run).
+    #     Operator must run scripts/dedupe_neo4j_nodes.py before restarting.
     try:
         await ensure_schema_constraints(get_driver())
-    except Exception as exc:  # noqa: BLE001 — log and continue; writer still degrades safely
-        await logger.aerror("neo4j.schema_constraints_failed", error=str(exc))
+    except (TransientError, ServiceUnavailable) as exc:
+        await logger.awarning(
+            "neo4j.schema_constraints_transient",
+            error=str(exc),
+            note="constraints not applied due to connectivity; writer will retry",
+        )
     await init_redis(settings)
 
     # Clean up any analyses left in "running" state from a previous crash/restart
