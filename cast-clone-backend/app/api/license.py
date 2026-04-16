@@ -120,6 +120,7 @@ async def _build_status_response(
 
     # Build per-repo LOC breakdown
     from sqlalchemy import select as sa_select
+
     from app.models.db import Repository, RepositoryLocTracking
     from app.services.postgres import get_background_session
 

@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import require_license_writable
 from app.config import Settings
-from app.models.db import AnalysisRun, GitConnector, Project, Repository
+from app.models.db import AnalysisRun, GitConnector, Project, Repository, RepositoryLocTracking
 
 # Reusable eager-load option: Repository → projects → analysis_runs
 _REPO_LOAD = (
@@ -47,7 +47,7 @@ def _get_settings() -> Settings:
 
 def _repo_to_response(
     repo: Repository,
-    tracking: "RepositoryLocTracking | None" = None,
+    tracking: RepositoryLocTracking | None = None,
 ) -> RepositoryResponse:
     projects = []
     for p in repo.projects:
@@ -247,7 +247,6 @@ async def list_repositories(
     # Bulk-load LOC tracking for all repos
     repo_ids = [r.id for r in repos]
     if repo_ids:
-        from app.models.db import RepositoryLocTracking
         tracking_result = await session.execute(
             select(RepositoryLocTracking).where(
                 RepositoryLocTracking.repository_id.in_(repo_ids)
@@ -285,7 +284,6 @@ async def get_repository(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
-    from app.models.db import RepositoryLocTracking
     tracking_result = await session.execute(
         select(RepositoryLocTracking).where(
             RepositoryLocTracking.repository_id == repo_id
