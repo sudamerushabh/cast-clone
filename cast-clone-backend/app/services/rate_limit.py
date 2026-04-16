@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import redis.asyncio as aioredis
 import structlog
+from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +28,14 @@ class RateLimitExceeded(Exception):  # noqa: N818 — public API name required b
 
 class ChatLockBusy(Exception):  # noqa: N818 — public API name required by spec
     """Raised when a per-user chat lock is already held."""
+
+
+class RateLimitBackendUnavailable(Exception):  # noqa: N818 — public API name
+    """Raised when the rate-limit backend (Redis) is unreachable.
+
+    Endpoints should translate this to a 503 Service Unavailable response.
+    Fail-closed: we refuse traffic rather than silently disabling the limiter.
+    """
 
 
 async def check_rate_limit(
@@ -46,11 +55,19 @@ async def check_rate_limit(
     member = f"{now_ms}:{uuid4().hex}"
 
     pipe = redis.pipeline()
-    pipe.zremrangebyscore(key, 0, now_ms - window_ms)
+    # Evict entries strictly older than the window; keep boundary entries
+    # (score == now_ms - window_ms) so exact-boundary requests still count.
+    pipe.zremrangebyscore(key, 0, now_ms - window_ms - 1)
     pipe.zadd(key, {member: now_ms})
     pipe.zcard(key)
     pipe.expire(key, window_seconds)
-    results = await pipe.execute()
+    try:
+        results = await pipe.execute()
+    except RedisError as exc:
+        # Fail-closed: the limiter is a security control, so we refuse traffic
+        # when the backend is unreachable rather than silently permitting it.
+        logger.exception("rate_limit_redis_error", key=key)
+        raise RateLimitBackendUnavailable(str(exc)) from exc
 
     count = int(results[2])
     if count > max_requests:
@@ -72,7 +89,11 @@ async def chat_lock(
 ) -> AsyncIterator[None]:
     """Acquire a per-user chat lock. Raise :class:`ChatLockBusy` if already held."""
     key = f"chat:lock:{user_id}"
-    acquired = await redis.set(key, "1", nx=True, ex=ttl_seconds)
+    try:
+        acquired = await redis.set(key, "1", nx=True, ex=ttl_seconds)
+    except RedisError as exc:
+        logger.exception("chat_lock_redis_error", user_id=user_id)
+        raise RateLimitBackendUnavailable(str(exc)) from exc
     if not acquired:
         raise ChatLockBusy()
     try:
@@ -80,5 +101,6 @@ async def chat_lock(
     finally:
         try:
             await redis.delete(key)
-        except Exception as exc:  # noqa: BLE001 — log and swallow on cleanup
+        except RedisError as exc:
+            # Release failures only leak the lock until its TTL expires.
             logger.warning("chat_lock.release_failed", user_id=user_id, error=str(exc))

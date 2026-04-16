@@ -113,6 +113,13 @@ class FakeRedis:
             self._strings[key] = value
             return True
 
+    async def exists(self, *keys: str) -> int:
+        count = 0
+        for key in keys:
+            if key in self._strings or key in self._zsets:
+                count += 1
+        return count
+
     async def delete(self, *keys: str) -> int:
         deleted = 0
         for key in keys:
@@ -152,10 +159,15 @@ async def rate_limit_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app = create_app()
 
     fake = FakeRedis()
-    # Patch the binding wherever get_redis was imported.
+    # Override the FastAPI dependency so any endpoint wired via
+    # `Depends(get_redis)` receives the fake. Also patch the source
+    # module so direct `get_redis()` callers (e.g. module-level helpers,
+    # tests that reach in) see the same fake.
+    from app.services.redis import get_redis as _get_redis
+
+    app.dependency_overrides[_get_redis] = lambda: fake
     monkeypatch.setattr("app.api.auth.get_redis", lambda: fake)
     monkeypatch.setattr("app.api.chat.get_redis", lambda: fake)
-    # Also patch the source so any other callers get the same fake.
     monkeypatch.setattr("app.services.redis.get_redis", lambda: fake)
     return app
 

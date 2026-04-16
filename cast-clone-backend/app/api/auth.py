@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -22,7 +23,11 @@ from app.schemas.auth import (
 from app.services.activity import log_activity
 from app.services.auth import create_access_token, hash_password, verify_password
 from app.services.postgres import get_session
-from app.services.rate_limit import RateLimitExceeded, check_rate_limit
+from app.services.rate_limit import (
+    RateLimitBackendUnavailable,
+    RateLimitExceeded,
+    check_rate_limit,
+)
 from app.services.redis import get_redis
 
 logger = structlog.get_logger()
@@ -36,11 +41,12 @@ async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> LoginResponse:
     client_ip = request.client.host if request.client else "unknown"
     try:
         await check_rate_limit(
-            get_redis(),
+            redis,
             f"rl:login:{client_ip}",
             window_seconds=60,
             max_requests=5,
@@ -50,6 +56,12 @@ async def login(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts",
             headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except RateLimitBackendUnavailable as exc:
+        # Fail-closed: refuse traffic when we cannot enforce the limit.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Rate limiter backend unavailable",
         ) from exc
 
     result = await session.execute(select(User).where(User.username == form.username))

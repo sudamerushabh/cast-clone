@@ -8,6 +8,7 @@ from app.main import app
 from app.models.db import User
 from app.services.auth import hash_password, create_access_token
 from app.services.postgres import get_session
+from app.services.redis import get_redis
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ async def client(mock_session, monkeypatch):
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_settings] = _override_get_settings
+    app.dependency_overrides[get_redis] = lambda: MagicMock()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
