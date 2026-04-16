@@ -365,8 +365,48 @@ class TestTraceTransactionFlow:
         assert "X.<init>" not in flow.visited_fqns
         # No duplicates in the flow list.
         assert len(flow.visited_fqns) == len(set(flow.visited_fqns))
-        # Non-constructor nodes are all present exactly once.
-        assert sorted(flow.visited_fqns) == ["A.handle", "B.step", "C.leaf"]
+        # Option A (CHAN-81): descendants reachable only via the constructor
+        # (D.persist via X.<init>) are still walked and included in the flow.
+        assert sorted(flow.visited_fqns) == [
+            "A.handle",
+            "B.step",
+            "C.leaf",
+            "D.persist",
+        ]
+        # Terminal classification still picks up the TABLE_WRITE past the
+        # constructor subtree.
+        assert "TABLE_WRITE" in flow.end_point_types
+        assert "D.persist" in flow.terminal_fqns
+
+    def test_constructor_subtree_traversed(self):
+        """Option A (CHAN-81): a node reachable ONLY via a constructor is
+        still walked and recorded in ``flow.visited_fqns``.
+
+        Graph shape:
+            A.handle -[:CALLS]-> X.<init>
+            X.<init> -[:CALLS]-> D.persist
+            D.persist -[:WRITES]-> users
+        """
+        g = SymbolGraph()
+        g.add_node(_fn("A.handle", "handle"))
+        g.add_node(_fn("X.<init>", "<init>"))
+        g.add_node(_fn("D.persist", "persist"))
+        g.add_node(GraphNode(fqn="users", name="users", kind=NodeKind.TABLE))
+
+        g.add_edge(_edge("A.handle", "X.<init>", EdgeKind.CALLS))
+        g.add_edge(_edge("X.<init>", "D.persist", EdgeKind.CALLS))
+        g.add_edge(_edge("D.persist", "users", EdgeKind.WRITES))
+
+        flow = trace_transaction_flow("A.handle", g, max_depth=15)
+
+        # Constructor excluded from the flow...
+        assert "X.<init>" not in flow.visited_fqns
+        # ...but its descendants are still traversed.
+        assert "D.persist" in flow.visited_fqns
+        assert sorted(flow.visited_fqns) == ["A.handle", "D.persist"]
+        # Terminal classification picks up the WRITE past the constructor.
+        assert "TABLE_WRITE" in flow.end_point_types
+        assert "D.persist" in flow.terminal_fqns
 
     def test_filter_applied_to_deduplicated_set(self, monkeypatch):
         """Filter predicate (`name in _CONSTRUCTOR_NAMES`) must run at most once
