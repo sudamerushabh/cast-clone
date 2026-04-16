@@ -283,6 +283,11 @@ async def delete_repository(
     await session.delete(repo)
     await session.commit()
 
+    # CASCADE deleted the tracking row; invalidate cache so cumulative_loc()
+    # picks up the removal.
+    from app.services.loc_usage import invalidate_cumulative_loc_cache
+    invalidate_cumulative_loc_cache()
+
     try:
         await cleanup_repo_dirs(local_path)
     except Exception:
@@ -393,6 +398,20 @@ async def add_branch(
         branch=body.branch,
     )
     session.add(project)
+
+    # Clone the branch directory from the main repo clone
+    if repo.local_path and repo.clone_status == "cloned":
+        try:
+            from app.services.clone import fetch_all_refs
+            await fetch_all_refs(repo.local_path)
+            await clone_branch_local(repo.local_path, body.branch, branch_dir)
+        except Exception as exc:
+            await logger.awarning(
+                "add_branch_clone_failed",
+                branch=body.branch,
+                error=str(exc),
+            )
+
     await session.commit()
     await session.refresh(project)
 
@@ -401,6 +420,75 @@ async def add_branch(
         branch=project.branch,
         status=project.status,
     )
+
+
+@router.delete(
+    "/{repo_id}/projects/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_branch_project(
+    repo_id: str,
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Delete a branch project, its graph data, analysis runs, and clone directory."""
+    result = await session.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.repository_id == repo_id,
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Branch project {project_id} not found in repository {repo_id}",
+        )
+
+    source_path = project.source_path
+
+    # Clear graph data from Neo4j
+    try:
+        from app.services.neo4j import Neo4jGraphStore, get_driver
+
+        store = Neo4jGraphStore(get_driver())
+        await store.clear_project(project_id)
+        await logger.ainfo(
+            "branch_graph_cleared", project_id=project_id, branch=project.branch
+        )
+    except Exception:
+        await logger.awarning(
+            "branch_graph_clear_failed",
+            project_id=project_id,
+            exc_info=True,
+        )
+
+    # Delete DB record (cascades to analysis_runs)
+    await session.delete(project)
+    await session.commit()
+
+    # Recalculate repo LOC tracking after branch removal
+    from app.services.loc_tracking import recalculate_repo_loc
+    await recalculate_repo_loc(repo_id, session)
+
+    # Remove branch clone directory from disk
+    if source_path:
+        import shutil
+        from pathlib import Path
+
+        branch_dir = Path(source_path)
+        if branch_dir.exists() and branch_dir.is_dir():
+            try:
+                shutil.rmtree(branch_dir)
+                await logger.ainfo("branch_dir_removed", path=source_path)
+            except Exception:
+                await logger.awarning(
+                    "branch_dir_cleanup_failed",
+                    path=source_path,
+                    exc_info=True,
+                )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{repo_id}/projects", response_model=list[ProjectBranchResponse])
