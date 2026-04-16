@@ -98,6 +98,30 @@ _COMPLEXITY_NODE_TYPES: set[str] = {
     "conditional_expression",
 }
 
+# Node types that wrap statements without creating a new Python naming scope.
+# Walking up through these while resolving the enclosing scope of a definition
+# guarantees that a conditionally-defined ``class Foo`` inside ``if``/``else``/
+# ``try``/``except``/``for``/``while``/``with``/``match`` still resolves to the
+# same FQN as if it were defined at the outer scope.
+_NON_SCOPE_CONTAINER_TYPES: frozenset[str] = frozenset(
+    {
+        "block",
+        "decorated_definition",
+        "if_statement",
+        "elif_clause",
+        "else_clause",
+        "try_statement",
+        "except_clause",
+        "except_group_clause",
+        "finally_clause",
+        "for_statement",
+        "while_statement",
+        "with_statement",
+        "match_statement",
+        "case_clause",
+    }
+)
+
 
 def _compute_complexity(node: Node) -> int:
     """Compute cyclomatic complexity for a function body."""
@@ -253,6 +277,54 @@ class PythonExtractor:
 
     # ── Classes ──────────────────────────────────────────────────
 
+    def _resolve_enclosing_scope_fqn(
+        self,
+        node: Node,
+        source: bytes,
+        module_fqn: str,
+    ) -> str | None:
+        """Resolve the FQN of the scope that encloses ``node``.
+
+        Walks up through ancestors, ignoring control-flow containers (``if``,
+        ``else``, ``try``, ``except``, ``for``, ``while``, ``with``, ``match``,
+        etc.) because those do NOT create a new Python naming scope. Only
+        ``class_definition`` and ``function_definition`` do.
+
+        Returns:
+            - ``module_fqn`` if the node's enclosing scope is the module.
+            - ``module_fqn + "." + <class-chain>`` if nested inside one or
+              more classes.
+            - ``None`` if the node lives inside a function (local
+              definition, not recorded as a top-level graph node).
+        """
+        class_chain: list[str] = []
+        current = node.parent
+        while current is not None:
+            if current.type == "class_definition":
+                name_node = current.child_by_field_name("name")
+                if name_node is None:
+                    # Malformed class node; treat as opaque and stop ascent.
+                    return None
+                class_chain.insert(0, _node_text(name_node, source))
+                current = current.parent
+                continue
+            if current.type == "function_definition":
+                # Definition is local to a function — do not emit a top-level
+                # graph node for it.
+                return None
+            if current.type == "module":
+                break
+            if current.type in _NON_SCOPE_CONTAINER_TYPES:
+                current = current.parent
+                continue
+            # Unknown / unexpected container; keep ascending to avoid losing
+            # valid class ancestors higher up.
+            current = current.parent
+
+        if not class_chain:
+            return module_fqn
+        return f"{module_fqn}.{'.'.join(class_chain)}"
+
     def _extract_classes(
         self,
         tree: Tree,
@@ -262,39 +334,24 @@ class PythonExtractor:
         nodes: list[GraphNode],
         edges: list[GraphEdge],
     ) -> None:
-        """Extract class definitions, base classes, methods, and fields."""
-        # Find all class_definition nodes by walking the tree
+        """Extract class definitions, base classes, methods, and fields.
+
+        A class's enclosing scope is resolved by walking up ancestors,
+        transparently skipping control-flow containers (if/else/try/except/
+        for/while/with/match) so that conditionally defined classes receive
+        the same FQN as if they were defined at the outer scope. Classes
+        defined inside functions are skipped (local definitions).
+        """
         all_classes = _walk_tree(tree.root_node, "class_definition")
 
         for class_node in all_classes:
-            # Only extract top-level and first-level nested classes
-            parent = class_node.parent
-            if parent and parent.type == "block":
-                grandparent = parent.parent
-                if grandparent and grandparent.type == "class_definition":
-                    # Nested class -- compute FQN relative to outer class
-                    outer_name_node = grandparent.child_by_field_name("name")
-                    if outer_name_node:
-                        outer_name = _node_text(outer_name_node, source)
-                        self._process_class(
-                            class_node,
-                            source,
-                            file_path,
-                            f"{module_fqn}.{outer_name}",
-                            nodes,
-                            edges,
-                        )
-                        continue
-                elif grandparent and grandparent.type not in (
-                    "module",
-                    "class_definition",
-                    "if_statement",
-                    "try_statement",
-                ):
-                    # Inside a function or other non-class scope -- skip
-                    continue
-
-            self._process_class(class_node, source, file_path, module_fqn, nodes, edges)
+            parent_fqn = self._resolve_enclosing_scope_fqn(
+                class_node, source, module_fqn
+            )
+            if parent_fqn is None:
+                # Local class (inside a function) — not recorded.
+                continue
+            self._process_class(class_node, source, file_path, parent_fqn, nodes, edges)
 
     def _process_class(
         self,
