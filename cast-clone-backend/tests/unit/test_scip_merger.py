@@ -3,6 +3,7 @@
 Matching SCIP symbols to tree-sitter nodes and upgrading edges.
 """
 
+import os
 from pathlib import Path
 
 from app.models.context import AnalysisContext
@@ -11,6 +12,8 @@ from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.models.manifest import ProjectManifest
 from app.stages.scip.merger import (
     MergeStats,
+    _normalize_path,
+    _upgrade_node_fqn,
     match_scip_symbol_to_node,
     merge_scip_into_context,
     scip_symbol_to_fqn,
@@ -435,3 +438,221 @@ class TestMergeSCIPIntoContext:
 
         stats = merge_scip_into_context(ctx, scip_index, "java")
         assert stats.resolved_count == 0
+
+
+class TestUpgradeNodeFQNReverseIndexes:
+    """FQN upgrades must keep ``_edges_from`` / ``_edges_to`` consistent.
+
+    Covers CHAN-82: after a FQN upgrade the reverse indexes must not
+    return stale entries under the old FQN and must return the expected
+    entries under the new FQN, immediately — before the merger returns
+    control to any subsequent plugin.
+    """
+
+    def _seed(self) -> tuple[SymbolGraph, GraphNode, GraphNode]:
+        graph = SymbolGraph()
+        caller = GraphNode(
+            fqn="Caller",
+            name="Caller",
+            kind=NodeKind.FUNCTION,
+            path="src/Caller.java",
+            line=1,
+        )
+        callee = GraphNode(
+            fqn="Callee",
+            name="Callee",
+            kind=NodeKind.FUNCTION,
+            path="src/Callee.java",
+            line=1,
+        )
+        graph.add_node(caller)
+        graph.add_node(callee)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="Caller",
+                target_fqn="Callee",
+                kind=EdgeKind.CALLS,
+            )
+        )
+        # Warm the indexes so we can observe incremental patching.
+        assert len(graph.get_edges_from("Caller")) == 1
+        assert len(graph.get_edges_to("Callee")) == 1
+        return graph, caller, callee
+
+    def test_upgrade_source_fqn_patches_edges_from(self):
+        graph, caller, _callee = self._seed()
+
+        _upgrade_node_fqn(graph, caller, "com.example.Caller")
+
+        assert graph.get_edges_from("com.example.Caller"), (
+            "new source FQN must be readable immediately"
+        )
+        assert graph.get_edges_from("Caller") == [], (
+            "old source FQN must not leak stale entries"
+        )
+
+    def test_upgrade_target_fqn_patches_edges_to(self):
+        graph, _caller, callee = self._seed()
+
+        _upgrade_node_fqn(graph, callee, "com.example.Callee")
+
+        assert graph.get_edges_to("com.example.Callee"), (
+            "new target FQN must be readable immediately"
+        )
+        assert graph.get_edges_to("Callee") == [], (
+            "old target FQN must not leak stale entries"
+        )
+
+    def test_upgrade_fqn_symmetry_from_and_to(self):
+        """Source upgrade must update the edge's own ``source_fqn`` so
+        the reverse (``get_edges_to``) view is also symmetric."""
+        graph, caller, _callee = self._seed()
+
+        _upgrade_node_fqn(graph, caller, "com.example.Caller")
+
+        # The edge object itself has the new source FQN.
+        edges_to_callee = graph.get_edges_to("Callee")
+        assert len(edges_to_callee) == 1
+        assert edges_to_callee[0].source_fqn == "com.example.Caller"
+
+    def test_upgrade_both_endpoints_stays_consistent(self):
+        """Upgrading both source and target sequentially leaves no stale keys."""
+        graph, caller, callee = self._seed()
+
+        _upgrade_node_fqn(graph, caller, "com.example.Caller")
+        _upgrade_node_fqn(graph, callee, "com.example.Callee")
+
+        assert graph.get_edges_from("Caller") == []
+        assert graph.get_edges_to("Callee") == []
+        assert len(graph.get_edges_from("com.example.Caller")) == 1
+        assert len(graph.get_edges_to("com.example.Callee")) == 1
+        edge = graph.get_edges_from("com.example.Caller")[0]
+        assert edge.source_fqn == "com.example.Caller"
+        assert edge.target_fqn == "com.example.Callee"
+
+    def test_upgrade_with_dirty_index_still_consistent_after_read(self):
+        """When the index is already dirty, a later read rebuilds and
+        still reflects the FQN change."""
+        graph, caller, _callee = self._seed()
+        # Dirty the index (simulating an add_edge between upgrades)
+        graph._index_dirty = True
+
+        _upgrade_node_fqn(graph, caller, "com.example.Caller")
+
+        assert graph.get_edges_from("Caller") == []
+        assert len(graph.get_edges_from("com.example.Caller")) == 1
+
+    def test_upgrade_via_merger_public_api(self):
+        """End-to-end: merger upgrades FQN and reverse indexes are clean."""
+        graph = SymbolGraph()
+        node = GraphNode(
+            fqn="UserService",
+            name="UserService",
+            kind=NodeKind.CLASS,
+            path="src/main/java/com/example/UserService.java",
+            line=10,
+        )
+        target = GraphNode(
+            fqn="com.example.UserRepository",
+            name="UserRepository",
+            kind=NodeKind.CLASS,
+            path="src/main/java/com/example/UserRepository.java",
+            line=5,
+        )
+        graph.add_node(node)
+        graph.add_node(target)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="UserService",
+                target_fqn="com.example.UserRepository",
+                kind=EdgeKind.CALLS,
+            )
+        )
+        # Warm indexes
+        assert graph.get_edges_from("UserService")
+
+        ctx = AnalysisContext(project_id="test-proj")
+        ctx.manifest = ProjectManifest(root_path=Path("/code"))
+        ctx.graph = graph
+
+        scip_index = SCIPIndex(
+            documents=[
+                SCIPDocument(
+                    relative_path="src/main/java/com/example/UserService.java",
+                    occurrences=[
+                        SCIPOccurrence(
+                            range=[10, 13, 24],
+                            symbol="maven . com/example 1.0 UserService#",
+                            symbol_roles=0x1,
+                        ),
+                    ],
+                    symbols=[],
+                ),
+            ],
+            metadata_tool_name="scip-java",
+            metadata_tool_version="0.8.0",
+        )
+        merge_scip_into_context(ctx, scip_index, "java")
+
+        # New FQN readable immediately
+        new_edges = graph.get_edges_from("com.example.UserService")
+        assert len(new_edges) == 1
+        assert new_edges[0].source_fqn == "com.example.UserService"
+        # Reverse view also symmetric
+        back_edges = graph.get_edges_to("com.example.UserRepository")
+        assert any(
+            e.source_fqn == "com.example.UserService" for e in back_edges
+        )
+        # Old FQN returns nothing
+        assert graph.get_edges_from("UserService") == []
+
+
+class TestNormalizePath:
+    """CHAN-82: path normalization via ``pathlib.Path.resolve()``.
+
+    Two path strings that refer to the same filesystem location must
+    collapse to the same key regardless of trailing slashes, ``./``
+    prefixes, case differences on case-insensitive FSes, or symlink
+    form.
+    """
+
+    def test_trailing_slash_equivalent(self):
+        assert _normalize_path("/tmp/foo") == _normalize_path("/tmp/foo/")
+
+    def test_dot_slash_prefix_equivalent(self, tmp_path):
+        # Real file so resolve() produces stable output on both branches.
+        target = tmp_path / "a.txt"
+        target.write_text("x")
+        cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            assert _normalize_path("./a.txt") == _normalize_path(
+                str(target)
+            )
+        finally:
+            os.chdir(cwd)
+
+    def test_redundant_separators_collapsed(self):
+        assert _normalize_path("/tmp//foo/./bar") == _normalize_path(
+            "/tmp/foo/bar"
+        )
+
+    def test_symlink_resolves_to_same_key(self, tmp_path):
+        real = tmp_path / "real.txt"
+        real.write_text("x")
+        link = tmp_path / "link.txt"
+        try:
+            os.symlink(real, link)
+        except (OSError, NotImplementedError):
+            # Skip on platforms without symlink privilege (e.g. some CI).
+            return
+        assert _normalize_path(str(link)) == _normalize_path(str(real))
+
+    def test_nonexistent_path_falls_back(self):
+        """Synthetic paths that don't exist on disk must still normalize
+        deterministically via the ``os.path.normpath`` fallback."""
+        a = _normalize_path("src/./foo//bar.java")
+        b = _normalize_path("src/foo/bar.java")
+        assert a.endswith("src/foo/bar.java")
+        assert b.endswith("src/foo/bar.java")
+        assert a == b
