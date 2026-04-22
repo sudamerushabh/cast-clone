@@ -356,3 +356,18 @@ class TestBuildPythonVenv:
         assert calls[0][:2] == ["uv", "venv"]
         # Second call should be uv pip install
         assert any(c[:3] == ["uv", "pip", "install"] for c in calls)
+
+    def test_returns_none_when_no_build_file(self, tmp_path: Path, monkeypatch):
+        """No pyproject.toml/requirements.txt/setup.py → return None, no subprocess."""
+        called = []
+
+        def fake_run(*a, **k):
+            called.append(a)
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        venv = build_python_venv(tmp_path)
+
+        assert venv is None
+        assert called == []
