@@ -54,6 +54,29 @@ class TestAlembicDetection:
         assert result.confidence == Confidence.HIGH
         assert "env.py" in result.reason
 
+    def test_detects_via_import_alembic_form(self, tmp_path: Path):
+        """Hand-rolled env.py using `import alembic` is still recognized."""
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        migrations_dir = tmp_path / "migrations"
+        migrations_dir.mkdir()
+        (migrations_dir / "env.py").write_text(
+            "import alembic\n\n"
+            "ctx = alembic.context.config\n"
+        )
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(
+            project_id="t",
+            graph=SymbolGraph(),
+            manifest=manifest,
+        )
+
+        result = AlembicPlugin().detect(ctx)
+
+        assert result.confidence == Confidence.HIGH
+        assert "env.py" in result.reason
+
     def test_no_alembic_artifacts_returns_not_detected(self, tmp_path: Path):
         from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
 

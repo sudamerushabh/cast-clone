@@ -51,11 +51,15 @@ class AlembicPlugin(FrameworkPlugin):
                 text = env_py.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 return PluginDetectionResult.not_detected()
-            if "from alembic import" in text:
+            if "from alembic import" in text or "import alembic" in text:
                 return PluginDetectionResult(
                     confidence=Confidence.HIGH,
                     reason="migrations/env.py imports alembic",
                 )
+            logger.debug(
+                "alembic_detect_env_py_no_import",
+                env_py=str(env_py),
+            )
 
         return PluginDetectionResult.not_detected()
 
