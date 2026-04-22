@@ -227,3 +227,95 @@ class TestDjangoSettingsMetadata:
 
     def test_depends_on_empty(self):
         assert DjangoSettingsPlugin().depends_on == []
+
+
+# ---------------------------------------------------------------------------
+# INSTALLED_APPS parsing tests
+# ---------------------------------------------------------------------------
+
+
+class TestInstalledAppsParsing:
+    def test_simple_list_parsed(self):
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        raw = '["django.contrib.auth", "rest_framework", "posts"]'
+        apps = parse_installed_apps(raw)
+
+        assert apps == [
+            "django.contrib.auth",
+            "rest_framework",
+            "posts",
+        ]
+
+    def test_multiline_list_parsed(self):
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        raw = (
+            "[\n"
+            '    "django.contrib.admin",\n'
+            '    "django.contrib.auth",\n'
+            '    "posts",\n'
+            "]"
+        )
+        apps = parse_installed_apps(raw)
+
+        assert apps == [
+            "django.contrib.admin",
+            "django.contrib.auth",
+            "posts",
+        ]
+
+    def test_malformed_returns_empty(self):
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        assert parse_installed_apps("not a list") == []
+        assert parse_installed_apps("") == []
+
+    def test_non_string_entries_filtered(self):
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        # We only accept string entries; anything else (ints, dicts) is dropped.
+        raw = '["app1", 42, "app2"]'
+        assert parse_installed_apps(raw) == ["app1", "app2"]
+
+    @pytest.mark.asyncio
+    async def test_extract_emits_apps_property(self, tmp_path):
+        """End-to-end: a synthetic graph with an INSTALLED_APPS FIELD
+        produces a CONFIG_ENTRY whose properties include the parsed `apps` list."""
+        from app.stages.plugins.django.settings import DjangoSettingsPlugin
+
+        graph = SymbolGraph()
+        module = GraphNode(
+            fqn="myproj.settings",
+            name="settings",
+            kind=NodeKind.MODULE,
+            language="python",
+        )
+        field = GraphNode(
+            fqn="myproj.settings.INSTALLED_APPS",
+            name="INSTALLED_APPS",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '["django.contrib.auth", "posts"]'},
+        )
+        graph.add_node(module)
+        graph.add_node(field)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=module.fqn,
+                target_fqn=field.fqn,
+                kind=EdgeKind.CONTAINS,
+                confidence=Confidence.HIGH,
+                evidence="test-setup",
+            )
+        )
+
+        ctx = AnalysisContext(project_id="t", graph=graph)
+        result = await DjangoSettingsPlugin().extract(ctx)
+
+        entries = [n for n in result.nodes if n.kind == NodeKind.CONFIG_ENTRY]
+        installed = next(e for e in entries if e.name == "INSTALLED_APPS")
+        assert installed.properties["apps"] == [
+            "django.contrib.auth",
+            "posts",
+        ]

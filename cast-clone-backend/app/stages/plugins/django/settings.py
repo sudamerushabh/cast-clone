@@ -14,6 +14,8 @@ Produces:
 
 from __future__ import annotations
 
+import ast
+
 import structlog
 
 from app.models.context import AnalysisContext
@@ -38,6 +40,25 @@ _DJANGO_SETTINGS_KEYS = frozenset(
         "AUTH_USER_MODEL",
     }
 )
+
+
+def parse_installed_apps(raw_value: str) -> list[str]:
+    """Parse an INSTALLED_APPS RHS into a list of app names.
+
+    Uses ``ast.literal_eval`` (stdlib safe parser that only accepts literal
+    Python values and refuses arbitrary code) so the RHS cannot execute.
+    Drops non-string entries (e.g. int, dict) to keep the caller's type sane.
+    Returns [] on any parse failure.
+    """
+    if not raw_value.strip():
+        return []
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except (ValueError, SyntaxError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
 
 
 class DjangoSettingsPlugin(FrameworkPlugin):
@@ -96,16 +117,21 @@ class DjangoSettingsPlugin(FrameworkPlugin):
 
             # Extract settings entries
             for field_fqn, field_node in self._get_settings_fields(graph, module_fqn):
+                raw_value = field_node.properties.get("value", "")
+                entry_properties: dict[str, object] = {
+                    "value": raw_value,
+                    "setting_key": field_node.name,
+                }
+                if field_node.name == "INSTALLED_APPS":
+                    entry_properties["apps"] = parse_installed_apps(raw_value)
+
                 entry_fqn = f"config:{module_fqn}.{field_node.name}"
                 entry = GraphNode(
                     fqn=entry_fqn,
                     name=field_node.name,
                     kind=NodeKind.CONFIG_ENTRY,
                     language="python",
-                    properties={
-                        "value": field_node.properties.get("value", ""),
-                        "setting_key": field_node.name,
-                    },
+                    properties=entry_properties,
                 )
                 nodes.append(entry)
                 edges.append(
