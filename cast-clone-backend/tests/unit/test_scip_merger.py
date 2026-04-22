@@ -435,3 +435,32 @@ class TestMergeSCIPIntoContext:
 
         stats = merge_scip_into_context(ctx, scip_index, "java")
         assert stats.resolved_count == 0
+
+
+class TestScipPythonSymbolFormat:
+    def test_external_package_method(self):
+        """scip-python external package method symbol → dotted FQN."""
+        s = "scip-python python PyYAML 6.0 yaml/dump()."
+        assert scip_symbol_to_fqn(s) == "PyYAML.yaml.dump"
+
+    def test_project_local_function(self):
+        """scip-python project-local module function."""
+        s = "scip-python python myapp 0.1.0 myapp/routes/users.py/create_user()."
+        assert scip_symbol_to_fqn(s) == "myapp.myapp.routes.users.py.create_user"
+
+    def test_project_local_class(self):
+        """scip-python project-local class."""
+        s = "scip-python python myapp 0.1.0 myapp/models/user.py/User#"
+        assert scip_symbol_to_fqn(s) == "myapp.myapp.models.user.py.User"
+
+    def test_project_local_class_method(self):
+        """scip-python class method with receiver."""
+        s = "scip-python python myapp 0.1.0 myapp/models/user.py/User#save()."
+        assert scip_symbol_to_fqn(s) == "myapp.myapp.models.user.py.User.save"
+
+    def test_local_symbol_returns_empty(self):
+        """Local symbols (function-scope vars) should return empty string."""
+        assert scip_symbol_to_fqn("local 42") == ""
+
+    def test_empty_symbol_returns_empty(self):
+        assert scip_symbol_to_fqn("") == ""
