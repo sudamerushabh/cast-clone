@@ -287,13 +287,21 @@ SCIP is **not fatal** — if it fails, the pipeline continues with tree-sitter r
 
 | Scenario | Behavior |
 |----------|----------|
-| scip-java not installed | Stage 4 logs warning, language queued for LSP fallback |
-| Maven compile fails | Same — warning + fallback |
+| scip-java / scip-typescript / scip-python / scip-dotnet not installed | Stage 4 **pre-flights** `shutil.which(binary)` (CHAN-71), skips the indexer with a warning that carries the install hint, and queues the language for LSP fallback — no subprocess launch |
+| Maven compile fails | Warning + fallback |
 | index.scip empty/corrupt | Warning, no merge performed |
 | Timeout (>600s) | Subprocess killed, language queued for fallback |
 | Partial success (multi-lang) | Each language handled independently |
 
 Only Stage 1 (discovery) and Stage 8 (Neo4j write) are fatal. Everything else degrades gracefully.
+
+### Install hints
+
+Each indexer config carries an `install_hint` pointing back at this doc. When a
+binary is missing, the warning log event `scip.indexer.binary_not_on_path`
+(emitted by `detect_available_indexers`) includes `install_hint` so operators
+can wire a log alert that surfaces the install command directly — no need to
+dig through Stage 4 traces.
 
 ---
 

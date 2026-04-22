@@ -12,9 +12,26 @@ from app.stages.scip.indexer import (
     SCIP_INDEXER_CONFIGS,
     build_scip_command,
     detect_available_indexers,
+    is_indexer_installed,
     run_scip_indexers,
     run_single_scip_indexer,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pretend_scip_binaries_installed(monkeypatch):
+    """CHAN-71: `detect_available_indexers` filters on `shutil.which`.
+
+    Default to treating every SCIP binary as installed so the pre-existing
+    tests (which assert on the config-filter semantics, not the PATH probe)
+    keep working on CI runners that don't ship the SCIP toolchain. Tests that
+    want to exercise the missing-binary path can override with a dedicated
+    monkeypatch.
+    """
+    monkeypatch.setattr(
+        "app.stages.scip.indexer.shutil.which",
+        lambda _binary: "/fake/bin/scip",
+    )
 
 
 class TestSCIPIndexerConfig:
@@ -22,7 +39,9 @@ class TestSCIPIndexerConfig:
         assert "java" in SCIP_INDEXER_CONFIGS
         cfg = SCIP_INDEXER_CONFIGS["java"]
         assert cfg.language == "java"
-        assert cfg.timeout_seconds > 0
+        # 0 means "inherit scip_timeout from Settings"; any explicit override
+        # would be positive. Either is valid.
+        assert cfg.timeout_seconds >= 0
         assert cfg.output_file == "index.scip"
 
     def test_typescript_config_exists(self):
@@ -85,6 +104,41 @@ class TestDetectAvailableIndexers:
         configs = detect_available_indexers(["javascript"])
         assert len(configs) == 1
         assert configs[0].language == "typescript"
+
+
+class TestDetectAvailableIndexersBinaryCheck:
+    """CHAN-71: `detect_available_indexers` filters by `shutil.which`."""
+
+    def test_missing_binary_is_filtered_out(self, monkeypatch):
+        """Only configs whose entry-point binary is on PATH survive."""
+        # Override the autouse fixture: only scip-java is installed.
+        def _fake_which(binary):
+            return "/usr/local/bin/scip-java" if binary == "scip-java" else None
+
+        monkeypatch.setattr("app.stages.scip.indexer.shutil.which", _fake_which)
+
+        configs = detect_available_indexers(["java", "typescript", "python"])
+        names = {c.name for c in configs}
+        assert names == {"scip-java"}
+
+    def test_all_binaries_missing_returns_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.stages.scip.indexer.shutil.which", lambda _b: None
+        )
+        assert detect_available_indexers(["java", "typescript", "python"]) == []
+
+    def test_is_indexer_installed_reports_path_state(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.stages.scip.indexer.shutil.which",
+            lambda b: "/bin/x" if b == "scip-java" else None,
+        )
+        assert is_indexer_installed(SCIP_INDEXER_CONFIGS["java"]) is True
+        assert is_indexer_installed(SCIP_INDEXER_CONFIGS["python"]) is False
+
+    def test_install_hint_populated_for_every_config(self):
+        for cfg in SCIP_INDEXER_CONFIGS.values():
+            assert cfg.install_hint, f"{cfg.name} missing install_hint"
+            assert "docs/11-SCIP-TOOLCHAIN.md" in cfg.install_hint
 
 
 class TestRunSingleSCIPIndexer:

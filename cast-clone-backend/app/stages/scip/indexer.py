@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,7 +47,13 @@ class SCIPIndexerConfig:
     timeout_seconds: int = 0  # 0 = use global scip_timeout from Settings
     needs_project_name: bool = False
     docker_image: str | None = None
+    install_hint: str = (
+        "See docs/11-SCIP-TOOLCHAIN.md for installation instructions."
+    )
 
+
+# Shared doc pointer -- keeps install hints consistent across configs.
+_SCIP_INSTALL_DOC = "docs/11-SCIP-TOOLCHAIN.md"
 
 # Language -> SCIP indexer config mapping
 SCIP_INDEXER_CONFIGS: dict[str, SCIPIndexerConfig] = {
@@ -55,11 +62,20 @@ SCIP_INDEXER_CONFIGS: dict[str, SCIPIndexerConfig] = {
         name="scip-java",
         command_template=["scip-java", "index"],
         docker_image="sourcegraph/scip-java:latest",
+        install_hint=(
+            f"Install scip-java and put it on PATH (see {_SCIP_INSTALL_DOC}). "
+            f"Docker alternative: sourcegraph/scip-java:latest."
+        ),
     ),
     "typescript": SCIPIndexerConfig(
         language="typescript",
         name="scip-typescript",
         command_template=["npx", "@sourcegraph/scip-typescript", "index"],
+        install_hint=(
+            f"Requires Node.js (npx). Install Node 18+ and re-run -- the "
+            f"scip-typescript npm package is fetched on demand. See "
+            f"{_SCIP_INSTALL_DOC}."
+        ),
     ),
     "python": SCIPIndexerConfig(
         language="python",
@@ -71,11 +87,18 @@ SCIP_INDEXER_CONFIGS: dict[str, SCIPIndexerConfig] = {
             "--project-name={project_name}",
         ],
         needs_project_name=True,
+        install_hint=(
+            f"Install scip-python (npm i -g @sourcegraph/scip-python) and "
+            f"ensure it's on PATH. See {_SCIP_INSTALL_DOC}."
+        ),
     ),
     "csharp": SCIPIndexerConfig(
         language="csharp",
         name="scip-dotnet",
         command_template=["scip-dotnet", "index"],
+        install_hint=(
+            f"Install scip-dotnet and put it on PATH. See {_SCIP_INSTALL_DOC}."
+        ),
     ),
 }
 
@@ -133,25 +156,59 @@ def build_scip_command(
 # -- Indexer Detection -------------------------------------------------------
 
 
+def _indexer_binary(config: SCIPIndexerConfig) -> str:
+    """Return the executable that must be on PATH for this indexer."""
+    return config.command_template[0] if config.command_template else ""
+
+
+def is_indexer_installed(config: SCIPIndexerConfig) -> bool:
+    """Return True iff the indexer's entry-point binary resolves on PATH."""
+    binary = _indexer_binary(config)
+    return bool(binary) and shutil.which(binary) is not None
+
+
 def detect_available_indexers(
     detected_languages: list[str],
 ) -> list[SCIPIndexerConfig]:
-    """Return SCIP indexer configs for languages that have indexers.
+    """Return SCIP indexer configs whose binaries are installed on PATH.
+
+    CHAN-71: Missing binaries are filtered out with a warning referencing the
+    indexer's install hint, so Stage 4 never shells out to an executable that
+    does not exist. Languages whose indexer is absent fall through to the
+    regular "no-config" branch in ``run_scip_indexers`` and are queued for
+    LSP fallback.
 
     Args:
         detected_languages: List of language identifiers from project discovery.
 
     Returns:
-        List of applicable SCIPIndexerConfig instances (deduplicated).
+        List of applicable SCIPIndexerConfig instances (deduplicated, installed).
     """
     seen: set[str] = set()
     configs: list[SCIPIndexerConfig] = []
 
     for lang in detected_languages:
         canonical = _LANGUAGE_ALIASES.get(lang.lower(), lang.lower())
-        if canonical in SCIP_INDEXER_CONFIGS and canonical not in seen:
-            configs.append(SCIP_INDEXER_CONFIGS[canonical])
-            seen.add(canonical)
+        if canonical in seen:
+            continue
+        config = SCIP_INDEXER_CONFIGS.get(canonical)
+        if config is None:
+            continue
+        seen.add(canonical)
+        if not is_indexer_installed(config):
+            logger.warning(
+                "scip.indexer.binary_not_on_path",
+                language=config.language,
+                indexer=config.name,
+                binary=_indexer_binary(config),
+                install_hint=config.install_hint,
+                message=(
+                    f"{config.name} binary not found on PATH; "
+                    f"skipping and falling back to LSP."
+                ),
+            )
+            continue
+        configs.append(config)
 
     return configs
 
@@ -267,8 +324,11 @@ async def _run_scip_in_directory(
             env=env_overrides,
         )
     except FileNotFoundError as err:
-        # CHAN-69: SCIP binary missing from PATH -- skip this language so that
-        # Stage 4b (LSP fallback) can take over. Non-fatal by design.
+        # CHAN-69 / CHAN-71: SCIP binary missing from PATH -- skip this language
+        # so Stage 4b (LSP fallback) takes over. Non-fatal by design. Hits this
+        # path only if PATH changes between `detect_available_indexers` and the
+        # subprocess call, or if the indexer shells out to an auxiliary binary
+        # we don't pre-check (e.g. `npx` spawning node).
         logger.warning(
             "scip.indexer.binary_missing",
             language=indexer_config.language,
@@ -276,6 +336,7 @@ async def _run_scip_in_directory(
             binary=command[0] if command else None,
             cwd=str(cwd),
             error=str(err),
+            install_hint=indexer_config.install_hint,
             project_id=context.project_id,
             message="SCIP indexer binary not installed; falling back to LSP",
         )
