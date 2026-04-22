@@ -10,6 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ConnectorCard } from "@/components/connectors/ConnectorCard";
 import { AddConnectorForm } from "@/components/connectors/AddConnectorForm";
 import { listConnectors, deleteConnector, testConnector } from "@/lib/api";
@@ -48,14 +50,6 @@ export default function ConnectorsPage() {
     load();
   }
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <p className="text-muted-foreground">Loading connectors...</p>
-      </div>
-    );
-  }
-
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
@@ -71,20 +65,25 @@ export default function ConnectorsPage() {
         </Button>
       </div>
 
-      {connectors.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16">
-          <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
-            <Unplug className="size-5 text-muted-foreground" />
-          </div>
-          <p className="mb-1 text-sm font-medium">No connectors yet</p>
-          <p className="mb-4 max-w-xs text-center text-xs text-muted-foreground">
-            Add a connector to start browsing and analyzing repositories from
-            GitHub, GitLab, Gitea, or Bitbucket.
-          </p>
-          <Button size="sm" onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-1 size-3.5" />
-            Add Your First Connector
-          </Button>
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
+        </div>
+      ) : connectors.length === 0 ? (
+        <div className="rounded-lg border border-dashed">
+          <EmptyState
+            icon={Unplug}
+            title="No connectors yet"
+            description="Add a connector to start browsing and analyzing repositories from GitHub, GitLab, Gitea, or Bitbucket."
+            action={
+              <Button size="sm" onClick={() => setDialogOpen(true)}>
+                <Plus className="mr-1 size-3.5" />
+                Add Your First Connector
+              </Button>
+            }
+          />
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

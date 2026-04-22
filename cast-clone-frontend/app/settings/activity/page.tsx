@@ -6,6 +6,8 @@ import { getActivityFeed, getActivityStats } from "@/lib/api";
 import type { ActivityLogEntry, ActivityStatsResponse } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Activity,
   Bot,
@@ -402,20 +404,17 @@ export default function ActivityPage() {
       {/* Timeline */}
       <div className="rounded-lg border">
         {loading ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            Loading activity...
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
           </div>
         ) : entries.length === 0 ? (
-          <div className="p-12 text-center">
-            <Activity className="mx-auto size-8 text-muted-foreground/30" />
-            <p className="mt-3 text-sm text-muted-foreground">
-              No activity recorded yet
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Actions like creating projects, triggering analyses, and changing
-              settings will appear here
-            </p>
-          </div>
+          <EmptyState
+            icon={Activity}
+            title="No activity recorded yet"
+            description="Actions like creating projects, triggering analyses, and changing settings will appear here."
+          />
         ) : (
           <div>
             {Object.entries(grouped).map(([date, dayEntries], groupIdx) => (

@@ -10,6 +10,7 @@ import { CreateKeyModal } from "@/components/settings/CreateKeyModal";
 import { McpSetupGuide } from "@/components/settings/McpSetupGuide";
 import { AiUsageDashboard } from "@/components/admin/AiUsageDashboard";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Plus } from "lucide-react";
 
 export default function ApiKeysSettingsPage() {
@@ -54,7 +55,11 @@ export default function ApiKeysSettingsPage() {
       </div>
 
       {loading ? (
-        <div className="py-12 text-center text-muted-foreground">Loading...</div>
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
+          ))}
+        </div>
       ) : (
         <ApiKeyTable keys={keys} onKeyRevoked={loadKeys} />
       )}

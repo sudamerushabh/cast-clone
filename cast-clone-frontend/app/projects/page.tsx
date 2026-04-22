@@ -8,6 +8,8 @@ import { listProjects, createProject } from "@/lib/api"
 import type { ProjectResponse } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Card,
   CardHeader,
@@ -187,20 +189,24 @@ export default function ProjectsPage() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
         </div>
       ) : projects.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-20">
-          <FolderOpen className="mb-4 size-12 text-muted-foreground" />
-          <h2 className="mb-1 text-lg font-medium">No projects yet</h2>
-          <p className="mb-4 text-sm text-muted-foreground">
-            Create your first project to get started.
-          </p>
-          <Button size="lg" onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-2 size-4" />
-            Create Project
-          </Button>
+        <div className="rounded-lg border border-dashed">
+          <EmptyState
+            icon={FolderOpen}
+            title="No projects yet"
+            description="Create your first project to get started."
+            action={
+              <Button size="lg" onClick={() => setDialogOpen(true)}>
+                <Plus className="mr-2 size-4" />
+                Create Project
+              </Button>
+            }
+          />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
