@@ -20,7 +20,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN npm install -g @sourcegraph/scip-typescript
 
 # ── SCIP: Python (Pyright-based, npm package) ────────────────────
-RUN npm install -g @sourcegraph/scip-python
+RUN npm install -g @sourcegraph/scip-python@0.6.6
 
 # ── SCIP: Java (via Coursier) ────────────────────────────────────
 RUN curl -fL "https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz" \
