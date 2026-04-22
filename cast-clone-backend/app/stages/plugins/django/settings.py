@@ -94,6 +94,10 @@ def parse_databases(raw_value: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for django_key, out_key in mapping.items():
         value = default.get(django_key)
+        # Only emit string values. Django allows int PORT (e.g. 5432) — the
+        # tree-sitter source text preserves the bare int, ast.literal_eval
+        # parses it as int, and we drop it here. Downstream consumers expect
+        # quoted strings; casting would silently reshape the contract.
         if isinstance(value, str):
             out[out_key] = value
     return out

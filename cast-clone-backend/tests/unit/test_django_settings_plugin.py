@@ -391,3 +391,12 @@ class TestDatabasesParsing:
 
         assert parse_databases("not a dict") == {}
         assert parse_databases("") == {}
+
+    def test_integer_port_is_omitted(self):
+        """Real Django pattern: `"PORT": 5432` (int) — dropped, not coerced."""
+        from app.stages.plugins.django.settings import parse_databases
+
+        raw = '{"default": {"ENGINE": "django.db.backends.postgresql", "PORT": 5432}}'
+        info = parse_databases(raw)
+        assert "default_port" not in info
+        assert info["default_engine"] == "django.db.backends.postgresql"
