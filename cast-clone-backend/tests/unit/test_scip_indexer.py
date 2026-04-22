@@ -412,3 +412,70 @@ class TestScipPythonEnvPassing:
 
         assert "VIRTUAL_ENV" not in captured_env
         assert captured_env.get("NODE_OPTIONS") == "--max-old-space-size=8192"
+
+
+class TestScipPartialIndexSuccess:
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_with_index_file_succeeds(self, tmp_path: Path):
+        """scip-python exit != 0 but with non-empty index.scip → partial merge."""
+        from app.models.context import AnalysisContext
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest, ResolvedEnvironment
+        from app.stages.scip.indexer import _run_scip_in_directory
+
+        index_path = tmp_path / "index.scip"
+        index_path.write_bytes(b"\x00" * 32)  # non-empty stub
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(
+            project_id="p1",
+            graph=SymbolGraph(),
+            manifest=manifest,
+            environment=ResolvedEnvironment(python_venv_path=None),
+        )
+
+        async def fake_subprocess(*, command, cwd, timeout, env=None):
+            return MagicMock(returncode=1, stdout="", stderr="decorator crash")
+
+        with patch(
+            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+        ), patch(
+            "app.stages.scip.indexer.parse_scip_index",
+            return_value=MagicMock(documents=[]),
+        ), patch(
+            "app.stages.scip.indexer.merge_scip_into_context",
+            return_value=MagicMock(resolved_count=5, new_nodes=0, upgraded_edges=3),
+        ):
+            stats = await _run_scip_in_directory(
+                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+            )
+
+        assert stats.resolved_count == 5
+        assert any("partial index" in w for w in ctx.warnings)
+
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_without_index_file_raises(self, tmp_path: Path):
+        """scip-python exit != 0 AND no index.scip → raise (unchanged behavior)."""
+        from app.models.context import AnalysisContext
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest, ResolvedEnvironment
+        from app.stages.scip.indexer import _run_scip_in_directory
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(
+            project_id="p1",
+            graph=SymbolGraph(),
+            manifest=manifest,
+            environment=ResolvedEnvironment(python_venv_path=None),
+        )
+
+        async def fake_subprocess(*, command, cwd, timeout, env=None):
+            return MagicMock(returncode=1, stdout="", stderr="fatal error")
+
+        with patch(
+            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+        ):
+            with pytest.raises(RuntimeError):
+                await _run_scip_in_directory(
+                    ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+                )

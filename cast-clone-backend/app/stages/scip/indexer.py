@@ -255,10 +255,28 @@ async def _run_scip_in_directory(
         )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"{indexer_config.name} exited with code {result.returncode}: "
-            f"{result.stderr[:500]}"
-        )
+        # Partial-index success: scip-python (v0.6.6) often exits non-zero on
+        # known bugs (decorator crashes, ParamSpec issues) but still writes a
+        # usable index.scip. See design spec §Error Handling.
+        index_path = cwd / indexer_config.output_file
+        if index_path.exists() and index_path.stat().st_size > 0:
+            warn_msg = (
+                f"{indexer_config.name} exited {result.returncode} but produced "
+                f"a partial index ({index_path.stat().st_size} bytes); merging anyway"
+            )
+            context.warnings.append(warn_msg)
+            logger.warning(
+                "scip.indexer.partial_success",
+                language=indexer_config.language,
+                returncode=result.returncode,
+                index_size=index_path.stat().st_size,
+                project_id=context.project_id,
+            )
+        else:
+            raise RuntimeError(
+                f"{indexer_config.name} exited with code {result.returncode}: "
+                f"{result.stderr[:500]}"
+            )
 
     # Parse the SCIP protobuf output
     index_path = cwd / indexer_config.output_file
