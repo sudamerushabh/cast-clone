@@ -488,3 +488,106 @@ class TestFullIntegration:
         # Sanity: we should have a reasonable number of items
         assert len(nodes) >= 10  # 1 module + 2 classes + 5+ functions + fields
         assert len(edges) >= 10  # contains + inherits + imports + calls
+
+
+class TestModuleFieldExtraction:
+    """M2 Task 1b: Module-level assignments -> FIELD nodes with raw RHS value."""
+
+    def test_simple_assignment_emits_field(self, extractor):
+        source = b"X = 1\n"
+        nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert len(fields) == 1
+        f = fields[0]
+        assert f.name == "X"
+        assert f.fqn == "mod.X"
+        assert f.language == "python"
+        assert f.path == "/proj/mod.py"
+        assert f.line == 1
+        assert f.properties["value"] == "1"
+
+    def test_list_assignment_preserves_source_text(self, extractor):
+        source = b'INSTALLED_APPS = ["auth", "admin"]\n'
+        nodes, edges = extractor.extract(source, "/proj/settings.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert len(fields) == 1
+        f = fields[0]
+        assert f.name == "INSTALLED_APPS"
+        assert f.properties["value"] == '["auth", "admin"]'
+
+    def test_multiline_dict_assignment(self, extractor):
+        source = b"""\
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+    }
+}
+"""
+        nodes, edges = extractor.extract(source, "/proj/settings.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert len(fields) == 1
+        value = fields[0].properties["value"]
+        assert value.startswith("{")
+        assert value.endswith("}")
+        assert "\n" in value
+        assert '"default"' in value
+        assert "django.db.backends.postgresql" in value
+
+    def test_annotated_assignment(self, extractor):
+        source = b"DEBUG: bool = False\n"
+        nodes, edges = extractor.extract(source, "/proj/settings.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert len(fields) == 1
+        f = fields[0]
+        assert f.name == "DEBUG"
+        assert f.properties["value"] == "False"
+        assert f.properties.get("type_annotation") == "bool"
+
+    def test_dunder_assignments_skipped(self, extractor):
+        source = b'__all__ = ["x"]\n__version__ = "1.0"\n'
+        nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert fields == []
+
+    def test_class_body_assignments_not_affected(self, extractor):
+        source = b"""\
+class C:
+    x = 1
+"""
+        nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        # Exactly one FIELD -- the class-body one. No duplicate, no module-level
+        # FIELD for `x` leaking through.
+        assert len(fields) == 1
+        f = fields[0]
+        assert f.name == "x"
+        assert f.fqn == "mod.C.x"
+        # Module-level extractor must NOT have emitted a "mod.x".
+        assert not any(n.fqn == "mod.x" for n in nodes)
+
+    def test_contains_edge_from_module_to_field(self, extractor):
+        source = b"X = 1\n"
+        nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
+        contains = [
+            e
+            for e in edges
+            if e.kind == EdgeKind.CONTAINS
+            and e.source_fqn == "mod"
+            and e.target_fqn == "mod.X"
+        ]
+        assert len(contains) == 1
+
+    def test_module_node_created_when_only_module_fields(self, extractor):
+        """A settings-only file (no class, no function) still gets a MODULE."""
+        source = b'INSTALLED_APPS = ["auth"]\nDEBUG = True\n'
+        nodes, edges = extractor.extract(source, "/proj/settings.py", "/proj")
+        module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
+        assert len(module_nodes) == 1
+        assert module_nodes[0].fqn == "settings"
+
+    def test_tuple_target_assignment_skipped(self, extractor):
+        """``a, b = 1, 2`` is not a single-identifier assignment and is skipped."""
+        source = b"a, b = 1, 2\n"
+        nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
+        fields = [n for n in nodes if n.kind == NodeKind.FIELD]
+        assert fields == []

@@ -154,14 +154,16 @@ class PythonExtractor:
         self._extract_module_functions(
             tree, source, file_path, module_fqn, nodes, edges
         )
+        self._extract_module_fields(tree, source, file_path, module_fqn, nodes, edges)
         self._extract_call_edges(tree, source, module_fqn, nodes, edges)
         self._extract_sql_strings(tree, source, module_fqn, nodes, edges)
 
         # Only create MODULE node if the file produced at least one child
-        # (class, function, or other declaration).  Empty __init__.py files
-        # and config-only files don't need MODULE nodes.
+        # (class, function, module-level field, etc.).  Empty __init__.py files
+        # without any declarations don't need MODULE nodes.
         has_children = any(
-            n.kind in (NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.FUNCTION)
+            n.kind
+            in (NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.FUNCTION, NodeKind.FIELD)
             for n in nodes
         )
         if has_children:
@@ -647,6 +649,83 @@ class PythonExtractor:
                 self._walk_for_self_assignments(
                     child, source, file_path, class_fqn, nodes, edges, seen
                 )
+
+    def _extract_module_fields(
+        self,
+        tree: Tree,
+        source: bytes,
+        file_path: str,
+        module_fqn: str,
+        nodes: list[GraphNode],
+        edges: list[GraphEdge],
+    ) -> None:
+        """Extract module-level (top-level) variable assignments as FIELD nodes.
+
+        Walks only the root node's direct children — NOT class bodies or
+        function bodies. Handles plain and annotated assignments::
+
+            INSTALLED_APPS = ["auth", "admin"]
+            DEBUG: bool = False
+            DATABASES = {"default": {...}}
+
+        The FIELD's ``properties["value"]`` is set to the verbatim source text
+        of the assignment's right-hand side, so downstream plugins (e.g.
+        DjangoSettingsPlugin) can read raw config values from the graph.
+
+        Dunder assignments (``__all__``, ``__version__``, etc.) are skipped —
+        they aren't useful as CONFIG_ENTRYs and would add noise.
+        """
+        root = tree.root_node
+        for child in root.children:
+            if child.type != "expression_statement":
+                continue
+            if not child.children:
+                continue
+            expr = child.children[0]
+            if expr.type != "assignment":
+                continue
+            left = expr.child_by_field_name("left")
+            if left is None or left.type != "identifier":
+                # Skip tuple/subscript/attribute targets (a,b = ..., x[0] = ...).
+                continue
+            right = expr.child_by_field_name("right")
+            if right is None:
+                # Bare annotated declaration (``X: int``) with no value —
+                # nothing for DjangoSettingsPlugin to read.
+                continue
+
+            field_name = _node_text(left, source)
+
+            # Skip dunder names — noise for config-entry consumers.
+            if field_name.startswith("__") and field_name.endswith("__"):
+                continue
+
+            field_fqn = f"{module_fqn}.{field_name}"
+            value_text = _node_text(right, source)
+            props: dict[str, Any] = {"value": value_text}
+
+            type_node = expr.child_by_field_name("type")
+            if type_node is not None:
+                props["type_annotation"] = _node_text(type_node, source)
+
+            nodes.append(
+                GraphNode(
+                    fqn=field_fqn,
+                    name=field_name,
+                    kind=NodeKind.FIELD,
+                    language="python",
+                    path=file_path,
+                    line=child.start_point[0] + 1,
+                    properties=props,
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    source_fqn=module_fqn,
+                    target_fqn=field_fqn,
+                    kind=EdgeKind.CONTAINS,
+                )
+            )
 
     def _extract_class_body_fields(
         self,
