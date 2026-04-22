@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
+from app.config import get_settings
 from app.orchestrator.progress import active_connections
+from app.services.auth import decode_access_token
 
 router = APIRouter(tags=["websocket"])
 
@@ -15,7 +17,21 @@ async def analysis_progress(websocket: WebSocket, project_id: str) -> None:
 
     Clients connect here before triggering analysis. The pipeline's
     WebSocketProgressReporter emits events to all connected clients.
+
+    The Task 2 auth-enforcer middleware skips WebSocket upgrades, so
+    token validation happens here in the accept() handshake.
     """
+    settings = get_settings()
+    if not settings.auth_disabled:
+        token = websocket.query_params.get("token", "")
+        if not token:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        user_id = decode_access_token(token, settings.secret_key)
+        if not user_id:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
     await websocket.accept()
     active_connections.setdefault(project_id, []).append(websocket)
 

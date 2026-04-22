@@ -7,6 +7,7 @@ import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from neo4j.exceptions import ServiceUnavailable, TransientError
 
 from app.api import (
     activity_router,
@@ -40,10 +41,17 @@ from app.api import (
     webhooks_router,
     websocket_router,
 )
+from app.api.middleware import AuthEnforcerMiddleware
 from app.config import Settings
 from app.services.deployment import init_deployment_id
 from app.services.license import LicenseState, get_license_state, load_license
-from app.services.neo4j import close_neo4j, init_neo4j
+from app.services.neo4j import (
+    close_neo4j,
+    ensure_apoc_available,
+    ensure_schema_constraints,
+    get_driver,
+    init_neo4j,
+)
 from app.services.postgres import close_postgres, init_postgres
 from app.services.redis import close_redis, init_redis
 
@@ -133,6 +141,7 @@ async def _license_state_refresher(app: FastAPI) -> None:
                     _notify_state_change,
                     get_current_license,
                 )
+
                 lic = get_current_license()
                 await _notify_state_change(old_state, new_state, lic)
         except asyncio.CancelledError:
@@ -188,9 +197,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Register email service as listener for license state transitions
         from app.services.email import on_license_state_change
         from app.services.license import register_state_change_listener
+
         register_state_change_listener(on_license_state_change)
 
     await init_neo4j(settings)
+    # Probe APOC availability before any Cypher that depends on it. The edge
+    # writer uses apoc.merge.relationship unconditionally, so a missing plugin
+    # would crash Stage 8 of every analysis. Same classification policy as the
+    # schema-constraint step below:
+    #   * TransientError / ServiceUnavailable -> log and continue
+    #   * RuntimeError (from ensure_apoc_available on ClientError) -> FAIL STARTUP
+    try:
+        await ensure_apoc_available(get_driver())
+    except (TransientError, ServiceUnavailable) as exc:
+        await logger.awarning(
+            "neo4j.apoc_probe_transient",
+            error=str(exc),
+            note="APOC probe skipped due to connectivity; writer will surface later",
+        )
+    # Enforce UNIQUE constraints on every node label so the MERGE-based writer
+    # cannot create duplicates across re-runs. Idempotent (IF NOT EXISTS).
+    #
+    # Error handling policy:
+    #   * TransientError / ServiceUnavailable  -> log and continue; Neo4j
+    #     may be in a transient state (restarting, leader election). The
+    #     writer itself is a critical stage and will re-raise later if the
+    #     DB is still down, so we don't block startup on flakiness.
+    #   * RuntimeError (raised by ensure_schema_constraints on ClientError) ->
+    #     FAIL STARTUP. This means existing data violates a UNIQUE constraint
+    #     (likely duplicate nodes from a pre-composite-_id pipeline run).
+    #     Operator must run scripts/dedupe_neo4j_nodes.py before restarting.
+    try:
+        await ensure_schema_constraints(get_driver())
+    except (TransientError, ServiceUnavailable) as exc:
+        await logger.awarning(
+            "neo4j.schema_constraints_transient",
+            error=str(exc),
+            note="constraints not applied due to connectivity; writer will retry",
+        )
     await init_redis(settings)
 
     # Clean up any analyses left in "running" state from a previous crash/restart
@@ -250,13 +294,31 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # In dev mode (AUTH_DISABLED=true) keep the permissive wildcards for
+    # local tooling. In production (auth enabled) use an explicit allow-list
+    # for methods/headers — the config validator already rejects an
+    # origin wildcard in that mode.
+    if settings.auth_disabled:
+        allow_methods: list[str] = ["*"]
+        allow_headers: list[str] = ["*"]
+    else:
+        allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        allow_headers = ["Authorization", "Content-Type", "X-Request-ID"]
+
+    # Credentials + wildcard origin is a non-sensical combination: browsers
+    # refuse it per the CORS spec, and emitting both leaks intent. Disable
+    # credentials in dev-wildcard mode; prod mode already forbids wildcards.
+    allow_credentials = not settings.auth_disabled
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origin_regex=None,
+        allow_credentials=allow_credentials,
+        allow_methods=allow_methods,
+        allow_headers=allow_headers,
     )
+
+    application.add_middleware(AuthEnforcerMiddleware, settings=settings)
 
     # Register routers
     application.include_router(activity_router)

@@ -7,20 +7,33 @@ from pathlib import Path
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import get_current_user, require_license_writable
 from app.config import Settings
-from app.models.db import AnalysisRun, GitConnector, Project, Repository, RepositoryLocTracking, User
+from app.models.db import (
+    AnalysisRun,
+    GitConnector,
+    Project,
+    Repository,
+    RepositoryLocTracking,
+    User,
+)
 from app.services.activity import log_activity
 
 # Reusable eager-load option: Repository → projects → analysis_runs
-_REPO_LOAD = (
-    selectinload(Repository.projects).selectinload(Project.analysis_runs)
-)
+_REPO_LOAD = selectinload(Repository.projects).selectinload(Project.analysis_runs)
 from app.schemas.repositories import (
     BranchAddRequest,
     BranchCompareResponse,
@@ -32,7 +45,13 @@ from app.schemas.repositories import (
     RepositoryResponse,
     SnapshotPoint,
 )
-from app.services.clone import cleanup_repo_dirs, clone_branch_local, clone_repo, get_branch_clone_path, pull_latest
+from app.services.clone import (
+    cleanup_repo_dirs,
+    clone_branch_local,
+    clone_repo,
+    get_branch_clone_path,
+    pull_latest,
+)
 from app.services.crypto import decrypt_token
 from app.services.git_providers import create_provider
 from app.services.postgres import get_session
@@ -46,6 +65,22 @@ def _get_settings() -> Settings:
     return Settings()
 
 
+def _user_owns_repo(repo: Repository, user: User) -> bool:
+    """Return True if the user is admin or created the repo."""
+    if user.role == "admin":
+        return True
+    return repo.created_by == user.id
+
+
+def _ensure_repo_access(repo: Repository, user: User) -> None:
+    """Raise 403 if the user is neither admin nor the repo creator."""
+    if not _user_owns_repo(repo, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
+
+
 def _repo_to_response(
     repo: Repository,
     tracking: RepositoryLocTracking | None = None,
@@ -56,11 +91,15 @@ def _repo_to_response(
         last_analyzed_at = None
         node_count = None
         edge_count = None
-        if hasattr(p, 'analysis_runs') and p.analysis_runs:
+        if hasattr(p, "analysis_runs") and p.analysis_runs:
             completed = [r for r in p.analysis_runs if r.status == "completed"]
             if completed:
                 latest = max(completed, key=lambda r: r.completed_at or r.started_at)
-                last_analyzed_at = (latest.completed_at or latest.started_at).isoformat() if (latest.completed_at or latest.started_at) else None
+                last_analyzed_at = (
+                    (latest.completed_at or latest.started_at).isoformat()
+                    if (latest.completed_at or latest.started_at)
+                    else None
+                )
                 if latest.snapshot:
                     node_count = latest.snapshot.get("node_count")
                     edge_count = latest.snapshot.get("edge_count")
@@ -100,7 +139,9 @@ async def _background_clone(
     # Lazy import so we get the live reference set during lifespan, not the
     # None value that exists at module-load time.
     from app.services.postgres import _session_factory
-    assert _session_factory is not None, "PostgreSQL not initialized"
+
+    if _session_factory is None:
+        raise RuntimeError("PostgreSQL not initialized")
     async with _session_factory() as session:
         result = await session.execute(
             select(Repository)
@@ -135,9 +176,7 @@ async def _background_clone(
         except Exception as exc:
             repo.clone_status = "clone_failed"
             repo.clone_error = str(exc)
-            await logger.awarning(
-                "clone_failed", repo_id=repo_id, error=str(exc)
-            )
+            await logger.awarning("clone_failed", repo_id=repo_id, error=str(exc))
 
         await session.commit()
 
@@ -151,9 +190,9 @@ async def _background_clone(
 async def create_repository(
     body: RepositoryCreate,
     background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
-    _user: User = Depends(get_current_user),
 ) -> RepositoryResponse:
     """Onboard a repository: fetch info, create repo + projects, clone."""
     # Fetch connector
@@ -191,6 +230,7 @@ async def create_repository(
         language=remote_repo.language,
         is_private=remote_repo.is_private,
         clone_status="pending",
+        created_by=user.id,
     )
     session.add(repo)
     await session.flush()
@@ -226,8 +266,11 @@ async def create_repository(
     )
 
     await log_activity(
-        session, "repository.created", user_id=_user.id,
-        resource_type="repository", resource_id=repo.id,
+        session,
+        "repository.created",
+        user_id=user.id,
+        resource_type="repository",
+        resource_id=repo.id,
         details={"full_name": remote_repo.full_name, "branches": body.branches},
     )
     return _repo_to_response(repo)
@@ -235,14 +278,18 @@ async def create_repository(
 
 @router.get("", response_model=RepositoryListResponse)
 async def list_repositories(
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RepositoryListResponse:
-    """List all onboarded repositories."""
-    result = await session.execute(
-        select(Repository)
-        .options(_REPO_LOAD)
-        .order_by(Repository.created_at.desc())
-    )
+    """List repositories visible to the caller.
+
+    Admins see every repository; members see only the ones they created.
+    """
+    query = select(Repository).options(_REPO_LOAD)
+    if user.role != "admin":
+        query = query.where(Repository.created_by == user.id)
+    query = query.order_by(Repository.created_at.desc())
+    result = await session.execute(query)
     repos = result.scalars().all()
 
     # Bulk-load LOC tracking for all repos
@@ -253,17 +300,12 @@ async def list_repositories(
                 RepositoryLocTracking.repository_id.in_(repo_ids)
             )
         )
-        tracking_map = {
-            t.repository_id: t for t in tracking_result.scalars().all()
-        }
+        tracking_map = {t.repository_id: t for t in tracking_result.scalars().all()}
     else:
         tracking_map = {}
 
     return RepositoryListResponse(
-        repositories=[
-            _repo_to_response(r, tracking_map.get(r.id))
-            for r in repos
-        ],
+        repositories=[_repo_to_response(r, tracking_map.get(r.id)) for r in repos],
         total=len(repos),
     )
 
@@ -271,13 +313,12 @@ async def list_repositories(
 @router.get("/{repo_id}", response_model=RepositoryResponse)
 async def get_repository(
     repo_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RepositoryResponse:
     """Get a single repository by ID."""
     result = await session.execute(
-        select(Repository)
-        .options(_REPO_LOAD)
-        .where(Repository.id == repo_id)
+        select(Repository).options(_REPO_LOAD).where(Repository.id == repo_id)
     )
     repo = result.scalar_one_or_none()
     if repo is None:
@@ -285,6 +326,7 @@ async def get_repository(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
     tracking_result = await session.execute(
         select(RepositoryLocTracking).where(
             RepositoryLocTracking.repository_id == repo_id
@@ -294,42 +336,54 @@ async def get_repository(
     return _repo_to_response(repo, tracking)
 
 
-@router.delete("/{repo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{repo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_license_writable)],
+)
 async def delete_repository(
     repo_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a repository and all its projects."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
     local_path = repo.local_path
     repo_name = repo.repo_full_name
     await session.delete(repo)
     await session.commit()
 
     await log_activity(
-        session, "repository.deleted", user_id=_user.id,
-        resource_type="repository", resource_id=repo_id,
+        session,
+        "repository.deleted",
+        user_id=user.id,
+        resource_type="repository",
+        resource_id=repo_id,
         details={"full_name": repo_name},
     )
 
     # CASCADE deleted the tracking row; invalidate cache so cumulative_loc()
     # picks up the removal.
     from app.services.loc_usage import invalidate_cumulative_loc_cache
+
     invalidate_cumulative_loc_cache()
 
     try:
         await cleanup_repo_dirs(local_path)
     except Exception:
-        logger.warning("repo_disk_cleanup_failed", repo_id=repo_id, local_path=local_path, exc_info=True)
+        logger.warning(
+            "repo_disk_cleanup_failed",
+            repo_id=repo_id,
+            local_path=local_path,
+            exc_info=True,
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -337,18 +391,18 @@ async def delete_repository(
 @router.get("/{repo_id}/clone-status", response_model=CloneStatusResponse)
 async def get_clone_status(
     repo_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> CloneStatusResponse:
     """Get the clone status for a repository."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
     return CloneStatusResponse(
         clone_status=repo.clone_status,
         clone_error=repo.clone_error,
@@ -358,19 +412,18 @@ async def get_clone_status(
 @router.post("/{repo_id}/sync", response_model=CloneStatusResponse)
 async def sync_repository(
     repo_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(get_current_user),
 ) -> CloneStatusResponse:
     """Pull latest changes for a cloned repository."""
-    result = await session.execute(
-        select(Repository).where(Repository.id == repo_id)
-    )
+    result = await session.execute(select(Repository).where(Repository.id == repo_id))
     repo = result.scalar_one_or_none()
     if repo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
     if repo.clone_status != "cloned" or not repo.local_path:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -383,8 +436,11 @@ async def sync_repository(
         repo.clone_error = None
         await session.commit()
         await log_activity(
-            session, "repository.synced", user_id=_user.id,
-            resource_type="repository", resource_id=repo_id,
+            session,
+            "repository.synced",
+            user_id=user.id,
+            resource_type="repository",
+            resource_id=repo_id,
             details={"full_name": repo.repo_full_name},
         )
     except Exception as exc:
@@ -410,6 +466,7 @@ async def sync_repository(
 async def add_branch(
     repo_id: str,
     body: BranchAddRequest,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ProjectBranchResponse:
     """Add a new branch project to an existing repository."""
@@ -424,6 +481,7 @@ async def add_branch(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
 
     # Check if branch already exists
     for p in repo.projects:
@@ -433,7 +491,9 @@ async def add_branch(
                 detail=f"Branch {body.branch} already exists for this repository",
             )
 
-    branch_dir = get_branch_clone_path(repo.local_path, body.branch) if repo.local_path else ""
+    branch_dir = (
+        get_branch_clone_path(repo.local_path, body.branch) if repo.local_path else ""
+    )
     project = Project(
         name=f"{repo.repo_full_name}:{body.branch}",
         source_path=branch_dir,
@@ -447,6 +507,7 @@ async def add_branch(
     if repo.local_path and repo.clone_status == "cloned":
         try:
             from app.services.clone import fetch_all_refs
+
             await fetch_all_refs(repo.local_path)
             await clone_branch_local(repo.local_path, body.branch, branch_dir)
         except Exception as exc:
@@ -473,9 +534,24 @@ async def add_branch(
 async def delete_branch_project(
     repo_id: str,
     project_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Delete a branch project, its graph data, analysis runs, and clone directory."""
+    # Load parent repository and verify caller can access it before touching
+    # the child project — closes an IDOR where any authenticated user could
+    # delete a branch project by guessing its id (CHAN-54).
+    repo_result = await session.execute(
+        select(Repository).where(Repository.id == repo_id)
+    )
+    repo = repo_result.scalar_one_or_none()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found",
+        )
+    _ensure_repo_access(repo, user)
+
     result = await session.execute(
         select(Project).where(
             Project.id == project_id,
@@ -513,6 +589,7 @@ async def delete_branch_project(
 
     # Recalculate repo LOC tracking after branch removal
     from app.services.loc_tracking import recalculate_repo_loc
+
     await recalculate_repo_loc(repo_id, session)
 
     # Remove branch clone directory from disk
@@ -538,6 +615,7 @@ async def delete_branch_project(
 @router.get("/{repo_id}/projects", response_model=list[ProjectBranchResponse])
 async def list_branch_projects(
     repo_id: str,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[ProjectBranchResponse]:
     """List all branch projects for a repository."""
@@ -552,6 +630,7 @@ async def list_branch_projects(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Repository {repo_id} not found",
         )
+    _ensure_repo_access(repo, user)
     return [
         ProjectBranchResponse(
             id=p.id,
@@ -566,9 +645,22 @@ async def list_branch_projects(
 async def get_evolution_timeline(
     repo_id: str,
     branch: str = "main",
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> EvolutionTimelineResponse:
     """Get the evolution timeline for a repository branch."""
+    # Verify caller can access this repository before returning runs
+    repo_result = await session.execute(
+        select(Repository).where(Repository.id == repo_id)
+    )
+    repo = repo_result.scalar_one_or_none()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found",
+        )
+    _ensure_repo_access(repo, user)
+
     # Find project for this repo + branch
     result = await session.execute(
         select(Project).where(
@@ -617,9 +709,22 @@ async def compare_branches(
     repo_id: str,
     branch_a: str = Query(...),
     branch_b: str = Query(...),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> BranchCompareResponse:
     """Compare two branches of a repository (placeholder for full diff logic)."""
+    # Verify caller can access this repository before returning runs
+    repo_result = await session.execute(
+        select(Repository).where(Repository.id == repo_id)
+    )
+    repo = repo_result.scalar_one_or_none()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repo_id} not found",
+        )
+    _ensure_repo_access(repo, user)
+
     # Verify both branches exist
     for branch_name in [branch_a, branch_b]:
         result = await session.execute(

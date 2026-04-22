@@ -48,7 +48,7 @@ async def list_pr_analyses(
     status: str | None = Query(None),
     risk: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000),
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> PrAnalysisListResponse:

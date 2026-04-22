@@ -6,6 +6,7 @@ Uses mocked chat service.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,11 +28,27 @@ async def test_chat_endpoint_returns_sse():
     async def override_get_session():
         yield mock_session
 
+    # A MagicMock whose `exists` coroutine returns 0 (no active lock).
+    fake_redis = MagicMock()
+    fake_redis.exists = AsyncMock(return_value=0)
+
+    from app.services.redis import get_redis
+
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_redis] = lambda: fake_redis
+
+    @asynccontextmanager
+    async def _noop_lock(*_args, **_kwargs):
+        yield
+
+    async def _noop_rate_limit(*_args, **_kwargs):
+        return None
 
     try:
         with patch("app.api.chat._resolve_project_context") as mock_resolve, \
              patch("app.api.chat.get_driver", return_value=MagicMock()), \
+             patch("app.api.chat.check_rate_limit", _noop_rate_limit), \
+             patch("app.api.chat.chat_lock", _noop_lock), \
              patch("app.ai.chat.chat_stream", return_value=mock_stream()):
             mock_resolve.return_value = ("test-app", ["Java"], ["Spring"], None)
             transport = ASGITransport(app=app)
@@ -44,3 +61,4 @@ async def test_chat_endpoint_returns_sse():
                 assert "text/event-stream" in resp.headers["content-type"]
     finally:
         app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_redis, None)

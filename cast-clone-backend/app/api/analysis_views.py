@@ -17,12 +17,14 @@ from app.ai.summaries import (
     generate_trace_chat_reply,
     generate_trace_summary_text,
 )
-from app.api.dependencies import get_current_user
+from app.ai.tools import CONTAINS_HIERARCHY_MAX_DEPTH
+from app.api.dependencies import get_accessible_project, get_current_user
 from app.config import get_settings
 from app.models.db import (
     AiSummary,
     AiTraceChatMessage,
     AnalysisRun,
+    Project,
     User,
 )
 from app.schemas.analysis_views import (
@@ -81,20 +83,15 @@ async def impact_analysis(
     node_fqn: str,
     direction: str = Query("downstream", pattern="^(downstream|upstream|both)$"),
     # NOTE: Cypher does not support parameterized relationship hop counts;
-    # max_depth is validated via Query(ge=1, le=10) to prevent injection.
-    max_depth: int = Query(5, ge=1, le=10),
+    # max_depth is validated via Query(ge=1, le=5) to prevent DoS via O(n^depth).
+    max_depth: int = Query(5, ge=1, le=5),
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> ImpactAnalysisResponse:
     """Compute blast radius for a node."""
     # Edge types used by impact analysis (broader than trace route)
-    _down_edges = (
-        "CALLS|INJECTS|IMPLEMENTS|PRODUCES"
-        "|WRITES|READS|CONTAINS|DEPENDS_ON"
-    )
-    _up_edges = (
-        "CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS"
-        "|INJECTS|CONSUMES|READS|INCLUDES"
-    )
+    _down_edges = "CALLS|INJECTS|IMPLEMENTS|PRODUCES|WRITES|READS|CONTAINS|DEPENDS_ON"
+    _up_edges = "CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS|INJECTS|CONSUMES|READS|INCLUDES"
     try:
         if direction == "downstream":
             cypher = (
@@ -119,7 +116,7 @@ async def impact_analysis(
             cypher = (
                 "MATCH (start "
                 "{fqn: $fqn, app_name: $appName})"
-                "-[:CONTAINS*0..10]->(seed) "
+                f"-[:CONTAINS*0..{CONTAINS_HIERARCHY_MAX_DEPTH}]->(seed) "
                 "WITH collect(DISTINCT seed.fqn) "
                 "AS seed_fqns "
                 "MATCH (dependent "
@@ -164,7 +161,7 @@ async def impact_analysis(
             upstream_cypher = (
                 "MATCH (start "
                 "{fqn: $fqn, app_name: $appName})"
-                "-[:CONTAINS*0..10]->(seed) "
+                f"-[:CONTAINS*0..{CONTAINS_HIERARCHY_MAX_DEPTH}]->(seed) "
                 "WITH collect(DISTINCT seed.fqn) "
                 "AS seed_fqns "
                 "MATCH (dependent "
@@ -190,9 +187,7 @@ async def impact_analysis(
             down_records = await store.query(
                 downstream_cypher, {"fqn": node_fqn, "appName": project_id}
             )
-            up_records = await store.query(
-                upstream_cypher, fqn_params
-            )
+            up_records = await store.query(upstream_cypher, fqn_params)
             # Merge: deduplicate by fqn, keep minimum depth
             seen: dict[str, dict[str, Any]] = {}
             for r in down_records + up_records:
@@ -263,9 +258,7 @@ _TRACE_NODE_KINDS = (
 # IMPLEMENTS bridges .NET interface methods to concrete implementations.
 # Structural edges (CONTAINS, DEPENDS_ON, IMPORTS) are still excluded.
 # Node kind filtering prevents READS/WRITES noise from FIELDs/COLUMNs.
-_TRACE_EDGE_TYPES = (
-    "CALLS|HANDLES|CALLS_API|PRODUCES|CONSUMES|READS|WRITES|IMPLEMENTS"
-)
+_TRACE_EDGE_TYPES = "CALLS|HANDLES|CALLS_API|PRODUCES|CONSUMES|READS|WRITES|IMPLEMENTS"
 
 # Canonical layer ordering for swim-lane display (top to bottom)
 _LAYER_ORDER = ["api", "service", "repository", "database", "other"]
@@ -312,8 +305,8 @@ async def trace_route(
     project_id: str,
     node_fqn: str,
     # NOTE: Cypher does not support parameterized relationship hop counts;
-    # max_depth is validated via Query(ge=1, le=10) to prevent injection.
-    max_depth: int = Query(5, ge=1, le=10),
+    # max_depth is validated via Query(ge=1, le=5) to prevent DoS via O(n^depth).
+    max_depth: int = Query(5, ge=1, le=5),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> TraceRouteResponse:
     """Compute the execution trace (call chain) for a node.
@@ -423,15 +416,14 @@ async def trace_route(
 
         if iface_methods_to_hide:
             down_records = [
-                r for r in down_records
-                if r["fqn"] not in iface_methods_to_hide
+                r for r in down_records if r["fqn"] not in iface_methods_to_hide
             ]
             up_records = [
-                r for r in up_records
-                if r["fqn"] not in iface_methods_to_hide
+                r for r in up_records if r["fqn"] not in iface_methods_to_hide
             ]
             edge_records = [
-                r for r in edge_records
+                r
+                for r in edge_records
                 if r["source"] not in iface_methods_to_hide
                 and r["target"] not in iface_methods_to_hide
             ]
@@ -476,12 +468,8 @@ async def trace_route(
         ]
 
         # ── Build edge list ────────────────────────────────────
-        downstream_fqn_seq = {
-            n.fqn: n.sequence for n in downstream_nodes
-        }
-        upstream_fqn_seq = {
-            n.fqn: n.sequence for n in upstream_nodes
-        }
+        downstream_fqn_seq = {n.fqn: n.sequence for n in downstream_nodes}
+        upstream_fqn_seq = {n.fqn: n.sequence for n in upstream_nodes}
 
         trace_edges = [
             TraceEdge(
@@ -495,22 +483,16 @@ async def trace_route(
             )
             for r in edge_records
         ]
-        trace_edges.sort(
-            key=lambda e: (e.sequence or 999, e.source)
-        )
+        trace_edges.sort(key=lambda e: (e.sequence or 999, e.source))
 
         # ── Layer aggregation ──────────────────────────────────
-        center_layer = _detect_layer(
-            node_fqn, center_kind, rw_source_fqns
-        )
+        center_layer = _detect_layer(node_fqn, center_kind, rw_source_fqns)
         all_layers = {center_layer}
         for n in downstream_nodes:
             all_layers.add(n.layer)
         for n in upstream_nodes:
             all_layers.add(n.layer)
-        layers_present = [
-            la for la in _LAYER_ORDER if la in all_layers
-        ]
+        layers_present = [la for la in _LAYER_ORDER if la in all_layers]
 
         return TraceRouteResponse(
             center_fqn=node_fqn,
@@ -566,8 +548,7 @@ def _friendly_ai_error(provider: str, exc: Exception) -> str:
         )
     if name == "AuthenticationError" or "unauthorized" in msg:
         return (
-            f"{provider_label} authentication failed. "
-            "Check your API key in Settings."
+            f"{provider_label} authentication failed. Check your API key in Settings."
         )
 
     # Quota / rate limits
@@ -584,10 +565,7 @@ def _friendly_ai_error(provider: str, exc: Exception) -> str:
         "APIConnectionError",
         "ReadTimeoutError",
     ):
-        return (
-            f"Cannot reach {provider_label}. "
-            "Check network connectivity and retry."
-        )
+        return f"Cannot reach {provider_label}. Check network connectivity and retry."
 
     # Model availability
     if "model" in msg and ("not found" in msg or "does not exist" in msg):
@@ -598,8 +576,7 @@ def _friendly_ai_error(provider: str, exc: Exception) -> str:
 
     # Fallback
     return (
-        f"{provider_label} request failed ({name}). "
-        "Check AI configuration in Settings."
+        f"{provider_label} request failed ({name}). Check AI configuration in Settings."
     )
 
 
@@ -613,7 +590,7 @@ def _friendly_ai_error(provider: str, exc: Exception) -> str:
 async def trace_summary(
     project_id: str,
     node_fqn: str,
-    max_depth: int = Query(5, ge=1, le=10),
+    max_depth: int = Query(5, ge=1, le=5),
     store: Neo4jGraphStore = Depends(get_graph_store),
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
@@ -626,14 +603,10 @@ async def trace_summary(
         store=store,
     )
 
-    if (
-        not trace_resp.upstream
-        and not trace_resp.downstream
-    ):
+    if not trace_resp.upstream and not trace_resp.downstream:
         return TraceSummaryResponse(
             fqn=node_fqn,
-            summary="No upstream or downstream "
-            "connections found for this node.",
+            summary="No upstream or downstream connections found for this node.",
             layers_involved=[],
             tables_touched=[],
             cached=False,
@@ -700,9 +673,7 @@ async def trace_summary(
     )
     cached = result.scalar_one_or_none()
 
-    unique_table_names = list(
-        dict.fromkeys(t["name"] for t in tables_touched)
-    )
+    unique_table_names = list(dict.fromkeys(t["name"] for t in tables_touched))
 
     if cached and cached.graph_hash == current_hash:
         return TraceSummaryResponse(
@@ -723,14 +694,12 @@ async def trace_summary(
         client = create_bedrock_client(ai_config)
 
     try:
-        summary_text, tokens_used = (
-            await generate_trace_summary_text(
-                client=client,
-                model=ai_config.summary_model,
-                max_tokens=settings.summary_max_tokens,
-                trace_context=trace_context,
-                ai_config=ai_config,
-            )
+        summary_text, tokens_used = await generate_trace_summary_text(
+            client=client,
+            model=ai_config.summary_model,
+            max_tokens=settings.summary_max_tokens,
+            trace_context=trace_context,
+            ai_config=ai_config,
         )
     except Exception as exc:  # noqa: BLE001
         # Surface AI provider failures as a structured response
@@ -915,9 +884,7 @@ async def trace_chat_send(
             if pair in seen_tables:
                 continue
             seen_tables.add(pair)
-            tables_touched.append(
-                {"name": target_name, "access_type": edge.type}
-            )
+            tables_touched.append({"name": target_name, "access_type": edge.type})
 
     trace_context = {
         "center": {
@@ -972,9 +939,7 @@ async def trace_chat_send(
         .order_by(AiTraceChatMessage.created_at.asc())
     )
     history_rows = history_result.scalars().all()
-    history_payload = [
-        {"role": r.role, "content": r.content} for r in history_rows
-    ]
+    history_payload = [{"role": r.role, "content": r.content} for r in history_rows]
 
     # Call the LLM with the assembled context.
     settings = get_settings()
@@ -1061,8 +1026,9 @@ async def find_path(
     from_fqn: str = Query(...),
     to_fqn: str = Query(...),
     # NOTE: Cypher does not support parameterized relationship hop counts;
-    # max_depth is validated via Query(ge=1, le=20) to prevent injection.
-    max_depth: int = Query(10, ge=1, le=20),
+    # max_depth is validated via Query(ge=1, le=10) to prevent DoS via O(n^depth).
+    max_depth: int = Query(10, ge=1, le=10),
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> PathFinderResponse:
     """Find shortest path between two nodes."""
@@ -1123,6 +1089,7 @@ async def find_path(
 )
 async def list_communities(
     project_id: str,
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> CommunitiesResponse:
     """List all detected communities."""
@@ -1164,6 +1131,7 @@ async def list_communities(
 async def circular_dependencies(
     project_id: str,
     level: str = Query("module", pattern="^(module|class)$"),
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> CircularDependenciesResponse:
     """Detect circular dependency cycles."""
@@ -1217,6 +1185,7 @@ async def dead_code(
     project_id: str,
     node_type: str = Query("function", alias="type"),
     min_loc: int = Query(0, alias="minLoc"),
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> DeadCodeResponse:
     """Find dead code candidates (nodes with no incoming calls)."""
@@ -1281,6 +1250,7 @@ async def dead_code(
 )
 async def metrics(
     project_id: str,
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> MetricsResponse:
     """Get overview metrics for a project."""
@@ -1388,6 +1358,7 @@ async def metrics(
 async def node_details(
     project_id: str,
     node_fqn: str,
+    _: Project = Depends(get_accessible_project),
     store: Neo4jGraphStore = Depends(get_graph_store),
 ) -> NodeDetailResponse:
     """Get enhanced details for a specific node."""

@@ -21,6 +21,36 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Cypher variable-length path depth bounds.
+#
+# Cypher does NOT parameterize path hop counts (`[:REL*..$depth]` is a syntax
+# error), so these values MUST be interpolated via f-string. To prevent Cypher
+# injection and DoS via O(n^depth) graph walks, every call site validates that
+# the interpolated integer falls within the declared bounds below.
+#
+# - IMPACT_MAX_DEPTH:      blast radius / neighbors / trace (Task 8 cap = 5)
+# - FIND_PATH_MAX_DEPTH:   shortestPath ceiling            (Task 8 cap = 10)
+# - CONTAINS_HIERARCHY_MAX_DEPTH: Application → Module → Class → Method
+#                          hierarchy walk (was hardcoded 10; bumped to 12 for
+#                          modest headroom on deeply nested monorepos).
+IMPACT_MAX_DEPTH = 5
+FIND_PATH_MAX_DEPTH = 10
+CONTAINS_HIERARCHY_MAX_DEPTH = 12
+
+
+def _validate_depth(depth: int, max_depth: int, name: str = "depth") -> int:
+    """Validate a Cypher path-length bound before f-string interpolation.
+
+    Cypher syntax does not permit parameterizing variable-length path counts,
+    so values MUST be interpolated as literals. Reject anything outside
+    ``1 <= depth <= max_depth`` to prevent injection and runaway traversals.
+    """
+    if not isinstance(depth, int) or isinstance(depth, bool):
+        raise ValueError(f"{name} must be an int, got {type(depth).__name__}")
+    if depth < 1 or depth > max_depth:
+        raise ValueError(f"{name} must be between 1 and {max_depth}, got {depth}")
+    return depth
+
 
 @dataclass
 class ChatToolContext:
@@ -210,11 +240,13 @@ async def impact_analysis(
     direction: str = "both",
 ) -> dict:
     """Compute the blast radius of changing a specific code object."""
-    depth = min(depth, 10)
+    depth = _validate_depth(depth, IMPACT_MAX_DEPTH, name="depth")
+    hierarchy = CONTAINS_HIERARCHY_MAX_DEPTH
 
     if direction == "upstream":
         cypher = (
-            "MATCH (start {fqn: $fqn, app_name: $app_name})-[:CONTAINS*0..10]->(seed) "
+            f"MATCH (start {{fqn: $fqn, app_name: $app_name}})"
+            f"-[:CONTAINS*0..{hierarchy}]->(seed) "
             "WITH collect(DISTINCT seed.fqn) AS seed_fqns "
             f"MATCH (dep {{app_name: $app_name}})"
             "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INHERITS"
@@ -245,19 +277,29 @@ async def impact_analysis(
     return {"affected": records, "total": len(records), "by_type": by_type}
 
 
-async def find_path(ctx: ChatToolContext, from_fqn: str, to_fqn: str) -> dict:
+async def find_path(
+    ctx: ChatToolContext,
+    from_fqn: str,
+    to_fqn: str,
+    max_depth: int = FIND_PATH_MAX_DEPTH,
+) -> dict:
     """Find the shortest connection path between two code objects."""
-    records = await ctx.graph_store.query(
+    max_depth = _validate_depth(max_depth, FIND_PATH_MAX_DEPTH, name="max_depth")
+    cypher = (
         "MATCH path = shortestPath("
         "(a {fqn: $source, app_name: $app_name})"
-        "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS|READS|WRITES|PRODUCES|CONSUMES*..10]-"
+        "-[:CALLS|IMPLEMENTS|DEPENDS_ON|INJECTS|INHERITS|READS|WRITES"
+        f"|PRODUCES|CONSUMES*..{max_depth}]-"
         "(b {fqn: $target, app_name: $app_name})) "
         "RETURN [n IN nodes(path) | "
         "{fqn: n.fqn, name: n.name, type: labels(n)[0]}] AS nodes, "
         "[r IN relationships(path) | {type: type(r), "
         "source: startNode(r).fqn, "
         "target: endNode(r).fqn}] AS edges, "
-        "length(path) AS path_length",
+        "length(path) AS path_length"
+    )
+    records = await ctx.graph_store.query(
+        cypher,
         {"source": from_fqn, "target": to_fqn, "app_name": ctx.app_name},
     )
     if not records:

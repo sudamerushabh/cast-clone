@@ -91,6 +91,12 @@ def trace_transaction_flow(
     Terminal nodes (WRITES, PRODUCES, CALLS_API) are recorded but BFS
     continues past them to capture the full flow.
 
+    Constructors (<init>, <clinit>, __init__) are excluded from
+    ``flow.visited_fqns`` because they add noise, but their outgoing CALLS
+    edges ARE traversed so that descendants reachable only via a constructor
+    (e.g. ``X.<init> -[:CALLS]-> D.persist``) are not silently dropped from
+    the flow (CHAN-81).
+
     Only follows CALLS edges to Function nodes.
     """
     flow = TransactionFlow(entry_fqn=entry_fqn)
@@ -103,28 +109,41 @@ def trace_transaction_flow(
     while queue:
         current_fqn, current_depth = queue.popleft()
 
+        # Ordering invariant (CHAN-81): dedupe FIRST, then apply filters, then
+        # record in the flow. The `visited` set must be updated before filter
+        # `continue`s so a rejected node (wrong kind / constructor) is not
+        # re-examined every time it appears as a CALLS target from another
+        # caller. Filtering before dedupe caused repeated work and, in graphs
+        # where the same logical callee is reachable via multiple edges, could
+        # let the same edge be counted more than once downstream.
         if current_fqn in visited:
             continue
+        visited.add(current_fqn)
 
-        # Only include Function nodes in the flow; skip constructors
         node = graph.get_node(current_fqn)
+        # Filter: only Function nodes participate in transaction flows.
         if node is None or node.kind != NodeKind.FUNCTION:
             continue
-        if node.name in _CONSTRUCTOR_NAMES:
-            continue
 
-        visited.add(current_fqn)
-        flow.visited_fqns.append(current_fqn)
-        flow.depth = max(flow.depth, current_depth)
+        # Filter: constructors add noise — do not include them in the flow,
+        # but still walk their outgoing CALLS edges so that descendants
+        # reachable only via a constructor are not silently dropped
+        # (CHAN-81, Option A).
+        is_constructor = node.name in _CONSTRUCTOR_NAMES
 
-        # Check if this is a terminal node
-        terminal_type = classify_terminal_node(current_fqn, graph)
-        if terminal_type is not None:
-            if terminal_type not in flow.end_point_types:
-                flow.end_point_types.append(terminal_type)
-            flow.terminal_fqns.append(current_fqn)
+        if not is_constructor:
+            flow.visited_fqns.append(current_fqn)
+            flow.depth = max(flow.depth, current_depth)
 
-        # Continue BFS if within depth limit
+            # Check if this is a terminal node
+            terminal_type = classify_terminal_node(current_fqn, graph)
+            if terminal_type is not None:
+                if terminal_type not in flow.end_point_types:
+                    flow.end_point_types.append(terminal_type)
+                flow.terminal_fqns.append(current_fqn)
+
+        # Continue BFS if within depth limit (constructors included — we still
+        # traverse past them even though they are not appended to the flow).
         if current_depth < max_depth:
             for edge in graph.get_edges_from(current_fqn):
                 if edge.target_fqn in visited:
@@ -132,7 +151,6 @@ def trace_transaction_flow(
                 # Follow CALLS, INJECTS (Spring DI), and DEPENDS_ON edges
                 if edge.kind in (EdgeKind.CALLS, EdgeKind.INJECTS, EdgeKind.DEPENDS_ON):
                     queue.append((edge.target_fqn, current_depth + 1))
-
 
     return flow
 
@@ -326,7 +344,11 @@ async def discover_transactions(
                 for edge in graph.get_edges_from(fn_fqn):
                     if edge.kind in (EdgeKind.WRITES, EdgeKind.READS):
                         table_node = graph.get_node(edge.target_fqn)
-                        if table_node is not None and table_node.kind == NodeKind.TABLE and edge.target_fqn not in seen_tables:
+                        if (
+                            table_node is not None
+                            and table_node.kind == NodeKind.TABLE
+                            and edge.target_fqn not in seen_tables
+                        ):
                             seen_tables.add(edge.target_fqn)
                             graph.add_edge(
                                 GraphEdge(

@@ -29,7 +29,7 @@ def mock_admin():
 
 
 def _settings(auth_disabled: bool = False) -> Settings:
-    return Settings(auth_disabled=auth_disabled)
+    return Settings(auth_disabled=auth_disabled, secret_key="test-secret")
 
 
 class TestGetCurrentUser:

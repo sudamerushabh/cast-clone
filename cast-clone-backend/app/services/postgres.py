@@ -38,13 +38,15 @@ async def close_postgres() -> None:
 
 def get_engine() -> AsyncEngine:
     """Return the current async engine. Must be called after init_postgres."""
-    assert _engine is not None, "PostgreSQL not initialized"
+    if _engine is None:
+        raise RuntimeError("PostgreSQL not initialized")
     return _engine
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency that yields an async session."""
-    assert _session_factory is not None, "PostgreSQL not initialized"
+    if _session_factory is None:
+        raise RuntimeError("PostgreSQL not initialized")
     async with _session_factory() as session:
         yield session
 
@@ -52,6 +54,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 @contextlib.asynccontextmanager
 async def get_background_session() -> AsyncIterator[AsyncSession]:
     """Get a session outside of FastAPI's Depends (for background tasks)."""
-    assert _session_factory is not None, "PostgreSQL not initialized"
+    if _session_factory is None:
+        raise RuntimeError("PostgreSQL not initialized")
     async with _session_factory() as session:
         yield session

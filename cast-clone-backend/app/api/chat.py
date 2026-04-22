@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-import asyncio
-
+import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,15 +20,18 @@ from app.schemas.chat import ChatRequest
 from app.services.ai_provider import get_ai_config
 from app.services.neo4j import Neo4jGraphStore, get_driver
 from app.services.postgres import get_session
+from app.services.rate_limit import (
+    ChatLockBusy,
+    RateLimitBackendUnavailable,
+    RateLimitExceeded,
+    chat_lock,
+    check_rate_limit,
+)
+from app.services.redis import get_redis
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/projects", tags=["chat"])
-
-# Concurrency guard: max 1 active chat stream per user.
-# NOTE: This only works within a single process. With multiple
-# uvicorn workers, the guard is per-worker, not global.
-_user_locks: dict[str, asyncio.Lock] = {}
 
 
 async def _resolve_project_context(
@@ -76,25 +79,56 @@ async def chat(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
     """Chat with the AI architecture assistant.
 
     Returns an SSE stream with thinking blocks, tool calls, and text responses.
-    Limited to 1 active stream per user to prevent abuse.
+    Rate-limited (10 req/min per user) and locked to 1 active stream per user.
     """
-    # Concurrency guard: reject if user already has an active stream
     user_id = str(_user.id)
-    if user_id not in _user_locks:
-        _user_locks[user_id] = asyncio.Lock()
-    user_lock = _user_locks[user_id]
-    if user_lock.locked():
+
+    # Per-user sliding-window rate limit (survives across workers/restarts).
+    try:
+        await check_rate_limit(
+            redis,
+            f"rl:chat:{user_id}",
+            window_seconds=60,
+            max_requests=10,
+        )
+    except RateLimitExceeded as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                "You already have an active chat stream. "
-                "Please wait for it to complete."
-            ),
-        )
+            detail="Chat rate limit exceeded",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except RateLimitBackendUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Rate limiter backend unavailable",
+        ) from exc
+
+    # Cheap pre-check: if the user already holds the lock, reject with a
+    # synchronous 429 before we open a StreamingResponse. The authoritative
+    # NX-set happens inside the generator so the lock lifetime is tied to
+    # the generator's close/GC — guaranteeing release even if the client
+    # disconnects before the first byte is iterated.
+    lock_key = f"chat:lock:{user_id}"
+    try:
+        if await redis.exists(lock_key):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "You already have an active chat stream. "
+                    "Please wait for it to complete."
+                ),
+            )
+    except RedisError as exc:
+        logger.exception("chat_lock_precheck_redis_error", user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Rate limiter backend unavailable",
+        ) from exc
 
     app_name, languages, frameworks, repo_path = await _resolve_project_context(
         project_id,
@@ -122,8 +156,12 @@ async def chat(
     ai_config = await get_ai_config(session)
 
     async def event_generator():
-        async with user_lock:
-            try:
+        # Lock acquisition lives inside the generator so its release is
+        # driven by the generator's aclose/GC. If the client disconnects
+        # before iteration, Python closes the generator and the `async with`
+        # exits — no 300s lock leak.
+        try:
+            async with chat_lock(redis, user_id, ttl_seconds=300):
                 async for event in chat_stream(
                     ctx=ctx,
                     message=body.message,
@@ -134,11 +172,18 @@ async def chat(
                     if await request.is_disconnected():
                         break
                     yield event
-            except Exception as exc:
-                logger.error(
-                    "chat_stream_generator_error",
-                    error=str(exc),
-                )
+        except ChatLockBusy:
+            # Rare: another request acquired the lock between the pre-check
+            # and the NX-set. Surface it as a terminal SSE error event.
+            yield (
+                'event: error\n'
+                'data: {"error": "You already have an active chat stream."}\n\n'
+            )
+        except Exception as exc:
+            logger.error(
+                "chat_stream_generator_error",
+                error=str(exc),
+            )
 
     return StreamingResponse(
         event_generator(),

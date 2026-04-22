@@ -636,3 +636,126 @@ angular.module('app.catalog', [])
         nodes, edges = extractor.extract(source, "src/catalog.module.js", "/project")
         module_nodes = [n for n in nodes if n.kind == NodeKind.MODULE]
         assert len(module_nodes) == 0
+
+
+# ---------------------------------------------------------------------------
+# Heritage resolution through import_map (CHAN-78)
+# ---------------------------------------------------------------------------
+class TestHeritageImportResolution:
+    """INHERITS / IMPLEMENTS edges must resolve through the file's import
+    map so that `class X extends Base` where `Base` comes from another
+    module points at the imported symbol's FQN, not a dangling local ref.
+    """
+
+    def test_class_extends_resolves_named_import(self, extractor: TypeScriptExtractor):
+        source = b"""\
+import { Base } from './base';
+export class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        # Relative import resolves to sibling module, then the imported
+        # symbol name is appended -- no longer a local "user.Base" ghost.
+        assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_resolves_default_import(
+        self, extractor: TypeScriptExtractor
+    ):
+        source = b"""\
+import Base from './base';
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_unresolved_falls_through(
+        self, extractor: TypeScriptExtractor
+    ):
+        source = b"""\
+class Base {}
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        # No import -- fall back to the local module-prefixed FQN, which
+        # matches the sibling Base declared in the same file.
+        assert inherits.target_fqn == "src/models/user.Base"
+
+    def test_interface_extends_multiple_resolves_each(
+        self, extractor: TypeScriptExtractor
+    ):
+        source = b"""\
+import { Remote } from './remote';
+interface Local {}
+interface Composite extends Local, Remote {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/composite.ts", "/project")
+        inherits_edges = _find_edges(
+            edges, kind=EdgeKind.INHERITS, source_contains="Composite"
+        )
+        targets = {e.target_fqn for e in inherits_edges}
+        # Local interface stays local; remote one is resolved via import map.
+        assert "src/models/composite.Local" in targets
+        assert "src/models/remote.Remote" in targets
+
+    def test_namespace_import_extends(self, extractor: TypeScriptExtractor):
+        source = b"""\
+import * as C from './c';
+class Derived extends C.Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/derived.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="Derived")
+        assert inherits is not None
+        # Namespace head `C` maps to the resolved module path; the member
+        # tail `Base` is preserved.
+        assert inherits.target_fqn == "src/models/c.Base"
+
+    def test_class_extends_resolves_import_type(
+        self, extractor: TypeScriptExtractor
+    ):
+        """`import type { Base }` must still populate the import map so that
+        INHERITS edges resolve to the imported module's FQN."""
+        source = b"""\
+import type { Base } from './base';
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_resolves_explicit_ts_extension(
+        self, extractor: TypeScriptExtractor
+    ):
+        """Regression for CHAN-78: explicit `.ts` extension in the import
+        specifier must resolve to the same FQN as the unextensioned variant;
+        otherwise INHERITS edge targets won't match class FQNs produced by
+        `_module_path_from_file` (which always strips the extension)."""
+        source = b"""\
+import { Base } from './base.ts';
+class User extends Base {}
+"""
+        nodes, edges = extractor.extract(source, "src/models/user.ts", "/project")
+        inherits = _find_edge(edges, kind=EdgeKind.INHERITS, source_contains="User")
+        assert inherits is not None
+        assert inherits.target_fqn == "src/models/base.Base"
+
+    def test_class_extends_resolves_explicit_tsx_extension(
+        self, extractor: TypeScriptExtractor
+    ):
+        """Same as the .ts case for React .tsx components — stripping must
+        cover all of `_MODULE_EXTENSIONS`, not just `.ts`."""
+        source = b"""\
+import { Comp } from './Comp.tsx';
+class Specialized extends Comp {}
+"""
+        nodes, edges = extractor.extract(source, "src/ui/specialized.tsx", "/project")
+        inherits = _find_edge(
+            edges, kind=EdgeKind.INHERITS, source_contains="Specialized"
+        )
+        assert inherits is not None
+        assert inherits.target_fqn == "src/ui/Comp.Comp"

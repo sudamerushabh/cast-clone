@@ -6,9 +6,10 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
-from app.models.db import User
+from app.models.db import Project, Repository, User
 from app.services.auth import decode_access_token
 from app.services.license import LicenseState
 from app.services.postgres import get_session
@@ -104,6 +105,84 @@ async def get_optional_user(
         select(User).where(User.id == user_id, User.is_active.is_(True))
     )
     return result.scalar_one_or_none()
+
+
+async def get_accessible_project(
+    project_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Project:
+    """Load a project and verify the caller can access it.
+
+    Admins see all projects. Non-admins see projects whose parent repository
+    has ``created_by == user.id``. Projects without a linked repository are
+    denied to non-admins (403) until a ``created_by`` column is added to the
+    Project model; only admins can reach standalone projects today.
+
+    Raises 404 if the project doesn't exist.
+    Raises 403 if the caller is not admin and not the repo creator.
+    """
+    stmt = (
+        select(Project)
+        .where(Project.id == project_id)
+        .options(selectinload(Project.repository))
+    )
+    result = await session.execute(stmt)
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found",
+        )
+    if user.role == "admin":
+        return project
+    repo = project.repository
+    if repo is not None and repo.created_by == user.id:
+        return project
+    if repo is None:
+        # Standalone projects have no ownership chain (Project lacks a
+        # created_by column). Until the schema migration lands, only admins
+        # may access them — non-admins get 403 to close the IDOR gap.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Forbidden",
+    )
+
+
+async def get_accessible_repository(
+    repository_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Repository:
+    """Load a repository and verify the caller can access it.
+
+    Admins see all repositories. Non-admins see only repositories they
+    created (``Repository.created_by == user.id``).
+
+    Raises 404 if the repository doesn't exist.
+    Raises 403 if the caller is not admin and not the repo creator.
+    """
+    result = await session.execute(
+        select(Repository).where(Repository.id == repository_id)
+    )
+    repo = result.scalar_one_or_none()
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Repository {repository_id} not found",
+        )
+    if user.role == "admin":
+        return repo
+    if repo.created_by == user.id:
+        return repo
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Forbidden",
+    )
 
 
 # ---------------------------------------------------------------------------

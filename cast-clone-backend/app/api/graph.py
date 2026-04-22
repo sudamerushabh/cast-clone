@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-import re
-
+from app.api.dependencies import get_accessible_project
+from app.models.db import Project
 from app.schemas.graph import (
     GraphEdgeListResponse,
     GraphEdgeResponse,
@@ -80,8 +81,9 @@ async def list_nodes(
     project_id: str,
     kind: str | None = None,
     language: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """List graph nodes for a project, with optional filtering by kind/language."""
     store = get_graph_store()
@@ -125,8 +127,9 @@ async def list_nodes(
 async def list_edges(
     project_id: str,
     kind: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphEdgeListResponse:
     """List graph edges for a project, with optional filtering by kind."""
     store = get_graph_store()
@@ -176,6 +179,7 @@ async def list_edges(
 async def get_node(
     project_id: str,
     fqn: str,
+    _: Project = Depends(get_accessible_project),
 ) -> NodeWithNeighborsResponse:
     """Get a single node by FQN with its neighbors and edges."""
     store = get_graph_store()
@@ -231,8 +235,9 @@ async def get_node(
 async def get_neighbors(
     project_id: str,
     fqn: str,
-    depth: int = 1,
-    limit: int = 100,
+    depth: int = Query(1, ge=1, le=5),
+    limit: int = Query(100, ge=1, le=500),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphNodeListResponse:
     """Get neighbor subgraph around a node."""
     store = get_graph_store()
@@ -257,6 +262,7 @@ async def get_neighbors(
 async def search_nodes(
     project_id: str,
     q: str = Query(..., min_length=1),
+    _: Project = Depends(get_accessible_project),
 ) -> GraphSearchResponse:
     """Full-text search across graph nodes."""
     store = get_graph_store()
@@ -270,9 +276,7 @@ async def search_nodes(
         "n.language AS language, 1.0 AS score "
         "LIMIT 50"
     )
-    records = await store.query(
-        cypher, {"app_name": project_id, "query": q}
-    )
+    records = await store.query(cypher, {"app_name": project_id, "query": q})
 
     hits = [
         GraphSearchHit(

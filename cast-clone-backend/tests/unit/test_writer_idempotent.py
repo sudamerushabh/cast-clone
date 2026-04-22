@@ -1,0 +1,263 @@
+"""Tests for MERGE-based idempotent writer and NaN/inf sanitation (CHAN-65, CHAN-66).
+
+The writer must:
+  * Use MERGE (not CREATE) so that rerunning produces no duplicates.
+  * Sanitize NaN/Infinity in node and edge properties — Neo4j's Bolt protocol
+    rejects these values outright.
+
+Neo4j itself is not exercised here; we mock the async driver/session and assert
+on the Cypher string and the sanitized parameters.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from app.models.enums import Confidence, EdgeKind, NodeKind
+from app.models.graph import GraphEdge, GraphNode
+from app.services.neo4j import Neo4jGraphStore, _sanitize_props
+
+
+class _FakeSession:
+    """Minimal async-context-manager stand-in for a Neo4j AsyncSession."""
+
+    def __init__(self, cnt: int = 1) -> None:
+        self.run = AsyncMock()
+        # session.run returns a result whose .single() returns {"cnt": N}.
+        result = MagicMock()
+        result.single = AsyncMock(return_value={"cnt": cnt})
+        self.run.return_value = result
+        self.cypher_calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def _capture(cypher: str, params: dict[str, Any] | None = None) -> Any:
+            self.cypher_calls.append((cypher, params or {}))
+            return result
+
+        self.run.side_effect = _capture
+
+    async def __aenter__(self) -> _FakeSession:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+
+class _FakeDriver:
+    def __init__(self) -> None:
+        self.sessions: list[_FakeSession] = []
+
+    def session(self, database: str = "neo4j") -> _FakeSession:  # noqa: ARG002
+        sess = _FakeSession()
+        self.sessions.append(sess)
+        return sess
+
+
+@pytest.mark.asyncio
+async def test_writer_rerunning_does_not_duplicate_nodes() -> None:
+    """Two back-to-back writes of the same node batch both emit MERGE Cypher.
+
+    The MERGE key must be the composite ``_id`` (``{app_name}::{fqn}``), not
+    ``fqn`` — else two projects sharing an FQN would collapse into one node.
+    """
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+
+    nodes = [
+        GraphNode(
+            fqn="com.example.UserService",
+            name="UserService",
+            kind=NodeKind.CLASS,
+        ),
+    ]
+
+    await store.write_nodes_batch(nodes, app_name="proj-1")
+    await store.write_nodes_batch(nodes, app_name="proj-1")
+
+    assert len(driver.sessions) == 2, "expected two session invocations (one per call)"
+    for sess in driver.sessions:
+        cypher, params = sess.cypher_calls[0]
+        low = cypher.lower()
+        assert "merge" in low, f"expected MERGE in Cypher, got: {cypher}"
+        # MERGE key must be the composite _id, not fqn.
+        assert "_id: n._id" in cypher, (
+            f"expected MERGE on composite _id, got: {cypher}"
+        )
+        assert "{fqn: n.fqn}" not in cypher, (
+            "MERGE on fqn alone would cross-collapse projects"
+        )
+        # A naked CREATE (outside an ON CREATE clause) would be a regression.
+        assert "create (" not in low.replace(" ", "") or "oncreate" in low
+        rec = params["batch"][0]
+        assert rec["_id"] == "proj-1::com.example.UserService"
+        assert rec["props"]["_id"] == "proj-1::com.example.UserService"
+        assert rec["props"]["fqn"] == "com.example.UserService"
+
+
+@pytest.mark.asyncio
+async def test_two_projects_same_fqn_produces_two_distinct_ids() -> None:
+    """Writing the same FQN under two projects must emit two distinct ``_id``s.
+
+    This is the regression test for the cross-project MERGE collapse bug:
+    with uniqueness on ``fqn``, MERGE would fold both writes into one node.
+    With uniqueness on ``_id = f"{app_name}::{fqn}"`` the two writes remain
+    separate.
+    """
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+
+    node = GraphNode(
+        fqn="com.example.Shared",
+        name="Shared",
+        kind=NodeKind.CLASS,
+    )
+
+    await store.write_nodes_batch([node], app_name="proj-alpha")
+    await store.write_nodes_batch([node], app_name="proj-beta")
+
+    ids_sent: list[str] = []
+    for sess in driver.sessions:
+        _cypher, params = sess.cypher_calls[0]
+        ids_sent.append(params["batch"][0]["_id"])
+
+    assert ids_sent == [
+        "proj-alpha::com.example.Shared",
+        "proj-beta::com.example.Shared",
+    ], f"expected two distinct composite ids, got {ids_sent}"
+    # And they must differ — else the constraint would collapse them.
+    assert ids_sent[0] != ids_sent[1]
+
+
+@pytest.mark.asyncio
+async def test_writer_requires_app_name_tenant_boundary() -> None:
+    """Empty app_name must be rejected — we cannot compute _id without it."""
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+    nodes = [GraphNode(fqn="x", name="x", kind=NodeKind.CLASS)]
+
+    with pytest.raises(ValueError, match="app_name"):
+        await store.write_nodes_batch(nodes, app_name="")
+
+
+@pytest.mark.asyncio
+async def test_writer_sanitizes_nan_in_node_props_before_send() -> None:
+    """The Cypher params must not contain NaN/Inf values."""
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+
+    nodes = [
+        GraphNode(
+            fqn="com.example.Dirty",
+            name="Dirty",
+            kind=NodeKind.CLASS,
+            properties={
+                "cohesion": float("nan"),
+                "coupling": float("inf"),
+                "score": -1.5,
+            },
+        )
+    ]
+
+    await store.write_nodes_batch(nodes, app_name="proj-1")
+
+    batch = driver.sessions[0].cypher_calls[0][1]["batch"]
+    props = batch[0]["props"]
+    assert props["cohesion"] is None
+    assert props["coupling"] is None
+    assert props["score"] == -1.5
+
+
+def test_sanitize_replaces_nan_with_none() -> None:
+    out = _sanitize_props({"x": float("nan"), "y": 1.0})
+    assert out == {"x": None, "y": 1.0}
+
+
+def test_sanitize_replaces_inf_with_none() -> None:
+    out = _sanitize_props({"pos": float("inf"), "neg": float("-inf")})
+    assert out == {"pos": None, "neg": None}
+
+
+def test_sanitize_preserves_normal_values() -> None:
+    payload = {
+        "s": "hello",
+        "n": 42,
+        "f": 3.14,
+        "b": True,
+        "none": None,
+        "lst": [1, 2, 3],
+    }
+    assert _sanitize_props(payload) == payload
+
+
+def test_sanitize_handles_nested_dicts_if_supported() -> None:
+    nested = {
+        "stats": {
+            "avg_complexity": float("nan"),
+            "max_complexity": 42,
+            "ratios": [1.0, float("inf"), 0.5],
+        },
+        "healthy": True,
+    }
+    out = _sanitize_props(nested)
+    assert out["stats"]["avg_complexity"] is None
+    assert out["stats"]["max_complexity"] == 42
+    assert out["stats"]["ratios"] == [1.0, None, 0.5]
+    assert out["healthy"] is True
+    # Confirm no residual NaN/Inf anywhere.
+    import json
+
+    serialized = json.dumps(out)
+    assert "NaN" not in serialized
+    assert "Infinity" not in serialized
+
+
+def test_sanitize_leaves_source_dict_unmodified() -> None:
+    src = {"x": float("nan")}
+    _ = _sanitize_props(src)
+    assert math.isnan(src["x"])  # original untouched
+
+
+def test_sanitize_handles_frozenset() -> None:
+    """frozenset is not Bolt-serializable; sanitizer must coerce to a list.
+
+    Order is not guaranteed (frozenset is unordered), so we compare as a set.
+    """
+    out = _sanitize_props({"a": frozenset({"x", "y"})})
+    assert isinstance(out["a"], list)
+    assert set(out["a"]) == {"x", "y"}
+
+
+def test_sanitize_handles_frozenset_with_nan() -> None:
+    """Sanitization must recurse into frozenset members (NaN -> None)."""
+    nan = float("nan")
+    out = _sanitize_props({"a": frozenset([nan])})
+    assert isinstance(out["a"], list)
+    assert out["a"] == [None]
+
+
+@pytest.mark.asyncio
+async def test_edge_writer_sanitizes_props() -> None:
+    """NaN/Inf in edge properties are stripped before the Cypher call."""
+    driver = _FakeDriver()
+    store = Neo4jGraphStore(driver=driver)  # type: ignore[arg-type]
+
+    edges = [
+        GraphEdge(
+            source_fqn="a",
+            target_fqn="b",
+            kind=EdgeKind.CALLS,
+            confidence=Confidence.HIGH,
+            evidence="tree-sitter",
+            properties={"weight": float("nan"), "count": 5},
+        )
+    ]
+
+    await store.write_edges_batch(edges, app_name="proj-1")
+
+    params = driver.sessions[0].cypher_calls[0][1]
+    props = params["batch"][0]["properties"]
+    assert props["weight"] is None
+    assert props["count"] == 5

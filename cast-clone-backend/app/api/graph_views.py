@@ -9,9 +9,8 @@ from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_accessible_project
 from app.models.db import Project
 from app.schemas.graph import GraphEdgeResponse, GraphNodeResponse
 from app.schemas.graph_views import (
@@ -33,7 +32,6 @@ from app.schemas.graph_views import (
     TransactionSummary,
 )
 from app.services.neo4j import Neo4jGraphStore, get_driver
-from app.services.postgres import get_session
 
 router = APIRouter(prefix="/api/v1/graph-views", tags=["graph-views"])
 
@@ -117,7 +115,10 @@ def _record_to_edge(record: dict[str, Any]) -> GraphEdgeResponse:
 
 
 @router.get("/{project_id}/modules", response_model=ModuleListResponse)
-async def list_modules(project_id: str) -> ModuleListResponse:
+async def list_modules(
+    project_id: str,
+    _: Project = Depends(get_accessible_project),
+) -> ModuleListResponse:
     """List all modules for a project with aggregated class counts."""
     store = get_graph_store()
 
@@ -167,7 +168,11 @@ async def list_modules(project_id: str) -> ModuleListResponse:
     "/{project_id}/modules/{fqn:path}/classes",
     response_model=ClassListResponse,
 )
-async def list_classes(project_id: str, fqn: str) -> ClassListResponse:
+async def list_classes(
+    project_id: str,
+    fqn: str,
+    _: Project = Depends(get_accessible_project),
+) -> ClassListResponse:
     """List classes and interfaces within a module."""
     store = get_graph_store()
 
@@ -190,7 +195,11 @@ async def list_classes(project_id: str, fqn: str) -> ClassListResponse:
     "/{project_id}/classes/{fqn:path}/methods",
     response_model=MethodListResponse,
 )
-async def list_methods(project_id: str, fqn: str) -> MethodListResponse:
+async def list_methods(
+    project_id: str,
+    fqn: str,
+    _: Project = Depends(get_accessible_project),
+) -> MethodListResponse:
     """List methods/functions within a class."""
     store = get_graph_store()
 
@@ -226,6 +235,7 @@ async def aggregated_edges(
     parent: str | None = Query(
         None, description="Parent FQN (required for class level)"
     ),
+    _: Project = Depends(get_accessible_project),
 ) -> AggregatedEdgeListResponse:
     """Return aggregated edges between modules or classes."""
     store = get_graph_store()
@@ -327,7 +337,10 @@ async def aggregated_edges(
     "/{project_id}/transactions",
     response_model=TransactionListResponse,
 )
-async def list_transactions(project_id: str) -> TransactionListResponse:
+async def list_transactions(
+    project_id: str,
+    _: Project = Depends(get_accessible_project),
+) -> TransactionListResponse:
     """List all transaction nodes for a project."""
     store = get_graph_store()
 
@@ -361,7 +374,11 @@ async def list_transactions(project_id: str) -> TransactionListResponse:
     "/{project_id}/transactions/{fqn:path}",
     response_model=TransactionDetailResponse,
 )
-async def get_transaction(project_id: str, fqn: str) -> TransactionDetailResponse:
+async def get_transaction(
+    project_id: str,
+    fqn: str,
+    _: Project = Depends(get_accessible_project),
+) -> TransactionDetailResponse:
     """Get the full call graph for a specific transaction."""
     store = get_graph_store()
 
@@ -412,7 +429,10 @@ async def get_transaction(project_id: str, fqn: str) -> TransactionDetailRespons
 
 
 @router.get("/{project_id}/architecture", response_model=ArchitectureResponse)
-async def get_architecture(project_id: str) -> ArchitectureResponse:
+async def get_architecture(
+    project_id: str,
+    _: Project = Depends(get_accessible_project),
+) -> ArchitectureResponse:
     """Return the architecture view: technology layers, components, and links."""
     store = get_graph_store()
 
@@ -552,19 +572,17 @@ async def get_code(
     project_id: str,
     file: str = Query(..., description="Relative file path within the project"),
     line: int | None = Query(None, description="Line to highlight"),
-    context: int = Query(30, description="Lines of context around highlight line"),
-    session: AsyncSession = Depends(get_session),
+    context: int = Query(
+        30, ge=0, le=200, description="Lines of context around highlight line"
+    ),
+    project: Project = Depends(get_accessible_project),
 ) -> CodeViewerResponse:
-    """Read source code from the project's filesystem."""
-    # Look up the project to get source_path
-    result = await session.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
+    """Read source code from the project's filesystem.
 
+    Access control: ``get_accessible_project`` transitively requires
+    ``get_current_user`` and enforces ownership (admin or repo creator)
+    before any filesystem access.
+    """
     # Build and validate the full path (prevent path traversal)
     source_dir = Path(project.source_path).resolve()
     full_path = (source_dir / file).resolve()
@@ -625,7 +643,11 @@ async def get_code(
     "/{project_id}/ancestry/{fqn:path}",
     response_model=NodeAncestryResponse,
 )
-async def get_node_ancestry(project_id: str, fqn: str) -> NodeAncestryResponse:
+async def get_node_ancestry(
+    project_id: str,
+    fqn: str,
+    _: Project = Depends(get_accessible_project),
+) -> NodeAncestryResponse:
     """Return the containment path from the root module down to a node.
 
     This is used by the graph search to know which modules/classes to

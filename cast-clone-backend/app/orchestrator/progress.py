@@ -2,13 +2,38 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import WebSocket
+import structlog
+from fastapi import WebSocket, WebSocketDisconnect
+
+try:
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+except ImportError:  # pragma: no cover - fallback when websockets driver absent
+    ConnectionClosedError = ConnectionClosedOK = RuntimeError  # type: ignore[assignment,misc]
+
+logger = structlog.get_logger(__name__)
 
 # Active WebSocket connections per project_id
 active_connections: dict[str, list[WebSocket]] = {}
+
+
+def _remove_dead_connections(project_id: str, dead: list[WebSocket]) -> None:
+    """Remove dead WebSocket connections from active_connections in-place."""
+    if not dead:
+        return
+    connections = active_connections.get(project_id, [])
+    for ws in dead:
+        if ws in connections:
+            connections.remove(ws)
+    if not connections and project_id in active_connections:
+        del active_connections[project_id]
+    logger.info(
+        "websocket_disconnected",
+        project_id=project_id,
+        count=len(dead),
+    )
 
 
 class WebSocketProgressReporter:
@@ -24,19 +49,37 @@ class WebSocketProgressReporter:
         message: str = "",
         details: dict[str, Any] | None = None,
     ) -> None:
-        """Send a progress event to all connected clients for this project."""
+        """Send a progress event to all connected clients for this project.
+
+        Dead connections (WebSocketDisconnect, closed state, runtime errors)
+        are collected and evicted after the broadcast loop to avoid mutating
+        the collection mid-iteration and to prevent unbounded memory growth.
+        """
         event = {
             "stage": stage,
             "status": status,
             "message": message,
             "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
-        for ws in active_connections.get(self.project_id, []):
+        connections = active_connections.get(self.project_id, [])
+        dead: list[WebSocket] = []
+        for ws in list(connections):
             try:
                 await ws.send_json(event)
-            except Exception:
-                pass  # Connection may have closed
+            except (
+                WebSocketDisconnect,
+                RuntimeError,
+                ConnectionClosedError,
+                ConnectionClosedOK,
+            ) as exc:
+                logger.info(
+                    "websocket_send_failed",
+                    project_id=self.project_id,
+                    error_type=type(exc).__name__,
+                )
+                dead.append(ws)
+        _remove_dead_connections(self.project_id, dead)
 
     async def emit_complete(self, report: dict[str, Any]) -> None:
         """Emit pipeline completion event."""

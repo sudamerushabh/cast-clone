@@ -16,14 +16,18 @@ Multi-project context:
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
 import structlog
+import uvicorn
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from app.ai import tools
 from app.ai.tools import ChatToolContext
 from app.config import get_settings
 from app.mcp.auth import ApiKeyAuthenticator
+from app.mcp.auth_middleware import McpAuthMiddleware
 from app.services.neo4j import Neo4jGraphStore, close_neo4j, get_driver, init_neo4j
 from app.services.postgres import close_postgres, get_background_session, init_postgres
 
@@ -39,7 +43,8 @@ _authenticator: ApiKeyAuthenticator | None = None
 
 def _get_graph_store() -> Neo4jGraphStore:
     """Get the initialized GraphStore instance."""
-    assert _graph_store is not None, "MCP server not initialized — GraphStore is None"
+    if _graph_store is None:
+        raise RuntimeError("MCP server not initialized — GraphStore is None")
     return _graph_store
 
 
@@ -160,7 +165,7 @@ async def get_source_code(app_name: str, node_fqn: str) -> dict:
 async def impact_analysis(
     app_name: str,
     node_fqn: str,
-    depth: int = 5,
+    depth: Annotated[int, Field(ge=1, le=5)] = 5,
     direction: str = "both",
 ) -> dict:
     """Compute the blast radius of changing a specific code object.
@@ -168,7 +173,7 @@ async def impact_analysis(
     Args:
         app_name: The application name.
         node_fqn: Fully qualified name of the node to analyze.
-        depth: Max traversal depth (default 5, max 10).
+        depth: Max traversal depth (default 5, max 5).
         direction: Impact direction — "downstream", "upstream", or "both".
     """
     ctx = _build_context(app_name)
@@ -252,13 +257,18 @@ async def run_server() -> None:
     logger.info("mcp_server_starting", port=settings.mcp_port)
 
     try:
-        # Run with SSE transport on configured port
-        # NOTE: Auth is handled at the application level — the MCP server
-        # validates API keys via _authenticator in a custom middleware.
-        # For FastMCP >=1.25, use mcp.run() with transport params.
-        # If FastMCP doesn't support auth natively, wrap with a FastAPI
-        # app that validates Bearer tokens before proxying to MCP.
-        await mcp.run_sse_async()
+        # Wrap the FastMCP SSE Starlette app with Bearer-auth middleware so
+        # every HTTP request is validated against ApiKeyAuthenticator before
+        # reaching any MCP tool. Non-HTTP scopes (lifespan) pass through.
+        sse_app = mcp.sse_app()
+        authenticated_app = McpAuthMiddleware(sse_app, _authenticator)
+        config = uvicorn.Config(
+            authenticated_app,
+            host=mcp.settings.host,
+            port=mcp.settings.port,
+            log_level=mcp.settings.log_level.lower(),
+        )
+        await uvicorn.Server(config).serve()
     finally:
         flush_task.cancel()
         try:

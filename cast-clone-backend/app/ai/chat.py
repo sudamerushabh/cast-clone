@@ -146,16 +146,36 @@ def build_system_prompt(
 async def execute_tool_call(
     ctx: ChatToolContext, tool_name: str, tool_input: dict
 ) -> str:
-    """Execute a tool call and return a JSON string result."""
+    """Execute a tool call and return a JSON string result.
+
+    On error, the full exception (including traceback and message) is logged
+    server-side via ``logger.exception``. The returned JSON contains only a
+    generic user-facing message so internal paths, database hostnames, and
+    stack frames are never leaked to the SSE stream consumer.
+    """
     handler = _TOOL_HANDLERS.get(tool_name)
     if not handler:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        # Log the tool name server-side for debugging but never reflect it
+        # back into the SSE payload (avoids echoing attacker-controlled
+        # strings if the registry is ever extended dynamically).
+        logger.warning(
+            "chat_unknown_tool",
+            tool=tool_name,
+            project_id=getattr(ctx, "project_id", None),
+        )
+        return json.dumps({"error": "Unknown tool requested"})
     try:
         result = await handler(ctx, tool_input)
         return json.dumps(result, default=str)
-    except Exception as exc:
-        logger.error("chat_tool_failed", tool=tool_name, error=str(exc))
-        return json.dumps({"error": f"Tool {tool_name} failed: {str(exc)}"})
+    except Exception:
+        # Full exception (with message + traceback) goes to server logs only.
+        logger.exception(
+            "chat_tool_failed",
+            tool=tool_name,
+            project_id=getattr(ctx, "project_id", None),
+        )
+        # SSE consumer gets a redacted, generic message.
+        return json.dumps({"error": "Tool call failed. Please try again."})
 
 
 def _serialize_content(content) -> list[dict]:
@@ -391,9 +411,15 @@ async def chat_stream(
     except asyncio.CancelledError:
         logger.info("chat_stream_cancelled")
         raise
-    except Exception as exc:
-        logger.error("chat_stream_error", error=str(exc), exc_info=True)
-        yield _sse_event("error", {"message": f"Chat error: {str(exc)}"})
+    except Exception:
+        # Full exception (with message + traceback) goes to server logs only.
+        # The SSE consumer gets a generic message so internal paths, database
+        # identifiers, and Anthropic API details are never leaked.
+        logger.exception(
+            "chat_stream_error",
+            project_id=getattr(ctx, "project_id", None),
+        )
+        yield _sse_event("error", {"message": "Chat error. Please try again."})
 
 
 # ---------------------------------------------------------------------------
@@ -454,19 +480,23 @@ async def _openai_chat_stream(
     config: EffectiveAiConfig,
 ) -> AsyncGenerator[str, None]:
     """Agentic chat loop using OpenAI's chat completions with tool use."""
-    client = create_openai_client(config)
-    tool_defs = get_chat_tool_definitions()
-    openai_tools = _anthropic_tools_to_openai(tool_defs)
-
-    messages = _history_to_openai(history, system_prompt)
-    messages.append({"role": "user", "content": message})
-
     tool_calls_made = 0
     total_input_tokens = 0
     total_output_tokens = 0
     start = time.monotonic()
 
     try:
+        # Client construction can raise (e.g. missing credentials, malformed
+        # base_url) — keep it inside the try/except so the exception text
+        # (which may contain API keys or internal URLs) never escapes into
+        # the SSE stream.
+        client = create_openai_client(config)
+        tool_defs = get_chat_tool_definitions()
+        openai_tools = _anthropic_tools_to_openai(tool_defs)
+
+        messages = _history_to_openai(history, system_prompt)
+        messages.append({"role": "user", "content": message})
+
         while True:
             elapsed = time.monotonic() - start
             if elapsed > config.chat_timeout_seconds:
@@ -580,6 +610,9 @@ async def _openai_chat_stream(
     except asyncio.CancelledError:
         logger.info("openai_chat_stream_cancelled")
         raise
-    except Exception as exc:
-        logger.error("openai_chat_stream_error", error=str(exc), exc_info=True)
-        yield _sse_event("error", {"message": f"Chat error: {str(exc)}"})
+    except Exception:
+        logger.exception(
+            "openai_chat_stream_error",
+            project_id=getattr(ctx, "project_id", None),
+        )
+        yield _sse_event("error", {"message": "Chat error. Please try again."})

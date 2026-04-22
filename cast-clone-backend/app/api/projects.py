@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_current_user, require_license_writable
-from app.models.db import Project, User
+from app.api.dependencies import (
+    get_accessible_project,
+    get_current_user,
+    require_license_writable,
+)
+from app.models.db import Project, Repository, User
 from app.schemas.projects import (
     ProjectCreate,
     ProjectListResponse,
@@ -27,8 +32,8 @@ router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 )
 async def create_project(
     body: ProjectCreate,
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(get_current_user),
 ) -> ProjectResponse:
     """Create a new project."""
     project = Project(
@@ -40,8 +45,11 @@ async def create_project(
     await session.refresh(project)
 
     await log_activity(
-        session, "project.created", user_id=_user.id,
-        resource_type="project", resource_id=project.id,
+        session,
+        "project.created",
+        user_id=user.id,
+        resource_type="project",
+        resource_id=project.id,
         details={"name": body.name},
     )
 
@@ -57,21 +65,31 @@ async def create_project(
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ProjectListResponse:
-    """List all projects with pagination."""
-    # Count total
-    count_result = await session.execute(select(func.count(Project.id)))
+    """List projects. Admins see everything; members see projects whose parent
+    repository they created, plus legacy projects without a repository."""
+    base = select(Project).options(selectinload(Project.repository))
+    count_base = select(func.count(Project.id))
+
+    if user.role != "admin":
+        # Projects with no repository OR projects whose repo was created by this user
+        filter_clause = (Project.repository_id.is_(None)) | (
+            Project.repository_id.in_(
+                select(Repository.id).where(Repository.created_by == user.id)
+            )
+        )
+        base = base.where(filter_clause)
+        count_base = count_base.where(filter_clause)
+
+    count_result = await session.execute(count_base)
     total = count_result.scalar_one()
 
-    # Fetch page
     result = await session.execute(
-        select(Project)
-        .order_by(Project.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+        base.order_by(Project.created_at.desc()).offset(offset).limit(limit)
     )
     projects = result.scalars().all()
 
@@ -93,20 +111,9 @@ async def list_projects(
 
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
-    project_id: str,
-    session: AsyncSession = Depends(get_session),
+    project: Project = Depends(get_accessible_project),
 ) -> ProjectResponse:
     """Get a single project by ID."""
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
-
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -117,30 +124,28 @@ async def get_project(
     )
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_license_writable)],
+)
 async def delete_project(
     project_id: str,
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(get_current_user),
+    project: Project = Depends(get_accessible_project),
+    user: User = Depends(get_current_user),
 ) -> Response:
     """Delete a project by ID."""
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} not found",
-        )
-
     project_name = project.name
     await session.delete(project)
     await session.commit()
 
     await log_activity(
-        session, "project.deleted", user_id=_user.id,
-        resource_type="project", resource_id=project_id,
+        session,
+        "project.deleted",
+        user_id=user.id,
+        resource_type="project",
+        resource_id=project_id,
         details={"name": project_name},
     )
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_current_user, require_admin
 from app.config import Settings
-from app.models.db import GitConnector
+from app.models.db import GitConnector, User
 from app.schemas.connectors import (
     BranchListResponse,
     ConnectorCreate,
@@ -65,16 +66,15 @@ async def _get_connector_or_404(
     return connector
 
 
-@router.post(
-    "", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
 async def create_connector(
     body: ConnectorCreate,
+    admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
     _user: User = Depends(get_current_user),
 ) -> ConnectorResponse:
-    """Create a new git connector. Validates the token against the provider."""
+    """Create a new git connector. Validates the token. Admin only."""
     # Validate token by calling the provider API
     provider = create_provider(body.provider, body.base_url, body.token)
     try:
@@ -95,14 +95,18 @@ async def create_connector(
         encrypted_token=encrypted,
         status="connected",
         remote_username=user.username,
+        created_by=admin.id,
     )
     session.add(connector)
     await session.commit()
     await session.refresh(connector)
 
     await log_activity(
-        session, "connector.created", user_id=_user.id,
-        resource_type="connector", resource_id=connector.id,
+        session,
+        "connector.created",
+        user_id=_user.id,
+        resource_type="connector",
+        resource_id=connector.id,
         details={"name": body.name, "provider": body.provider},
     )
 
@@ -111,14 +115,13 @@ async def create_connector(
 
 @router.get("", response_model=ConnectorListResponse)
 async def list_connectors(
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(50, ge=1, le=200),
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorListResponse:
     """List all git connectors."""
-    count_result = await session.execute(
-        select(func.count(GitConnector.id))
-    )
+    count_result = await session.execute(select(func.count(GitConnector.id)))
     total = count_result.scalar_one()
 
     result = await session.execute(
@@ -138,6 +141,7 @@ async def list_connectors(
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 async def get_connector(
     connector_id: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ConnectorResponse:
     """Get a single connector by ID."""
@@ -149,10 +153,11 @@ async def get_connector(
 async def update_connector(
     connector_id: str,
     body: ConnectorUpdate,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> ConnectorResponse:
-    """Update a connector's name or token."""
+    """Update a connector's name or token. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
 
     if body.name is not None:
@@ -160,9 +165,7 @@ async def update_connector(
 
     if body.token is not None:
         # Re-validate token
-        provider = create_provider(
-            connector.provider, connector.base_url, body.token
-        )
+        provider = create_provider(connector.provider, connector.base_url, body.token)
         try:
             user = await provider.validate()
         except Exception as exc:
@@ -170,9 +173,7 @@ async def update_connector(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to validate new token: {exc}",
             ) from exc
-        connector.encrypted_token = encrypt_token(
-            body.token, settings.secret_key
-        )
+        connector.encrypted_token = encrypt_token(body.token, settings.secret_key)
         connector.remote_username = user.username
         connector.status = "connected"
 
@@ -181,15 +182,14 @@ async def update_connector(
     return _connector_to_response(connector)
 
 
-@router.delete(
-    "/{connector_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connector(
     connector_id: str,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> Response:
-    """Delete a connector."""
+    """Delete a connector. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
     connector_name = connector.name
     connector_provider = connector.provider
@@ -197,23 +197,25 @@ async def delete_connector(
     await session.commit()
 
     await log_activity(
-        session, "connector.deleted", user_id=_user.id,
-        resource_type="connector", resource_id=connector_id,
+        session,
+        "connector.deleted",
+        user_id=_user.id,
+        resource_type="connector",
+        resource_id=connector_id,
         details={"name": connector_name, "provider": connector_provider},
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post(
-    "/{connector_id}/test", response_model=ConnectorTestResponse
-)
+@router.post("/{connector_id}/test", response_model=ConnectorTestResponse)
 async def test_connector(
     connector_id: str,
+    _admin: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> ConnectorTestResponse:
-    """Test a connector's token validity."""
+    """Test a connector's token validity. Admin only."""
     connector = await _get_connector_or_404(connector_id, session)
     token = decrypt_token(connector.encrypted_token, settings.secret_key)
     provider = create_provider(connector.provider, connector.base_url, token)
@@ -223,23 +225,20 @@ async def test_connector(
         connector.status = "connected"
         connector.remote_username = user.username
         await session.commit()
-        return ConnectorTestResponse(
-            status="connected", remote_username=user.username
-        )
+        return ConnectorTestResponse(status="connected", remote_username=user.username)
     except Exception as exc:
         connector.status = "error"
         await session.commit()
         return ConnectorTestResponse(status="error", error=str(exc))
 
 
-@router.get(
-    "/{connector_id}/repos", response_model=RemoteRepoListResponse
-)
+@router.get("/{connector_id}/repos", response_model=RemoteRepoListResponse)
 async def list_remote_repos(
     connector_id: str,
-    page: int = 1,
-    per_page: int = 30,
+    page: int = Query(1, ge=1, le=100),
+    per_page: int = Query(30, ge=1, le=100),
     search: str | None = None,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> RemoteRepoListResponse:
@@ -282,6 +281,7 @@ async def get_remote_repo(
     connector_id: str,
     owner: str,
     repo: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> RemoteRepoResponse:
@@ -317,6 +317,7 @@ async def list_remote_branches(
     connector_id: str,
     owner: str,
     repo: str,
+    _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(_get_settings),
 ) -> BranchListResponse:

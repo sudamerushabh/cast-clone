@@ -381,6 +381,122 @@ def get_report():
         assert len(sql_strings) >= 1
 
 
+class TestConditionalScope:
+    """CHAN-77: control-flow wrappers must not leak into class FQNs."""
+
+    def test_conditional_class_has_flat_fqn(self, extractor):
+        """Classes defined inside ``if``/``else`` share the outer-scope FQN."""
+        source = b"""\
+import sys
+if sys.version_info >= (3, 11):
+    class Foo:
+        def bar(self):
+            pass
+else:
+    class Foo:
+        def bar(self):
+            pass
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        foo_classes = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "Foo"]
+        assert len(foo_classes) == 2, (
+            "both conditional Foo definitions should be recorded"
+        )
+        assert all(n.fqn == "mod.Foo" for n in foo_classes), (
+            f"expected both Foo FQNs to be 'mod.Foo', got "
+            f"{[n.fqn for n in foo_classes]}"
+        )
+
+        # Methods on both branches should also be flat.
+        bars = [n for n in nodes if n.kind == NodeKind.FUNCTION and n.name == "bar"]
+        assert len(bars) == 2
+        assert all(n.fqn == "mod.Foo.bar" for n in bars)
+
+    def test_try_except_class_has_flat_fqn(self, extractor):
+        """Classes in ``try``/``except`` blocks share the outer-scope FQN."""
+        source = b"""\
+try:
+    class Foo:
+        pass
+except ImportError:
+    class Foo:
+        pass
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        foo_classes = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "Foo"]
+        assert len(foo_classes) == 2
+        assert all(n.fqn == "mod.Foo" for n in foo_classes)
+
+    def test_with_statement_class(self, extractor):
+        """Classes defined inside a ``with`` block share the outer-scope FQN."""
+        source = b"with open('f') as f:\n    class X:\n        pass\n"
+        nodes, _ = extractor.extract(source, "/code/mod.py", "/code")
+        xs = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "X"]
+        assert len(xs) == 1
+        assert xs[0].fqn == "mod.X"
+
+    def test_match_statement_class(self, extractor):
+        """Classes defined inside a ``match``/``case`` share the outer-scope FQN."""
+        source = b"match v:\n    case _:\n        class X:\n            pass\n"
+        nodes, _ = extractor.extract(source, "/code/mod.py", "/code")
+        xs = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "X"]
+        assert len(xs) == 1
+        assert xs[0].fqn == "mod.X"
+
+    def test_nested_class_fqn_unchanged(self, extractor):
+        """Standard nested-class FQN must remain ``module.Outer.Inner``."""
+        source = b"""\
+class Outer:
+    class Inner:
+        pass
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        class_nodes = [n for n in nodes if n.kind == NodeKind.CLASS]
+        fqns = {n.fqn for n in class_nodes}
+        assert fqns == {"mod.Outer", "mod.Outer.Inner"}
+
+    def test_for_loop_defined_class(self, extractor):
+        """A class defined inside a ``for`` loop still gets a module-level FQN."""
+        source = b"""\
+for _ in [1]:
+    class X:
+        pass
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        x_classes = [n for n in nodes if n.kind == NodeKind.CLASS and n.name == "X"]
+        assert len(x_classes) == 1
+        assert x_classes[0].fqn == "mod.X"
+
+    def test_method_in_nested_class_fqn(self, extractor):
+        """Methods inside nested classes keep their full dotted FQN."""
+        source = b"""\
+class Outer:
+    class Inner:
+        def method(self):
+            pass
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        methods = [
+            n for n in nodes if n.kind == NodeKind.FUNCTION and n.name == "method"
+        ]
+        assert len(methods) == 1
+        assert methods[0].fqn == "mod.Outer.Inner.method"
+
+        # Sanity: also under conditional nesting, the chain is preserved.
+        source2 = b"""\
+class A:
+    class B:
+        if True:
+            class C:
+                def m(self):
+                    pass
+"""
+        nodes2, _ = extractor.extract(source2, "/code/mod.py", "/code")
+        m = [n for n in nodes2 if n.kind == NodeKind.FUNCTION and n.name == "m"]
+        assert len(m) == 1
+        assert m[0].fqn == "mod.A.B.C.m"
+
+
 class TestFullIntegration:
     """Task 8: End-to-end integration test with realistic fixture."""
 
