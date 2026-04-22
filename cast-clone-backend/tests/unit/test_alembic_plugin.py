@@ -254,3 +254,119 @@ class TestAlembicRevisionParsing:
         path.write_text("def :::\n")
 
         assert parse_migration_file(path) is None
+
+
+class TestAlembicOpExtraction:
+    def test_upgrade_create_table_captured(self, tmp_path: Path):
+        import ast
+
+        from app.stages.plugins.alembic_plugin.migrations import (
+            extract_ops_from_function,
+            parse_migration_file,  # noqa: F401 — kept per spec
+        )
+
+        src = (
+            "from alembic import op\n"
+            "import sqlalchemy as sa\n\n"
+            'revision = "001"\n'
+            "down_revision = None\n\n"
+            "def upgrade() -> None:\n"
+            '    op.create_table("users",'
+            ' sa.Column("id", sa.Integer, primary_key=True))\n\n'
+            "def downgrade() -> None:\n"
+            '    op.drop_table("users")\n'
+        )
+        path = tmp_path / "001.py"
+        path.write_text(src)
+
+        tree = ast.parse(path.read_text())
+        funcs = {
+            fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)
+        }
+
+        upgrade_ops = extract_ops_from_function(funcs["upgrade"])
+        downgrade_ops = extract_ops_from_function(funcs["downgrade"])
+
+        assert upgrade_ops == [{"op": "create_table", "target": "users"}]
+        assert downgrade_ops == [{"op": "drop_table", "target": "users"}]
+
+    def test_add_drop_column_captured(self, tmp_path: Path):
+        import ast
+
+        from app.stages.plugins.alembic_plugin.migrations import (
+            extract_ops_from_function,
+        )
+
+        src = (
+            "def upgrade():\n"
+            '    op.add_column("todos",'
+            ' sa.Column("completed", sa.Boolean, nullable=False))\n'
+            "\n"
+            "def downgrade():\n"
+            '    op.drop_column("todos", "completed")\n'
+        )
+        tree = ast.parse(src)
+        funcs = {fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)}
+
+        assert extract_ops_from_function(funcs["upgrade"]) == [
+            {"op": "add_column", "target": "todos", "column": "completed"},
+        ]
+        assert extract_ops_from_function(funcs["downgrade"]) == [
+            {"op": "drop_column", "target": "todos", "column": "completed"},
+        ]
+
+    def test_unknown_op_ignored(self):
+        import ast
+
+        from app.stages.plugins.alembic_plugin.migrations import (
+            extract_ops_from_function,
+        )
+
+        src = (
+            "def upgrade():\n"
+            '    op.execute("UPDATE users SET deleted = 0")\n'
+            '    op.create_table("x")\n'
+        )
+        tree = ast.parse(src)
+        funcs = {fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)}
+
+        # `op.execute` is not in the captured-ops whitelist.
+        ops = extract_ops_from_function(funcs["upgrade"])
+        assert ops == [{"op": "create_table", "target": "x"}]
+
+    @pytest.mark.asyncio
+    async def test_extract_populates_ops_on_config_file_node(
+        self, tmp_path: Path
+    ):
+        from app.models.context import AnalysisContext
+        from app.models.enums import NodeKind
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        versions = tmp_path / "migrations" / "versions"
+        versions.mkdir(parents=True)
+        (versions / "001.py").write_text(
+            "from alembic import op\n"
+            "import sqlalchemy as sa\n\n"
+            'revision = "001"\n'
+            "down_revision = None\n\n"
+            "def upgrade() -> None:\n"
+            '    op.create_table("users",'
+            ' sa.Column("id", sa.Integer, primary_key=True))\n\n'
+            "def downgrade() -> None:\n"
+            '    op.drop_table("users")\n'
+        )
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(project_id="t", graph=SymbolGraph(), manifest=manifest)
+
+        result = await AlembicPlugin().extract(ctx)
+
+        cfn = next(n for n in result.nodes if n.kind == NodeKind.CONFIG_FILE)
+        assert cfn.properties["upgrade_ops"] == [
+            {"op": "create_table", "target": "users"},
+        ]
+        assert cfn.properties["downgrade_ops"] == [
+            {"op": "drop_table", "target": "users"},
+        ]

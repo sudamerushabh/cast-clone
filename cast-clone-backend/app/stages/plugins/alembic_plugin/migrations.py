@@ -38,6 +38,8 @@ class MigrationInfo:
     file_path: Path
     revision_id: str
     down_revision: str | None
+    upgrade_ops: list[dict[str, str]]
+    downgrade_ops: list[dict[str, str]]
 
 
 def parse_migration_file(path: Path) -> MigrationInfo | None:
@@ -71,17 +73,23 @@ def parse_migration_file(path: Path) -> MigrationInfo | None:
 
     revision: str | None = None
     down_revision: str | None = None
+    upgrade_ops: list[dict[str, str]] = []
+    downgrade_ops: list[dict[str, str]] = []
 
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-            continue
-        target_name = node.targets[0].id
-        if target_name == "revision":
-            revision = _literal_string_or_none(node.value)
-        elif target_name == "down_revision":
-            down_revision = _literal_string_or_none(node.value)
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                continue
+            target_name = node.targets[0].id
+            if target_name == "revision":
+                revision = _literal_string_or_none(node.value)
+            elif target_name == "down_revision":
+                down_revision = _literal_string_or_none(node.value)
+        elif isinstance(node, ast.FunctionDef):
+            if node.name == "upgrade":
+                upgrade_ops = extract_ops_from_function(node)
+            elif node.name == "downgrade":
+                downgrade_ops = extract_ops_from_function(node)
 
     if revision is None:
         return None
@@ -90,6 +98,8 @@ def parse_migration_file(path: Path) -> MigrationInfo | None:
         file_path=path,
         revision_id=revision,
         down_revision=down_revision,
+        upgrade_ops=upgrade_ops,
+        downgrade_ops=downgrade_ops,
     )
 
 
@@ -101,6 +111,91 @@ def _literal_string_or_none(value: ast.expr) -> str | None:
         if value.value is None:
             return None
     return None
+
+
+_SINGLE_TARGET_OPS = frozenset({"create_table", "drop_table"})
+_TABLE_COLUMN_OPS = frozenset({"add_column", "drop_column"})
+# alter_column / rename_table captured with target only — full modeling is M3+.
+_OTHER_TABLE_OPS = frozenset({"alter_column", "rename_table"})
+
+
+def extract_ops_from_function(func: ast.FunctionDef) -> list[dict[str, str]]:
+    """Scan a function body for `op.<known_name>(...)` calls.
+
+    Returns a list of summary dicts — one per recognized op call — preserving
+    source order. Unknown ops (e.g. `op.execute`, `op.bulk_insert`) are
+    silently skipped rather than raised, so an unfamiliar Alembic pattern in
+    one file doesn't hide the rest of the migration.
+    """
+    ops: list[dict[str, str]] = []
+    for stmt in ast.walk(func):
+        if not isinstance(stmt, ast.Call):
+            continue
+        func_expr = stmt.func
+        if not (
+            isinstance(func_expr, ast.Attribute)
+            and isinstance(func_expr.value, ast.Name)
+            and func_expr.value.id == "op"
+        ):
+            continue
+        op_name = func_expr.attr
+        if op_name in _SINGLE_TARGET_OPS:
+            target = _first_string_arg(stmt.args)
+            if target is not None:
+                ops.append({"op": op_name, "target": target})
+        elif op_name in _TABLE_COLUMN_OPS:
+            table = _first_string_arg(stmt.args)
+            if table is None:
+                continue
+            # Alembic: add_column(table, sa.Column("name", ...))
+            #          drop_column(table, "name")
+            column = _second_string_arg(stmt.args)
+            if column is None:
+                column = _column_name_from_sa_column(stmt.args)
+            if column is not None:
+                ops.append({"op": op_name, "target": table, "column": column})
+        elif op_name in _OTHER_TABLE_OPS:
+            target = _first_string_arg(stmt.args)
+            if target is not None:
+                ops.append({"op": op_name, "target": target})
+    return ops
+
+
+def _first_string_arg(args: list[ast.expr]) -> str | None:
+    if not args:
+        return None
+    first = args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def _second_string_arg(args: list[ast.expr]) -> str | None:
+    if len(args) < 2:
+        return None
+    second = args[1]
+    if isinstance(second, ast.Constant) and isinstance(second.value, str):
+        return second.value
+    return None
+
+
+def _column_name_from_sa_column(args: list[ast.expr]) -> str | None:
+    """Extract the column name from a `sa.Column("name", ...)` arg."""
+    if len(args) < 2:
+        return None
+    second = args[1]
+    if not isinstance(second, ast.Call):
+        return None
+    func_expr = second.func
+    # Accept both `sa.Column(...)` and `Column(...)`.
+    is_sa_column = (
+        isinstance(func_expr, ast.Attribute)
+        and func_expr.attr == "Column"
+    )
+    is_bare_column = isinstance(func_expr, ast.Name) and func_expr.id == "Column"
+    if not (is_sa_column or is_bare_column):
+        return None
+    return _first_string_arg(second.args)
 
 
 class AlembicPlugin(FrameworkPlugin):
@@ -190,6 +285,8 @@ class AlembicPlugin(FrameworkPlugin):
                     "revision_id": info.revision_id,
                     "down_revision": info.down_revision,
                     "file_path": str(info.file_path),
+                    "upgrade_ops": info.upgrade_ops,
+                    "downgrade_ops": info.downgrade_ops,
                 },
             )
             nodes.append(node)
