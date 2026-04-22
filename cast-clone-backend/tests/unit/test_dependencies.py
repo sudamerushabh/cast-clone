@@ -371,3 +371,15 @@ class TestBuildPythonVenv:
 
         assert venv is None
         assert called == []
+
+    def test_returns_none_when_uv_missing(self, python_project: Path, monkeypatch):
+        """If `uv` binary is not found, log warning and return None."""
+
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError("uv: command not found")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        venv = build_python_venv(python_project)
+
+        assert venv is None
