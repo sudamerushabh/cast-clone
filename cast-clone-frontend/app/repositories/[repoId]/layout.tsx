@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { getRepository } from "@/lib/api";
 import { ChatProvider } from "@/components/chat/ChatProvider";
 import { ChatDrawer } from "@/components/chat/ChatDrawer";
+import { RepoTabs } from "@/components/repositories/RepoTabs";
 import type { RepositoryResponse } from "@/lib/types";
 
 /**
@@ -103,16 +104,23 @@ export default function RepoLayout({
 
   const chatLabel = branch ?? repo?.projects.find((p) => p.id === projectId)?.branch ?? undefined;
 
+  const shell = (
+    <>
+      <RepoTabs repoId={repoId} />
+      {children}
+    </>
+  );
+
   // If we have a projectId, wrap with ChatProvider
   if (projectId) {
     return (
       <ChatProvider projectId={projectId} projectName={chatLabel}>
-        {children}
+        {shell}
         <ChatDrawer projectName={chatLabel} />
       </ChatProvider>
     );
   }
 
   // No projects at all — render without chat
-  return <>{children}</>;
+  return shell;
 }
