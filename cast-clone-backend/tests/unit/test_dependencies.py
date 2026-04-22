@@ -9,18 +9,16 @@ import pytest
 from app.models.manifest import (
     BuildTool,
     ProjectManifest,
-    ResolvedDependency,
     ResolvedEnvironment,
 )
 from app.stages.dependencies import (
     build_python_venv,
+    parse_dotnet_dependencies,
     parse_maven_dependencies,
     parse_npm_dependencies,
     parse_python_dependencies,
-    parse_dotnet_dependencies,
     resolve_dependencies,
 )
-
 
 # -- Maven Dependency Parsing ─────────────────────────────────────
 

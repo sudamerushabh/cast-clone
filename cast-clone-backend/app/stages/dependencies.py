@@ -432,7 +432,10 @@ def build_python_venv(project_root: Path) -> Path | None:
         return None
 
     # Stable per-project venv directory under TMPDIR
-    venv_dir = Path(tempfile.gettempdir()) / f"cast-venv-{project_root.name}-{os.getpid()}"
+    venv_dir = (
+        Path(tempfile.gettempdir())
+        / f"cast-venv-{project_root.name}-{os.getpid()}"
+    )
 
     try:
         # 1. Create the venv
@@ -444,8 +447,16 @@ def build_python_venv(project_root: Path) -> Path | None:
             text=True,
             check=True,
         )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
-        logger.warning("venv.create_failed", project=str(project_root), error=str(e)[:200])
+    except (
+        subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+    ) as e:
+        logger.warning(
+            "venv.create_failed",
+            project=str(project_root),
+            error=str(e)[:200],
+        )
         return None
 
     # 2. Install dependencies: -e . first, fall back to requirements.txt
@@ -498,5 +509,6 @@ def build_python_venv(project_root: Path) -> Path | None:
     # got installed. Only return None if BOTH install paths failed.
     if not install_ok:
         logger.warning("venv.install_all_failed", project=str(project_root))
-        # Keep the venv anyway — even empty it gives scip-python the right Python interpreter
+        # Keep the venv anyway — even empty it gives scip-python
+        # the right Python interpreter
     return venv_dir
