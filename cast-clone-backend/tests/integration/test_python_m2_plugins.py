@@ -112,3 +112,47 @@ class TestSQLAlchemy20AsyncM2:
             if e.kind == EdgeKind.REFERENCES
         }
         assert ("table:todos.owner_id", "table:users.id") in refs, refs
+
+
+@pytest.mark.integration
+class TestAlembicMigrationsM2:
+    @pytest.mark.asyncio
+    async def test_fastapi_todo_migrations_form_chain(self):
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        manifest = discover_project(FASTAPI_TODO)
+        graph = await parse_with_treesitter(manifest)
+        ctx = AnalysisContext(
+            project_id="m2-alembic",
+            graph=graph,
+            manifest=manifest,
+        )
+
+        result = await AlembicPlugin().extract(ctx)
+
+        config_files = {
+            n.name: n for n in result.nodes if n.kind == NodeKind.CONFIG_FILE
+        }
+        assert set(config_files.keys()) == {"001_initial", "002_add_todo_completed"}
+
+        # 002 points back at 001 via INHERITS.
+        inherits_edges = [
+            (e.source_fqn, e.target_fqn)
+            for e in result.edges
+            if e.kind == EdgeKind.INHERITS
+        ]
+        assert inherits_edges == [
+            ("alembic:002_add_todo_completed", "alembic:001_initial"),
+        ]
+
+        # 001 creates users + todos; 002 adds completed column.
+        ops_001 = config_files["001_initial"].properties["upgrade_ops"]
+        created_tables = sorted(
+            op["target"] for op in ops_001 if op["op"] == "create_table"
+        )
+        assert created_tables == ["todos", "users"]
+
+        ops_002 = config_files["002_add_todo_completed"].properties["upgrade_ops"]
+        assert ops_002 == [
+            {"op": "add_column", "target": "todos", "column": "completed"},
+        ]
