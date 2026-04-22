@@ -501,7 +501,8 @@ class TestSQLAlchemy20AsyncStyle:
         email_node = next(c for c in column_nodes if c.name == "email")
         assert email_node.properties["is_primary_key"] is False
 
-    def test_foreign_key_in_mapped_column_captured(self):
+    @pytest.mark.asyncio
+    async def test_foreign_key_in_mapped_column_captured(self):
         """A mapped_column with ForeignKey still emits a REFERENCES edge."""
         from app.models.context import AnalysisContext
         from app.models.enums import Confidence, EdgeKind, NodeKind
@@ -548,9 +549,7 @@ class TestSQLAlchemy20AsyncStyle:
             )
 
         ctx = AnalysisContext(project_id="t", graph=graph)
-        import asyncio
-
-        result = asyncio.run(SQLAlchemyPlugin().extract(ctx))
+        result = await SQLAlchemyPlugin().extract(ctx)
 
         ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
         assert len(ref_edges) == 1

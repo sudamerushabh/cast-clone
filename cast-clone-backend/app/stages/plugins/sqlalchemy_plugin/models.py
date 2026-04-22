@@ -32,6 +32,8 @@ logger = structlog.get_logger()
 
 # Regex patterns for parsing Column/mapped_column values
 _COLUMN_RE = re.compile(r"^(Column|mapped_column)\(")
+# No closing-paren anchor — intentional: kwargs like ondelete="CASCADE"
+# may follow the target string.
 _FK_RE = re.compile(r'ForeignKey\(\s*["\']([^"\']+)["\']')
 _PK_RE = re.compile(r"primary_key\s*=\s*True")
 _RELATIONSHIP_RE = re.compile(r"^relationship\(")
