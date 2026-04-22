@@ -14,6 +14,7 @@ inside `op.*` calls don't break extraction.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,9 +32,13 @@ from app.stages.plugins.base import (
 logger = structlog.get_logger()
 
 
-@dataclass(frozen=True)
+@dataclass
 class MigrationInfo:
-    """Static metadata extracted from a single Alembic migration file."""
+    """Static metadata extracted from a single Alembic migration file.
+
+    Treat as write-once: do not mutate after construction. `frozen` is not
+    applied because the list fields would still be mutable in place.
+    """
 
     file_path: Path
     revision_id: str
@@ -119,6 +124,19 @@ _TABLE_COLUMN_OPS = frozenset({"add_column", "drop_column"})
 _OTHER_TABLE_OPS = frozenset({"alter_column", "rename_table"})
 
 
+def _walk_excluding_nested_scopes(node: ast.AST) -> Iterator[ast.AST]:
+    """Like ast.walk but does not descend into nested function/lambda bodies.
+
+    Alembic migrations almost never use nested defs, but if they do the
+    inner function's ops belong to that helper, not to upgrade/downgrade.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        yield child
+        yield from _walk_excluding_nested_scopes(child)
+
+
 def extract_ops_from_function(func: ast.FunctionDef) -> list[dict[str, str]]:
     """Scan a function body for `op.<known_name>(...)` calls.
 
@@ -128,7 +146,7 @@ def extract_ops_from_function(func: ast.FunctionDef) -> list[dict[str, str]]:
     one file doesn't hide the rest of the migration.
     """
     ops: list[dict[str, str]] = []
-    for stmt in ast.walk(func):
+    for stmt in _walk_excluding_nested_scopes(func):
         if not isinstance(stmt, ast.Call):
             continue
         func_expr = stmt.func

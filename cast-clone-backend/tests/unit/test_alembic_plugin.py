@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -258,11 +259,8 @@ class TestAlembicRevisionParsing:
 
 class TestAlembicOpExtraction:
     def test_upgrade_create_table_captured(self, tmp_path: Path):
-        import ast
-
         from app.stages.plugins.alembic_plugin.migrations import (
             extract_ops_from_function,
-            parse_migration_file,  # noqa: F401 — kept per spec
         )
 
         src = (
@@ -291,8 +289,6 @@ class TestAlembicOpExtraction:
         assert downgrade_ops == [{"op": "drop_table", "target": "users"}]
 
     def test_add_drop_column_captured(self, tmp_path: Path):
-        import ast
-
         from app.stages.plugins.alembic_plugin.migrations import (
             extract_ops_from_function,
         )
@@ -316,8 +312,6 @@ class TestAlembicOpExtraction:
         ]
 
     def test_unknown_op_ignored(self):
-        import ast
-
         from app.stages.plugins.alembic_plugin.migrations import (
             extract_ops_from_function,
         )
@@ -370,3 +364,38 @@ class TestAlembicOpExtraction:
         assert cfn.properties["downgrade_ops"] == [
             {"op": "drop_table", "target": "users"},
         ]
+
+    def test_nested_function_ops_not_captured(self):
+        """Ops inside a nested helper def are NOT attributed to upgrade()."""
+        from app.stages.plugins.alembic_plugin.migrations import (
+            extract_ops_from_function,
+        )
+
+        src = (
+            "def upgrade():\n"
+            "    def helper():\n"
+            '        op.create_table("inner_only")\n'
+            '    op.create_table("outer")\n'
+        )
+        tree = ast.parse(src)
+        funcs = {fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)}
+
+        ops = extract_ops_from_function(funcs["upgrade"])
+        assert ops == [{"op": "create_table", "target": "outer"}]
+
+    def test_conditional_ops_still_captured(self):
+        """Ops inside an `if` block are captured — legitimate Alembic code."""
+        from app.stages.plugins.alembic_plugin.migrations import (
+            extract_ops_from_function,
+        )
+
+        src = (
+            "def upgrade():\n"
+            "    if some_flag:\n"
+            '        op.create_table("conditional")\n'
+        )
+        tree = ast.parse(src)
+        funcs = {fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)}
+
+        ops = extract_ops_from_function(funcs["upgrade"])
+        assert ops == [{"op": "create_table", "target": "conditional"}]
