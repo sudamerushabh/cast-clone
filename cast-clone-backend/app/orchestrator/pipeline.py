@@ -414,6 +414,14 @@ async def run_analysis_pipeline(
         run.completed_at = datetime.now(UTC)
         run.node_count = context.graph.node_count
         run.edge_count = context.graph.edge_count
+        # CHAN-72: persist overflow log locations (if any subprocess blew
+        # past the 10MB per-stream cap). Null when everything stayed in
+        # memory, so operators can quickly spot runs worth inspecting.
+        run.subprocess_logs = (
+            list(context.subprocess_overflow_logs)
+            if context.subprocess_overflow_logs
+            else None
+        )
         run.snapshot = {
             "node_count": context.graph.node_count,
             "edge_count": context.graph.edge_count,

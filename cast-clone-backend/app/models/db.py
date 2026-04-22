@@ -279,6 +279,12 @@ class AnalysisRun(Base):
     snapshot: Mapped[dict | None] = mapped_column(JSON)
     commit_sha: Mapped[str | None] = mapped_column(String(40))
     total_loc: Mapped[int | None] = mapped_column(Integer)
+    # CHAN-72: list of {stream, path, size_bytes} entries pointing at any
+    # subprocess-log temp files that exceeded the 10MB in-memory cap
+    # (e.g. a runaway Maven/Gradle build log spooled to /tmp during a
+    # SCIP indexer invocation). Operators use this to locate the full
+    # log post-run; the files themselves are not auto-cleaned.
+    subprocess_logs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="analysis_runs")
 

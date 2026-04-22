@@ -359,6 +359,27 @@ async def _run_scip_in_directory(
         )
         raise
 
+    # CHAN-72: if either stream overflowed the 10MB in-memory cap, record
+    # the temp-file location on the context so the pipeline can persist
+    # it to ``AnalysisRun.subprocess_logs``. Happens for e.g. a SCIP
+    # indexer that shells out to a verbose Maven build.
+    if result.truncated:
+        for entry in result.overflow_logs():
+            context.subprocess_overflow_logs.append(
+                {**entry, "source": f"scip.{indexer_config.language}"}
+            )
+            logger.warning(
+                "scip.indexer.output_truncated",
+                language=indexer_config.language,
+                stream=entry["stream"],
+                overflow_path=entry["path"],
+                total_bytes=entry["size_bytes"],
+                project_id=context.project_id,
+                message=(
+                    "subprocess output exceeded 10MB cap; full log spooled to disk"
+                ),
+            )
+
     # Log stdout/stderr regardless of exit code for observability
     if result.stdout.strip():
         logger.info(
