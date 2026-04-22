@@ -39,17 +39,19 @@ _MVN_NS = {"mvn": "http://maven.apache.org/POM/4.0.0"}
 async def resolve_dependencies(
     manifest: ProjectManifest,
 ) -> ResolvedEnvironment:
-    """Stage 2 entry point: parse build files and extract dependency declarations.
+    """Stage 2 entry point: parse build files and optionally build a Python venv.
 
-    For Phase 1, this does NOT run build tools (mvn dependency:tree, npm install).
-    It only parses the declaration files directly, which is fast and requires no
-    build toolchain.
+    For Phase 1, dependency declaration parsing does NOT run build tools (mvn
+    dependency:tree, npm install). It only parses the declaration files. The
+    one exception is Python: if the project declares Python dependencies, we
+    build a sandboxed venv via `uv` so that Stage 4 `scip-python` has a
+    populated site-packages to resolve imports against.
 
     Args:
         manifest: The ProjectManifest produced by Stage 1.
 
     Returns:
-        ResolvedEnvironment with dependencies keyed by language.
+        ResolvedEnvironment with dependencies, optional python_venv_path.
     """
     start = time.monotonic()
     log = logger.bind(project_root=str(manifest.root_path))
@@ -73,6 +75,18 @@ async def resolve_dependencies(
             log.warning("dependencies.parse_error", error=msg)
             errors.append(msg)
 
+    # Build Python venv for SCIP Python indexer (M1)
+    python_venv_path: Path | None = None
+    has_python = any(tool.language == "python" for tool in manifest.build_tools)
+    if has_python:
+        python_venv_path = build_python_venv(manifest.root_path)
+        if python_venv_path is None:
+            errors.append(
+                "Python venv build failed; SCIP will run against system Python"
+            )
+        else:
+            log.info("dependencies.venv_ready", path=str(python_venv_path))
+
     elapsed = time.monotonic() - start
     dep_counts = {lang: len(deps) for lang, deps in dependencies.items()}
     log.info(
@@ -87,6 +101,7 @@ async def resolve_dependencies(
         dependencies=dependencies,
         env_vars={},
         errors=errors,
+        python_venv_path=python_venv_path,
     )
 
 

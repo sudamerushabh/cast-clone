@@ -404,3 +404,59 @@ class TestBuildPythonVenv:
         # Even with install timeout, return the venv — scip-python can use it
         assert venv is not None
         assert venv.exists()
+
+
+class TestResolveDependenciesWiresVenv:
+    @pytest.mark.asyncio
+    async def test_python_project_gets_venv_built(self, tmp_path: Path, monkeypatch):
+        """resolve_dependencies should call build_python_venv for Python projects."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\ndependencies = ["requests"]\n'
+        )
+
+        manifest = ProjectManifest(
+            root_path=tmp_path,
+            build_tools=[
+                BuildTool(
+                    name="uv/pip",
+                    config_file="pyproject.toml",
+                    language="python",
+                )
+            ],
+        )
+
+        called_with: list[Path] = []
+
+        def fake_build_venv(project_root: Path) -> Path | None:
+            called_with.append(project_root)
+            return tmp_path / "venv"
+
+        monkeypatch.setattr(
+            "app.stages.dependencies.build_python_venv", fake_build_venv
+        )
+
+        env = await resolve_dependencies(manifest)
+
+        assert called_with == [tmp_path]
+        assert env.python_venv_path == tmp_path / "venv"
+
+    @pytest.mark.asyncio
+    async def test_non_python_project_no_venv(self, tmp_path: Path, monkeypatch):
+        """Projects without Python build tools should not trigger venv builds."""
+        manifest = ProjectManifest(
+            root_path=tmp_path,
+            build_tools=[
+                BuildTool(name="maven", config_file="pom.xml", language="java")
+            ],
+        )
+
+        called = []
+        monkeypatch.setattr(
+            "app.stages.dependencies.build_python_venv",
+            lambda p: called.append(p) or None,
+        )
+
+        env = await resolve_dependencies(manifest)
+
+        assert called == []
+        assert env.python_venv_path is None
