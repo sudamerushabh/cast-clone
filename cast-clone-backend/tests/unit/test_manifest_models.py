@@ -6,6 +6,7 @@ from app.models.manifest import (
     DetectedFramework,
     DetectedLanguage,
     ProjectManifest,
+    ResolvedEnvironment,
     SourceFile,
 )
 
@@ -72,3 +73,13 @@ class TestProjectManifest:
         )
         java_files = m.files_for_language("java")
         assert len(java_files) == 2
+
+
+class TestResolvedEnvironmentVenv:
+    def test_python_venv_path_defaults_none(self):
+        env = ResolvedEnvironment()
+        assert env.python_venv_path is None
+
+    def test_python_venv_path_accepts_path(self, tmp_path: Path):
+        env = ResolvedEnvironment(python_venv_path=tmp_path / "venv")
+        assert env.python_venv_path == tmp_path / "venv"

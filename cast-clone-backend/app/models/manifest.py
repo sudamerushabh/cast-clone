@@ -54,6 +54,7 @@ class ResolvedEnvironment:
     )  # language -> deps
     env_vars: dict[str, str] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    python_venv_path: Path | None = None
 
 
 @dataclass
