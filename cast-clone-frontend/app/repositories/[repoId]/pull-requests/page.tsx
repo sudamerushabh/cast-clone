@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
+import { GitPullRequest } from "lucide-react";
 import { useRepoPrAnalyses } from "@/hooks/usePullRequests";
 import { PrListTable } from "@/components/pull-requests/PrListTable";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function RepoPullRequestsPage() {
   const params = useParams();
@@ -55,13 +58,24 @@ export default function RepoPullRequestsPage() {
       </div>
 
       {loading && (
-        <div className="py-8 text-center text-gray-500">Loading...</div>
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
       )}
       {error && <div className="py-4 text-red-600">{error}</div>}
-      {data && (
+      {!loading && data && data.items.length === 0 && (
+        <EmptyState
+          icon={GitPullRequest}
+          title="No pull requests found"
+          description="No PR analyses match the current filters. Adjust status or risk filters to see more."
+        />
+      )}
+      {data && data.items.length > 0 && (
         <PrListTable items={data.items} basePath={`/repositories/${repoId}`} repoId={repoId} onDeleted={refresh} />
       )}
-      {data && (
+      {data && data.items.length > 0 && (
         <div className="mt-4 text-sm text-gray-500">
           Showing {data.items.length} of {data.total} analyses
         </div>

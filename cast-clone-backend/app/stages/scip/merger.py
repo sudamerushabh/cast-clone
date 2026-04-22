@@ -15,8 +15,10 @@ The merge algorithm:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
 
@@ -42,6 +44,119 @@ class MergeStats:
     upgraded_edges: int = 0
     new_call_edges: int = 0
     new_implements_edges: int = 0
+
+
+# -- Path & Index Helpers ---------------------------------------------------
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize a filesystem path for stable cross-platform comparison.
+
+    Uses :meth:`pathlib.Path.resolve` which handles:
+    - symlink resolution (macOS ``/var`` -> ``/private/var``)
+    - case-folding on case-insensitive filesystems (when strict)
+    - forward/backward slash normalization on Windows
+    - redundant separators and ``.``/``..`` segments
+
+    ``resolve(strict=False)`` still raises ``OSError`` on some platforms
+    for pathological inputs and can be slow for synthetic paths used in
+    tests. When that happens (or the path does not exist on disk) we
+    fall back to :func:`os.path.normpath` and a forward-slash form via
+    :meth:`PurePath.as_posix` so that tests operating on purely
+    hypothetical paths still produce a deterministic key.
+    """
+    try:
+        return Path(path).resolve(strict=False).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        # Fallback: normpath + posix form so synthetic/invalid paths
+        # still hash consistently across platforms.
+        return Path(os.path.normpath(path)).as_posix()
+
+
+def _reindex_edge_for_fqn_change(
+    graph: SymbolGraph,
+    edge: GraphEdge,
+    old_source: str | None,
+    old_target: str | None,
+) -> None:
+    """Incrementally patch the reverse indexes for a single edge.
+
+    Called after an edge's ``source_fqn`` or ``target_fqn`` has been
+    mutated in place. Removes the edge from its old bucket(s) and
+    appends it to the new one(s). This keeps FQN-upgrade cost at
+    ``O(1)`` amortized per edge rather than ``O(E)`` per upgrade,
+    which matters because SCIP may upgrade many FQNs in a single pass.
+
+    If the indexes are already marked dirty we skip the patch; the
+    next read will rebuild from scratch anyway.
+    """
+    if graph._index_dirty:
+        return
+    if old_source is not None and old_source != edge.source_fqn:
+        bucket = graph._edges_from.get(old_source)
+        if bucket is not None:
+            try:
+                bucket.remove(edge)
+            except ValueError:
+                pass
+            if not bucket:
+                graph._edges_from.pop(old_source, None)
+        graph._edges_from.setdefault(edge.source_fqn, []).append(edge)
+    if old_target is not None and old_target != edge.target_fqn:
+        bucket = graph._edges_to.get(old_target)
+        if bucket is not None:
+            try:
+                bucket.remove(edge)
+            except ValueError:
+                pass
+            if not bucket:
+                graph._edges_to.pop(old_target, None)
+        graph._edges_to.setdefault(edge.target_fqn, []).append(edge)
+
+
+def _upgrade_node_fqn(
+    graph: SymbolGraph,
+    node: GraphNode,
+    new_fqn: str,
+) -> None:
+    """Upgrade a node's FQN and keep all graph indexes consistent.
+
+    1. Move the node from ``graph.nodes[old_fqn]`` to
+       ``graph.nodes[new_fqn]``.
+    2. Walk every edge once, rewriting ``source_fqn``/``target_fqn``
+       references to the old FQN and incrementally patching the
+       reverse indexes so ``get_edges_from(new_fqn)`` /
+       ``get_edges_to(new_fqn)`` are correct on the next read and
+       ``get_edges_from(old_fqn)`` / ``get_edges_to(old_fqn)`` no
+       longer return stale edges.
+
+    Incremental patching is preferred over a full
+    :meth:`SymbolGraph._rebuild_index` call because the merger may
+    upgrade hundreds of FQNs in a single pass; a full rebuild each
+    time would be quadratic in edge count.
+    """
+    old_fqn = node.fqn
+    if old_fqn == new_fqn:
+        return
+
+    if old_fqn in graph.nodes:
+        del graph.nodes[old_fqn]
+    node.fqn = new_fqn
+    graph.nodes[new_fqn] = node
+
+    index_ready = not graph._index_dirty
+    for edge in graph.edges:
+        old_source = edge.source_fqn
+        old_target = edge.target_fqn
+        touched = False
+        if old_source == old_fqn:
+            edge.source_fqn = new_fqn
+            touched = True
+        if old_target == old_fqn:
+            edge.target_fqn = new_fqn
+            touched = True
+        if touched and index_ready:
+            _reindex_edge_for_fqn_change(graph, edge, old_source, old_target)
 
 
 # -- SCIP Symbol -> FQN Conversion ------------------------------------------
@@ -180,13 +295,17 @@ def match_scip_symbol_to_node(
     if node is not None:
         return node
 
-    # Strategy 2: file:line scan
+    # Strategy 2: file:line scan (use pathlib.Path.resolve() for a
+    # cross-platform-stable key — handles symlinks, case differences,
+    # and ``./`` vs absolute forms; falls back to normpath for
+    # synthetic paths that don't exist on disk).
+    scip_key = _normalize_path(file_path)
     for candidate in graph.nodes.values():
         if candidate.path and candidate.line is not None:
-            # Normalize paths for comparison (remove leading ./ or src/ differences)
-            cand_path = candidate.path.lstrip("./")
-            scip_path = file_path.lstrip("./")
-            if cand_path == scip_path and candidate.line == line:
+            if (
+                _normalize_path(candidate.path) == scip_key
+                and candidate.line == line
+            ):
                 return candidate
 
     return None
@@ -206,6 +325,7 @@ def _find_containing_function(
     """
     best: GraphNode | None = None
     best_distance = float("inf")
+    scip_key = _normalize_path(file_path)
 
     for node in graph.nodes.values():
         if node.kind not in (NodeKind.FUNCTION,):
@@ -213,9 +333,7 @@ def _find_containing_function(
         if node.path is None or node.line is None:
             continue
 
-        cand_path = node.path.lstrip("./")
-        scip_path = file_path.lstrip("./")
-        if cand_path != scip_path:
+        if _normalize_path(node.path) != scip_key:
             continue
 
         end_line = node.end_line or (node.line + 100)
@@ -305,21 +423,16 @@ def merge_scip_into_context(
 
             stats.resolved_count += 1
 
-            # Upgrade FQN if SCIP has a more precise one
-            if matched_node.fqn != scip_fqn and len(scip_fqn) > len(matched_node.fqn):
-                old_fqn = matched_node.fqn
-                # Remove old entry, update FQN, re-add
-                del graph.nodes[old_fqn]
-                matched_node.fqn = scip_fqn
-                graph.add_node(matched_node)
-
-                # Update edges that reference the old FQN
-                for edge in graph.edges:
-                    if edge.source_fqn == old_fqn:
-                        edge.source_fqn = scip_fqn
-                    if edge.target_fqn == old_fqn:
-                        edge.target_fqn = scip_fqn
-                graph._index_dirty = True
+            # Upgrade FQN if SCIP has a more precise one. ``_upgrade_node_fqn``
+            # rewrites the node dict, updates every edge's source/target FQN,
+            # and *incrementally patches* the ``_edges_from``/``_edges_to``
+            # reverse indexes before returning — so subsequent reads under
+            # the new FQN are consistent and reads under the old FQN no
+            # longer return stale edges.
+            if matched_node.fqn != scip_fqn and len(scip_fqn) > len(
+                matched_node.fqn
+            ):
+                _upgrade_node_fqn(graph, matched_node, scip_fqn)
 
             # Add documentation
             if occ.symbol in symbol_docs:

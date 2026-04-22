@@ -18,12 +18,28 @@ from sqlalchemy import select
 
 from app.models.context import AnalysisContext
 from app.models.db import AnalysisRun, Project, Repository
-from app.orchestrator.progress import WebSocketProgressReporter
+from app.orchestrator.progress import WebSocketProgressReporter, active_contexts
+from app.orchestrator.subprocess_utils import SubprocessCancelled
 from app.services.activity import log_activity
 from app.services.loc_usage import invalidate_cumulative_loc_cache
 from app.services.neo4j import GraphStore
 
 logger = structlog.get_logger(__name__)
+
+
+class PipelineCancelled(Exception):  # noqa: N818 - matches SubprocessCancelled
+    """CHAN-73: raised when the pipeline observes ``context.cancelled``.
+
+    Caught by the top-level pipeline wrapper, which persists
+    ``AnalysisRun.status='cancelled'`` and returns cleanly. Distinct
+    from generic stage failures so the completion logic can take the
+    cancellation branch without relying on string matching.
+    """
+
+    def __init__(self, stage: str, overflow_logs: list[dict] | None = None) -> None:
+        self.stage = stage
+        self.overflow_logs: list[dict] = overflow_logs or []
+        super().__init__(f"Pipeline cancelled during stage '{stage}'")
 
 
 @dataclass
@@ -313,6 +329,13 @@ async def run_analysis_pipeline(
         # Initialize context
         context = AnalysisContext(project_id=project_id)
 
+        # CHAN-73: register the live context so DELETE
+        # /projects/{id}/analyze can flip ``cancelled``. Registration
+        # and teardown are symmetric around the stage loop; a stale
+        # entry in the map after pipeline exit would allow a DELETE to
+        # flip a flag no one is reading, so cleanup is in `finally`.
+        active_contexts[project_id] = context
+
         # Progress callback for stages that support it (e.g. writer)
         async def _on_progress(pct: int) -> None:
             run.stage_progress = pct
@@ -320,87 +343,160 @@ async def run_analysis_pipeline(
 
         context.report_progress = _on_progress
 
-        # Run each stage
-        for stage_def in PIPELINE_STAGES:
-            stage_func = _STAGE_FUNCS[stage_def.name]
-            stage_start = time.monotonic()
+        try:
+            # Run each stage
+            for stage_def in PIPELINE_STAGES:
+                # CHAN-73: cooperative-cancellation check BEFORE each
+                # stage. The DELETE endpoint flips this flag; we exit
+                # promptly instead of waiting for the next stage to
+                # complete.
+                if context.cancelled:
+                    raise PipelineCancelled(stage=stage_def.name)
 
-            try:
-                # Persist current stage BEFORE running so the polling
-                # status API can report it immediately.
-                run.stage = stage_def.name
-                run.stage_progress = None
-                await session.commit()
+                stage_func = _STAGE_FUNCS[stage_def.name]
+                stage_start = time.monotonic()
 
-                await ws.emit(stage_def.name, "running", stage_def.description)
-                logger.info(
-                    "pipeline.stage.start",
-                    project_id=project_id,
-                    stage=stage_def.name,
-                )
-
-                await stage_func(context, services)
-
-                # Persist total_loc after discovery so license enforcement and email
-                # reporting have a single source of truth (CHAN-12).
-                if stage_def.name == "discovery" and context.manifest is not None:
-                    run.total_loc = context.manifest.total_loc
+                try:
+                    # Persist current stage BEFORE running so the polling
+                    # status API can report it immediately.
+                    run.stage = stage_def.name
+                    run.stage_progress = None
                     await session.commit()
 
-                elapsed = time.monotonic() - stage_start
-                await ws.emit(
-                    stage_def.name,
-                    "complete",
-                    details={"duration_seconds": round(elapsed, 2)},
-                )
-                logger.info(
-                    "pipeline.stage.complete",
-                    project_id=project_id,
-                    stage=stage_def.name,
-                    duration=round(elapsed, 2),
-                )
-
-            except Exception as e:
-                elapsed = time.monotonic() - stage_start
-                logger.error(
-                    "pipeline.stage.failed",
-                    project_id=project_id,
-                    stage=stage_def.name,
-                    error=str(e),
-                    duration=round(elapsed, 2),
-                )
-                await ws.emit(
-                    stage_def.name,
-                    "failed",
-                    message=str(e),
-                    details={"duration_seconds": round(elapsed, 2)},
-                )
-
-                if stage_def.critical:
-                    # Critical stage failure — abort pipeline
-                    project.status = "failed"
-                    run.status = "failed"
-                    run.completed_at = datetime.now(UTC)
-                    run.error_message = f"Critical stage '{stage_def.name}' failed: {e}"
-                    await session.commit()
-
-                    await log_activity(
-                        session,
-                        "analysis.failed",
-                        resource_type="project",
-                        resource_id=project_id,
-                        details={"stage": stage_def.name, "error": str(e)[:500]},
+                    await ws.emit(stage_def.name, "running", stage_def.description)
+                    logger.info(
+                        "pipeline.stage.start",
+                        project_id=project_id,
+                        stage=stage_def.name,
                     )
 
-                    await ws.emit_error(
-                        f"Pipeline aborted: stage '{stage_def.name}' failed: {e}"
-                    )
-                    raise
-                else:
-                    # Non-critical — warn and continue
-                    context.warnings.append(f"Stage '{stage_def.name}' failed: {e}")
+                    await stage_func(context, services)
 
-        # Pipeline complete
+                    # Persist total_loc after discovery so license enforcement and email
+                    # reporting have a single source of truth (CHAN-12).
+                    if stage_def.name == "discovery" and context.manifest is not None:
+                        run.total_loc = context.manifest.total_loc
+                        await session.commit()
+
+                    elapsed = time.monotonic() - stage_start
+                    await ws.emit(
+                        stage_def.name,
+                        "complete",
+                        details={"duration_seconds": round(elapsed, 2)},
+                    )
+                    logger.info(
+                        "pipeline.stage.complete",
+                        project_id=project_id,
+                        stage=stage_def.name,
+                        duration=round(elapsed, 2),
+                    )
+
+                except SubprocessCancelled as sp_cancel:
+                    # CHAN-73: a subprocess in this stage was cancelled
+                    # mid-run — most likely because the pipeline flag
+                    # flipped and whoever caught it re-raised as a
+                    # subprocess cancel. Surface any partial overflow
+                    # paths onto the context so the completion handler
+                    # persists them, then convert to PipelineCancelled.
+                    for entry in sp_cancel.overflow_logs:
+                        context.subprocess_overflow_logs.append(
+                            {**entry, "source": f"stage.{stage_def.name}"}
+                        )
+                    raise PipelineCancelled(
+                        stage=stage_def.name,
+                        overflow_logs=sp_cancel.overflow_logs,
+                    ) from sp_cancel
+
+                except Exception as e:
+                    elapsed = time.monotonic() - stage_start
+                    logger.error(
+                        "pipeline.stage.failed",
+                        project_id=project_id,
+                        stage=stage_def.name,
+                        error=str(e),
+                        duration=round(elapsed, 2),
+                    )
+                    await ws.emit(
+                        stage_def.name,
+                        "failed",
+                        message=str(e),
+                        details={"duration_seconds": round(elapsed, 2)},
+                    )
+
+                    if stage_def.critical:
+                        # Critical stage failure — abort pipeline
+                        project.status = "failed"
+                        run.status = "failed"
+                        run.completed_at = datetime.now(UTC)
+                        run.error_message = (
+                            f"Critical stage '{stage_def.name}' failed: {e}"
+                        )
+                        await session.commit()
+
+                        await log_activity(
+                            session,
+                            "analysis.failed",
+                            resource_type="project",
+                            resource_id=project_id,
+                            details={"stage": stage_def.name, "error": str(e)[:500]},
+                        )
+
+                        await ws.emit_error(
+                            f"Pipeline aborted: stage '{stage_def.name}' failed: {e}"
+                        )
+                        raise
+                    else:
+                        # Non-critical — warn and continue
+                        context.warnings.append(f"Stage '{stage_def.name}' failed: {e}")
+
+                # CHAN-73: also check AFTER the stage finishes — a long
+                # stage may have run to completion by the time the DELETE
+                # endpoint arrived, but the next stage should not start.
+                if context.cancelled:
+                    raise PipelineCancelled(stage=stage_def.name)
+
+        except PipelineCancelled as cancel:
+            # CHAN-73: cooperative cancellation. Persist the cancelled
+            # status and exit cleanly; no exception is re-raised since
+            # this is a user-initiated action, not an error.
+            total_elapsed = time.monotonic() - pipeline_start
+            project.status = "created"
+            run.status = "cancelled"
+            run.completed_at = datetime.now(UTC)
+            run.error_message = f"Cancelled during stage '{cancel.stage}'"
+            if context.subprocess_overflow_logs:
+                run.subprocess_logs = list(context.subprocess_overflow_logs)
+            await session.commit()
+
+            await log_activity(
+                session,
+                "analysis.cancelled",
+                resource_type="project",
+                resource_id=project_id,
+                details={
+                    "stage": cancel.stage,
+                    "duration_seconds": round(total_elapsed, 2),
+                },
+            )
+            await ws.emit(
+                cancel.stage,
+                "cancelled",
+                message=f"Pipeline cancelled during stage '{cancel.stage}'",
+                details={"duration_seconds": round(total_elapsed, 2)},
+            )
+            logger.info(
+                "pipeline.cancelled",
+                project_id=project_id,
+                stage=cancel.stage,
+                duration=round(total_elapsed, 2),
+            )
+            return
+        finally:
+            # Always unregister; a stale entry would let a late DELETE
+            # flip a flag nobody reads.
+            active_contexts.pop(project_id, None)
+
+        # Pipeline complete (unchanged path — cancellation branched above)
         total_elapsed = time.monotonic() - pipeline_start
         project.status = "analyzed"
         run.status = "completed"
@@ -414,6 +510,14 @@ async def run_analysis_pipeline(
         run.completed_at = datetime.now(UTC)
         run.node_count = context.graph.node_count
         run.edge_count = context.graph.edge_count
+        # CHAN-72: persist overflow log locations (if any subprocess blew
+        # past the 10MB per-stream cap). Null when everything stayed in
+        # memory, so operators can quickly spot runs worth inspecting.
+        run.subprocess_logs = (
+            list(context.subprocess_overflow_logs)
+            if context.subprocess_overflow_logs
+            else None
+        )
         run.snapshot = {
             "node_count": context.graph.node_count,
             "edge_count": context.graph.edge_count,

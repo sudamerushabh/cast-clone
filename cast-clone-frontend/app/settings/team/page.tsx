@@ -12,6 +12,7 @@ import type { UserResponse, UserCreateRequest, UserUpdateRequest } from "@/lib/t
 import { UserTable } from "@/components/users/UserTable";
 import { UserFormDialog } from "@/components/users/UserFormDialog";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { UserPlus } from "lucide-react";
 
 export default function TeamSettingsPage() {
@@ -88,7 +89,11 @@ export default function TeamSettingsPage() {
       </div>
 
       {loading ? (
-        <div className="text-center text-muted-foreground py-8">Loading...</div>
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 w-full" />
+          ))}
+        </div>
       ) : (
         <UserTable
           users={users}

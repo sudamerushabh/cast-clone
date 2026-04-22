@@ -277,6 +277,67 @@ setup()
         assert len(setup_calls) == 1
         assert setup_calls[0].source_fqn == "mod"
 
+    def test_module_level_call_no_malformed_fqn(self, extractor):
+        """CHAN-80: bare top-level call must not produce ``mod.`` or ``mod..foo``."""
+        source = b"""\
+def foo():
+    pass
+
+foo()
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        calls = [e for e in edges if e.kind == EdgeKind.CALLS]
+        foo_calls = [e for e in calls if e.target_fqn == "foo"]
+        assert len(foo_calls) == 1
+        assert foo_calls[0].source_fqn == "mod"
+        # No edge should have a trailing-dot or empty-part FQN.
+        for e in calls:
+            assert not e.source_fqn.endswith(".")
+            assert ".." not in e.source_fqn
+            assert all(part for part in e.source_fqn.split("."))
+            assert e.target_fqn  # non-empty
+
+    def test_call_inside_if_name_main_block(self, extractor):
+        """CHAN-80: ``if __name__ == '__main__': foo()`` should attribute
+        to the module, not produce a garbage FQN."""
+        source = b"""\
+def foo():
+    pass
+
+if __name__ == '__main__':
+    foo()
+"""
+        nodes, edges = extractor.extract(source, "/code/mod.py", "/code")
+        calls = [e for e in edges if e.kind == EdgeKind.CALLS]
+        foo_calls = [e for e in calls if e.target_fqn == "foo"]
+        assert len(foo_calls) == 1
+        assert foo_calls[0].source_fqn == "mod"
+        for e in calls:
+            assert not e.source_fqn.endswith(".")
+            assert ".." not in e.source_fqn
+
+    def test_call_inside_function_regression(self, extractor):
+        """CHAN-80 regression: calls inside a function/method still resolve
+        to the enclosing function's FQN."""
+        source = b"""\
+class Service:
+    def process(self):
+        helper()
+
+def run():
+    helper()
+
+helper()
+"""
+        nodes, edges = extractor.extract(source, "/code/pkg/svc.py", "/code")
+        calls = [e for e in edges if e.kind == EdgeKind.CALLS]
+        helper_calls = [e for e in calls if e.target_fqn == "helper"]
+        sources = {e.source_fqn for e in helper_calls}
+        assert sources == {"pkg.svc.Service.process", "pkg.svc.run", "pkg.svc"}
+        for e in calls:
+            assert not e.source_fqn.endswith(".")
+            assert ".." not in e.source_fqn
+
 
 class TestFieldExtraction:
     """Task 6: self.x = ... and class-body fields -> FIELD nodes."""

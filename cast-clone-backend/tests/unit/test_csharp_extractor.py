@@ -833,3 +833,165 @@ namespace MyApp.Models
         nodes, edges = extractor.extract(source, "EfAndDi.cs", "/src")
         modules = [n for n in nodes if n.kind == NodeKind.MODULE]
         assert len(modules) > 0
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Base-type resolution consults using directives (CHAN-79)
+# ---------------------------------------------------------------------------
+class TestBaseTypeResolutionViaUsings:
+    """Base class / interface resolution should respect `using` directives.
+
+    Covers CHAN-79: inheriting from a class declared in another namespace
+    should target the imported namespace, not silently fall back to the
+    declaring file's own namespace.
+    """
+
+    BASE_FILE = b"""
+namespace Foo.Bar
+{
+    public class ExternalBase { }
+    public interface IExternal { }
+}
+"""
+
+    def test_inherits_edge_uses_imported_namespace(self, extractor):
+        """`using Foo.Bar;` + `: ExternalBase` -> Foo.Bar.ExternalBase."""
+        child = b"""
+using Foo.Bar;
+
+namespace App
+{
+    public class MyClass : ExternalBase { }
+}
+"""
+        _, edges = extractor.extract(child, "MyClass.cs", "/src")
+
+        inherits = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "Foo.Bar.ExternalBase"
+        assert inherits.target_fqn != "App.ExternalBase"
+
+    def test_implements_edge_uses_imported_namespace(self, extractor):
+        """Interface resolution should also consult usings."""
+        child = b"""
+using Foo.Bar;
+
+namespace App
+{
+    public class MyClass : IExternal { }
+}
+"""
+        _, edges = extractor.extract(child, "MyClass.cs", "/src")
+
+        implements = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.IMPLEMENTS
+        )
+        assert implements.target_fqn == "Foo.Bar.IExternal"
+
+    def test_bcl_usings_are_skipped_when_guessing_namespace(self, extractor):
+        """`using System;` alone should not redirect base types into System.
+
+        Preserves the existing same-namespace fallback for types whose
+        container cannot be inferred from a user-land using directive.
+        """
+        source = b"""
+using System;
+
+namespace App
+{
+    public class BaseModel { }
+    public class MyClass : BaseModel { }
+}
+"""
+        _, edges = extractor.extract(source, "MyClass.cs", "/src")
+
+        inherits = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "App.BaseModel"
+
+    def test_no_usings_falls_back_to_same_namespace(self, extractor):
+        """No usings at all -> same-namespace behavior (unchanged)."""
+        source = b"""
+namespace App
+{
+    public class BaseModel { }
+    public class MyClass : BaseModel { }
+}
+"""
+        _, edges = extractor.extract(source, "MyClass.cs", "/src")
+
+        inherits = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "App.BaseModel"
+
+    def test_fully_qualified_base_type_is_preserved(self, extractor):
+        """`class X : Foo.Bar.Base` keeps its dotted FQN verbatim."""
+        source = b"""
+namespace App
+{
+    public class MyClass : Foo.Bar.ExternalBase { }
+}
+"""
+        _, edges = extractor.extract(source, "MyClass.cs", "/src")
+
+        inherits = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "Foo.Bar.ExternalBase"
+
+    def test_alias_style_using_resolves_to_full_namespace(self, extractor):
+        """`using Foo.Bar.ExternalBase;` + `: ExternalBase` -> Foo.Bar.ExternalBase.
+
+        When a `using` directive's last segment matches the base-type short
+        name, treat it as a type-alias import.
+        """
+        source = b"""
+using Foo.Bar.ExternalBase;
+
+namespace App
+{
+    public class MyClass : ExternalBase { }
+}
+"""
+        _, edges = extractor.extract(source, "MyClass.cs", "/src")
+
+        inherits = _find_edge(
+            edges, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "Foo.Bar.ExternalBase"
+
+    def test_two_file_regression_matches_cross_namespace_symbol(self, extractor):
+        """Spec scenario: two files, extern namespace + using + inheritance.
+
+        File A: namespace Foo.Bar { class ExternalBase {} }
+        File B: namespace App { using Foo.Bar; class MyClass : ExternalBase {} }
+
+        The INHERITS edge emitted for File B must point at Foo.Bar.ExternalBase
+        (the actual class FQN created by File A), not App.ExternalBase.
+        """
+        # File A — owning namespace for ExternalBase.
+        nodes_a, _ = extractor.extract(
+            self.BASE_FILE, "ExternalBase.cs", "/src"
+        )
+        external_base = _find_node(
+            nodes_a, fqn="Foo.Bar.ExternalBase", kind=NodeKind.CLASS
+        )
+        assert external_base.name == "ExternalBase"
+
+        # File B — consumer declaring `class MyClass : ExternalBase`.
+        file_b = b"""
+using Foo.Bar;
+
+namespace App
+{
+    public class MyClass : ExternalBase { }
+}
+"""
+        _, edges_b = extractor.extract(file_b, "MyClass.cs", "/src")
+        inherits = _find_edge(
+            edges_b, source_fqn="App.MyClass", kind=EdgeKind.INHERITS
+        )
+        assert inherits.target_fqn == "Foo.Bar.ExternalBase"

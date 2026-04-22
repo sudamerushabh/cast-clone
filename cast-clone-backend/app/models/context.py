@@ -63,5 +63,20 @@ class AnalysisContext:
     # Warnings from non-fatal stage failures
     warnings: list[str] = field(default_factory=list)
 
+    # CHAN-72: metadata for subprocess stdout/stderr that overflowed the
+    # 10MB in-memory cap and was spooled to per-stream temp files.
+    # Pipeline persists this to ``AnalysisRun.subprocess_logs`` so
+    # operators can locate the full logs post-run. Each entry is
+    # ``{"stream", "path", "size_bytes", "source"}`` — ``source`` is the
+    # stage or subsystem (e.g. "scip.java") that produced the overflow.
+    subprocess_overflow_logs: list[dict] = field(default_factory=list)
+
+    # CHAN-73: cooperative-cancellation flag. The DELETE
+    # /projects/{id}/analyze endpoint flips this to True via the
+    # ``active_contexts`` registry in ``app.orchestrator.progress``;
+    # the pipeline checks it between stages and any long-running
+    # loop exits cleanly on the next iteration.
+    cancelled: bool = False
+
     # Progress callback — set by pipeline to persist stage_progress to DB
     report_progress: Any = None  # async (int) -> None

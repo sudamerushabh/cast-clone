@@ -54,6 +54,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: marks tests that require external services (Docker)",
+    "slow: marks tests that take >2s (use -m 'not slow' to skip)",
 ]
 
 [tool.ruff]

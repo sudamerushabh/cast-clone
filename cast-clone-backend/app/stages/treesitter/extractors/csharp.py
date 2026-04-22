@@ -339,6 +339,17 @@ def _make_fqn(namespace: str, *parts: str) -> str:
     return ".".join(all_parts)
 
 
+# Base Class Library (BCL) namespaces — skipped when guessing the
+# namespace of an unqualified base type at extract time.
+_BCL_ROOTS: frozenset[str] = frozenset({"System", "Microsoft"})
+
+
+def _is_bcl_namespace(ns: str) -> bool:
+    """Return True if ``ns`` is (or nests under) a .NET BCL root namespace."""
+    root = ns.split(".", 1)[0]
+    return root in _BCL_ROOTS
+
+
 class CSharpExtractor:
     """Extracts graph nodes and edges from C# source code using tree-sitter.
 
@@ -569,7 +580,9 @@ class CSharpExtractor:
         # Base types -> INHERITS / IMPLEMENTS edges
         for bt in base_types:
             bare_name = bt.split("<")[0]
-            target_fqn = _make_fqn(namespace, bare_name)
+            target_fqn = self._resolve_base_type_fqn(
+                bare_name, namespace, usings
+            )
             if self._looks_like_interface(bare_name):
                 edges.append(
                     GraphEdge(
@@ -654,7 +667,9 @@ class CSharpExtractor:
         base_types = _get_base_types(iface_node, source)
         for bt in base_types:
             bare_name = bt.split("<")[0]
-            target_fqn = _make_fqn(namespace, bare_name)
+            target_fqn = self._resolve_base_type_fqn(
+                bare_name, namespace, usings
+            )
             edges.append(
                 GraphEdge(
                     source_fqn=fqn,
@@ -1279,6 +1294,44 @@ class CSharpExtractor:
         if "." in bare_type:
             return bare_type
         return bare_type
+
+    @staticmethod
+    def _resolve_base_type_fqn(
+        bare_name: str,
+        namespace: str,
+        usings: list[str],
+    ) -> str:
+        """Resolve a base-type short name to a fully-qualified name.
+
+        Resolution order, mirroring how other C# resolvers handle imports:
+
+        1. Already-qualified names (``Foo.Bar.Base``) are returned unchanged.
+        2. If any ``using X.Y.Z;`` directive's last segment equals the short
+           name, treat it as a type alias import and return ``X.Y.Z``
+           directly (covers ``using My.App.ExternalBase;``).
+        3. Otherwise prefer the first user-land imported namespace (i.e.
+           skipping BCL namespaces like ``System.*`` and ``Microsoft.*``)
+           as the candidate container: ``using Foo.Bar;`` +
+           ``ExternalBase`` yields ``Foo.Bar.ExternalBase``.
+        4. Fallback: assume the base type lives in the same namespace as the
+           declaring class. This preserves pre-existing behavior for bases
+           defined in the declaring file's namespace and is the rule used
+           when no user-land using is present. The edge is never dropped.
+        """
+        if "." in bare_name:
+            return bare_name
+        # Step 2: alias-style import (`using X.Y.TypeName;`).
+        for ns in usings:
+            last = ns.rsplit(".", 1)[-1]
+            if last == bare_name:
+                return ns
+        # Step 3: first non-BCL using directive as candidate container.
+        for ns in usings:
+            if _is_bcl_namespace(ns):
+                continue
+            return f"{ns}.{bare_name}"
+        # Step 4: same-namespace fallback.
+        return _make_fqn(namespace, bare_name)
 
     @staticmethod
     def _looks_like_interface(name: str) -> bool:

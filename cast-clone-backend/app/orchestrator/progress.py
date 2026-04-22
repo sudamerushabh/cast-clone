@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import WebSocket, WebSocketDisconnect
+
+if TYPE_CHECKING:
+    from app.models.context import AnalysisContext
 
 try:
     from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
@@ -17,6 +20,15 @@ logger = structlog.get_logger(__name__)
 
 # Active WebSocket connections per project_id
 active_connections: dict[str, list[WebSocket]] = {}
+
+# CHAN-73: live AnalysisContext per project_id, populated by the pipeline
+# entry point and consumed by the DELETE /projects/{id}/analyze endpoint
+# to flip ``context.cancelled=True``. Kept next to ``active_connections``
+# for symmetry — both are per-process in-memory maps that mirror the
+# pipeline's runtime state. Single-pipeline-per-project is already
+# enforced by ``POST /analyze`` (409 if status=="analyzing"), so the
+# map-not-dict choice is deliberate.
+active_contexts: dict[str, AnalysisContext] = {}
 
 
 def _remove_dead_connections(project_id: str, dead: list[WebSocket]) -> None:

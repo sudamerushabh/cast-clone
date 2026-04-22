@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/lib/auth-context";
 import { GlobalShell } from "@/components/layout/GlobalShell";
+import { FirstRunModal } from "@/components/onboarding/FirstRunModal";
 import { cn } from "@/lib/utils";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -33,6 +34,7 @@ export default function RootLayout({
         <ThemeProvider>
           <AuthProvider>
             <GlobalShell>{children}</GlobalShell>
+            <FirstRunModal />
           </AuthProvider>
         </ThemeProvider>
       </body>
