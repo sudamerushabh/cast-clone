@@ -424,3 +424,135 @@ class TestSQLAlchemyPluginMetadata:
 
     def test_depends_on_empty(self):
         assert SQLAlchemyPlugin().depends_on == []
+
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy 2.0 async-style (DeclarativeBase + mapped_column) tests
+# ---------------------------------------------------------------------------
+
+
+class TestSQLAlchemy20AsyncStyle:
+    @pytest.mark.asyncio
+    async def test_mapped_column_model_extracted(self):
+        """A SQLAlchemy 2.0 model (DeclarativeBase + mapped_column) produces
+        a Table node and a Column node per field."""
+        from app.models.context import AnalysisContext
+        from app.models.enums import Confidence, EdgeKind, NodeKind
+        from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+        from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
+
+        graph = SymbolGraph()
+        klass = GraphNode(
+            fqn="myapp.models.User",
+            name="User",
+            kind=NodeKind.CLASS,
+            language="python",
+        )
+        tablename = GraphNode(
+            fqn="myapp.models.User.__tablename__",
+            name="__tablename__",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '"users"'},
+        )
+        id_col = GraphNode(
+            fqn="myapp.models.User.id",
+            name="id",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": "mapped_column(Integer, primary_key=True)"},
+        )
+        email_col = GraphNode(
+            fqn="myapp.models.User.email",
+            name="email",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={
+                "value": "mapped_column(String(255), unique=True, nullable=False)"
+            },
+        )
+        for node in (klass, tablename, id_col, email_col):
+            graph.add_node(node)
+        for child in (tablename, id_col, email_col):
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=klass.fqn,
+                    target_fqn=child.fqn,
+                    kind=EdgeKind.CONTAINS,
+                    confidence=Confidence.HIGH,
+                    evidence="test-setup",
+                )
+            )
+
+        ctx = AnalysisContext(project_id="t", graph=graph)
+        result = await SQLAlchemyPlugin().extract(ctx)
+
+        table_nodes = [n for n in result.nodes if n.kind == NodeKind.TABLE]
+        assert len(table_nodes) == 1
+        assert table_nodes[0].name == "users"
+
+        column_nodes = [n for n in result.nodes if n.kind == NodeKind.COLUMN]
+        col_names = {c.name for c in column_nodes}
+        assert col_names == {"id", "email"}
+
+        # Primary-key flag is set on `id` from the `primary_key=True` kwarg.
+        id_node = next(c for c in column_nodes if c.name == "id")
+        assert id_node.properties["is_primary_key"] is True
+        email_node = next(c for c in column_nodes if c.name == "email")
+        assert email_node.properties["is_primary_key"] is False
+
+    def test_foreign_key_in_mapped_column_captured(self):
+        """A mapped_column with ForeignKey still emits a REFERENCES edge."""
+        from app.models.context import AnalysisContext
+        from app.models.enums import Confidence, EdgeKind, NodeKind
+        from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+        from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
+
+        graph = SymbolGraph()
+        klass = GraphNode(
+            fqn="myapp.models.Todo",
+            name="Todo",
+            kind=NodeKind.CLASS,
+            language="python",
+        )
+        tablename = GraphNode(
+            fqn="myapp.models.Todo.__tablename__",
+            name="__tablename__",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '"todos"'},
+        )
+        fk_col = GraphNode(
+            fqn="myapp.models.Todo.owner_id",
+            name="owner_id",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={
+                "value": (
+                    'mapped_column(ForeignKey("users.id", ondelete="CASCADE"), '
+                    "nullable=False)"
+                )
+            },
+        )
+        for node in (klass, tablename, fk_col):
+            graph.add_node(node)
+        for child in (tablename, fk_col):
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=klass.fqn,
+                    target_fqn=child.fqn,
+                    kind=EdgeKind.CONTAINS,
+                    confidence=Confidence.HIGH,
+                    evidence="test-setup",
+                )
+            )
+
+        ctx = AnalysisContext(project_id="t", graph=graph)
+        import asyncio
+
+        result = asyncio.run(SQLAlchemyPlugin().extract(ctx))
+
+        ref_edges = [e for e in result.edges if e.kind == EdgeKind.REFERENCES]
+        assert len(ref_edges) == 1
+        assert ref_edges[0].target_fqn == "table:users.id"
+        assert ref_edges[0].source_fqn == "table:todos.owner_id"

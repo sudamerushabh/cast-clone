@@ -745,6 +745,7 @@ class PythonExtractor:
         for child in body_node.children:
             field_name: str | None = None
             field_type: str | None = None
+            field_value: str | None = None
             line = child.start_point[0] + 1
 
             if child.type == "expression_statement":
@@ -753,6 +754,14 @@ class PythonExtractor:
                     left = expr.child_by_field_name("left")
                     if left and left.type == "identifier":
                         field_name = _node_text(left, source)
+                    # Capture RHS value (e.g. `mapped_column(...)`, string literal).
+                    right = expr.child_by_field_name("right")
+                    if right is not None:
+                        field_value = _node_text(right, source)
+                    # Capture type annotation from `x: T = value`.
+                    type_node = expr.child_by_field_name("type")
+                    if type_node:
+                        field_type = _node_text(type_node, source)
                 elif expr and expr.type == "type":
                     # annotated variable without assignment: x: int
                     for sub in expr.children:
@@ -772,6 +781,8 @@ class PythonExtractor:
                 props: dict[str, Any] = {}
                 if field_type:
                     props["type_annotation"] = field_type
+                if field_value is not None:
+                    props["value"] = field_value
                 nodes.append(
                     GraphNode(
                         fqn=field_fqn,

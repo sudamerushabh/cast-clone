@@ -71,3 +71,44 @@ class TestDjangoSettingsM2:
             if e.kind == EdgeKind.CONTAINS and e.source_fqn == cf_fqn
         }
         assert len(contained) == 6, contained
+
+
+@pytest.mark.integration
+class TestSQLAlchemy20AsyncM2:
+    @pytest.mark.asyncio
+    async def test_fastapi_todo_tables_and_columns_extracted(self):
+        from app.stages.plugins.sqlalchemy_plugin.models import SQLAlchemyPlugin
+
+        manifest = discover_project(FASTAPI_TODO)
+        graph = await parse_with_treesitter(manifest)
+        ctx = AnalysisContext(
+            project_id="m2-sqla",
+            graph=graph,
+            manifest=manifest,
+        )
+
+        result = await SQLAlchemyPlugin().extract(ctx)
+
+        tables = {n.name for n in result.nodes if n.kind == NodeKind.TABLE}
+        assert "users" in tables, tables
+        assert "todos" in tables, tables
+
+        columns = {
+            (n.properties.get("table"), n.name)
+            for n in result.nodes
+            if n.kind == NodeKind.COLUMN
+        }
+        for expected in [
+            ("users", "id"),
+            ("users", "email"),
+            ("todos", "id"),
+            ("todos", "owner_id"),
+        ]:
+            assert expected in columns, f"missing {expected}; got {columns}"
+
+        refs = {
+            (e.source_fqn, e.target_fqn)
+            for e in result.edges
+            if e.kind == EdgeKind.REFERENCES
+        }
+        assert ("table:todos.owner_id", "table:users.id") in refs, refs
