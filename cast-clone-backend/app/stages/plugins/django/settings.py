@@ -103,6 +103,25 @@ def parse_databases(raw_value: str) -> dict[str, str]:
     return out
 
 
+def parse_middleware(raw_value: str) -> list[str]:
+    """Parse a MIDDLEWARE RHS into a list of middleware class paths.
+
+    Shape-identical to INSTALLED_APPS but exposed under a distinct name so
+    downstream log keys and exception context stay accurate. Accepts both
+    list and tuple literals (both are idiomatic in Django settings). Uses
+    ast.literal_eval. Non-string entries are dropped.
+    """
+    if not raw_value.strip():
+        return []
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except (ValueError, SyntaxError):
+        return []
+    if not isinstance(parsed, (list, tuple)):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
+
+
 class DjangoSettingsPlugin(FrameworkPlugin):
     name = "django-settings"
     version = "1.0.0"
@@ -168,6 +187,8 @@ class DjangoSettingsPlugin(FrameworkPlugin):
                     entry_properties["apps"] = parse_installed_apps(raw_value)
                 elif field_node.name == "DATABASES":
                     entry_properties.update(parse_databases(raw_value))
+                elif field_node.name == "MIDDLEWARE":
+                    entry_properties["middleware"] = parse_middleware(raw_value)
 
                 entry_fqn = f"config:{module_fqn}.{field_node.name}"
                 entry = GraphNode(

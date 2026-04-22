@@ -400,3 +400,85 @@ class TestDatabasesParsing:
         info = parse_databases(raw)
         assert "default_port" not in info
         assert info["default_engine"] == "django.db.backends.postgresql"
+
+
+class TestMiddlewareParsing:
+    def test_middleware_list_parsed(self):
+        from app.stages.plugins.django.settings import parse_middleware
+
+        raw = (
+            "[\n"
+            '    "django.middleware.security.SecurityMiddleware",\n'
+            '    "django.contrib.sessions.middleware.SessionMiddleware",\n'
+            "]"
+        )
+        mw = parse_middleware(raw)
+
+        assert mw == [
+            "django.middleware.security.SecurityMiddleware",
+            "django.contrib.sessions.middleware.SessionMiddleware",
+        ]
+
+    def test_tuple_syntax_parsed(self):
+        """Django settings often use tuple literal for MIDDLEWARE."""
+        from app.stages.plugins.django.settings import parse_middleware
+
+        raw = '("django.middleware.security.SecurityMiddleware",)'
+        assert parse_middleware(raw) == [
+            "django.middleware.security.SecurityMiddleware",
+        ]
+
+    def test_malformed_returns_empty(self):
+        from app.stages.plugins.django.settings import parse_middleware
+
+        assert parse_middleware("not a list") == []
+
+    @pytest.mark.asyncio
+    async def test_extract_emits_middleware_property(self, tmp_path):
+        from app.models.context import AnalysisContext
+        from app.models.enums import Confidence, EdgeKind, NodeKind
+        from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+        from app.stages.plugins.django.settings import DjangoSettingsPlugin
+
+        graph = SymbolGraph()
+        module = GraphNode(
+            fqn="m.settings",
+            name="settings",
+            kind=NodeKind.MODULE,
+            language="python",
+        )
+        anchor = GraphNode(
+            fqn="m.settings.INSTALLED_APPS",
+            name="INSTALLED_APPS",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": "[]"},
+        )
+        mw_field = GraphNode(
+            fqn="m.settings.MIDDLEWARE",
+            name="MIDDLEWARE",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '["django.middleware.security.SecurityMiddleware"]'},
+        )
+        graph.add_node(module)
+        graph.add_node(anchor)
+        graph.add_node(mw_field)
+        for child in (anchor, mw_field):
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=module.fqn,
+                    target_fqn=child.fqn,
+                    kind=EdgeKind.CONTAINS,
+                    confidence=Confidence.HIGH,
+                    evidence="test-setup",
+                )
+            )
+
+        ctx = AnalysisContext(project_id="t", graph=graph)
+        result = await DjangoSettingsPlugin().extract(ctx)
+
+        entries = {n.name: n for n in result.nodes if n.kind == NodeKind.CONFIG_ENTRY}
+        assert entries["MIDDLEWARE"].properties["middleware"] == [
+            "django.middleware.security.SecurityMiddleware",
+        ]
