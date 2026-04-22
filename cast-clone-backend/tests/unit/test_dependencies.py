@@ -383,3 +383,24 @@ class TestBuildPythonVenv:
         venv = build_python_venv(python_project)
 
         assert venv is None
+
+    def test_install_timeout_returns_venv_path(
+        self, python_project: Path, monkeypatch
+    ):
+        """On pip install timeout, the venv path is still returned."""
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["uv", "venv"]:
+                Path(cmd[2]).mkdir(parents=True, exist_ok=True)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["uv", "pip", "install"]:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=300)
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        venv = build_python_venv(python_project)
+
+        # Even with install timeout, return the venv — scip-python can use it
+        assert venv is not None
+        assert venv.exists()
