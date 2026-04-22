@@ -318,3 +318,97 @@ class TestRunSCIPIndexers:
         ctx = AnalysisContext(project_id="test-proj")
         result = await run_scip_indexers(ctx)
         assert result.resolved_count == 0
+
+
+class TestScipPythonEnvPassing:
+    @pytest.mark.asyncio
+    async def test_python_scip_receives_virtualenv_env(self, tmp_path: Path):
+        """When python_venv_path is set, scip-python subprocess gets
+        VIRTUAL_ENV, PATH prefix, and NODE_OPTIONS."""
+        from app.models.context import AnalysisContext
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest, ResolvedEnvironment
+        from app.stages.scip.indexer import _run_scip_in_directory
+
+        venv_dir = tmp_path / "venv"
+        (venv_dir / "bin").mkdir(parents=True)
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        env_resolved = ResolvedEnvironment(python_venv_path=venv_dir)
+        ctx = AnalysisContext(
+            project_id="p1",
+            graph=SymbolGraph(),
+            manifest=manifest,
+            environment=env_resolved,
+        )
+
+        captured_env: dict = {}
+
+        async def fake_subprocess(*, command, cwd, timeout, env=None):
+            captured_env.update(env or {})
+            result = MagicMock(returncode=0, stdout="", stderr="")
+            return result
+
+        with patch(
+            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+        ), patch(
+            "app.stages.scip.indexer.parse_scip_index",
+            return_value=MagicMock(documents=[]),
+        ), patch(
+            "app.stages.scip.indexer.merge_scip_into_context",
+            return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
+        ), patch(
+            "pathlib.Path.exists", return_value=True,
+        ):
+            await _run_scip_in_directory(
+                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+            )
+
+        assert captured_env.get("VIRTUAL_ENV") == str(venv_dir)
+        assert captured_env.get("PATH", "").startswith(f"{venv_dir}/bin:")
+        assert captured_env.get("NODE_OPTIONS") == "--max-old-space-size=8192"
+
+    @pytest.mark.asyncio
+    async def test_python_scip_without_venv_only_sets_node_options(
+        self, tmp_path: Path,
+    ):
+        """If python_venv_path is None, only NODE_OPTIONS is set.
+
+        VIRTUAL_ENV is left alone.
+        """
+        from app.models.context import AnalysisContext
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest, ResolvedEnvironment
+        from app.stages.scip.indexer import _run_scip_in_directory
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(
+            project_id="p1",
+            graph=SymbolGraph(),
+            manifest=manifest,
+            environment=ResolvedEnvironment(python_venv_path=None),
+        )
+
+        captured_env: dict = {}
+
+        async def fake_subprocess(*, command, cwd, timeout, env=None):
+            captured_env.update(env or {})
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch(
+            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+        ), patch(
+            "app.stages.scip.indexer.parse_scip_index",
+            return_value=MagicMock(documents=[]),
+        ), patch(
+            "app.stages.scip.indexer.merge_scip_into_context",
+            return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
+        ), patch(
+            "pathlib.Path.exists", return_value=True,
+        ):
+            await _run_scip_in_directory(
+                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+            )
+
+        assert "VIRTUAL_ENV" not in captured_env
+        assert captured_env.get("NODE_OPTIONS") == "--max-old-space-size=8192"

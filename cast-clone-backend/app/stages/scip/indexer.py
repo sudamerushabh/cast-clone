@@ -16,6 +16,7 @@ On failure, the language is queued for LSP fallback in Stage 4b.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +130,31 @@ def build_scip_command(
     return cmd
 
 
+def _python_scip_env(
+    context: AnalysisContext,
+    cwd: Path,
+) -> dict[str, str]:
+    """Build env overrides for scip-python.
+
+    - VIRTUAL_ENV + PATH prefix: if Stage 2 built a venv, point scip-python at it
+      so Pyright resolves imports against installed deps.
+    - NODE_OPTIONS: raise Node heap to 8 GB; the default ~2 GB OOMs on anything
+      non-trivial per scip-python README.
+    """
+    env: dict[str, str] = {"NODE_OPTIONS": "--max-old-space-size=8192"}
+
+    venv_path = (
+        context.environment.python_venv_path
+        if context.environment is not None
+        else None
+    )
+    if venv_path is not None:
+        env["VIRTUAL_ENV"] = str(venv_path)
+        existing_path = os.environ.get("PATH", "")
+        env["PATH"] = f"{venv_path}/bin:{existing_path}"
+    return env
+
+
 # -- Indexer Detection -------------------------------------------------------
 
 
@@ -182,10 +208,12 @@ async def _run_scip_in_directory(
     """
     command = build_scip_command(indexer_config, project_name, cwd, build_tool)
 
-    # Auto-detect JDK version for Java projects
+    # Build per-language subprocess env overrides
     env_overrides: dict[str, str] | None = None
     if indexer_config.language == "java":
         env_overrides = resolve_java_home(cwd)
+    elif indexer_config.language == "python":
+        env_overrides = _python_scip_env(context, cwd)
 
     logger.info(
         "scip.indexer.start",
