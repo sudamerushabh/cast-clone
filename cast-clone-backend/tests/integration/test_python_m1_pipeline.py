@@ -10,19 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from app.stages.treesitter.extractors import register_extractor
-from app.stages.treesitter.extractors.python import PythonExtractor
-
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 FASTAPI_TODO = FIXTURES / "fastapi-todo"
 DJANGO_BLOG = FIXTURES / "django-blog"
 FLASK_INVENTORY = FIXTURES / "flask-inventory"
-
-
-@pytest.fixture(autouse=True)
-def _ensure_python_extractor():
-    register_extractor("python", PythonExtractor())
-    yield
 
 
 @pytest.mark.integration

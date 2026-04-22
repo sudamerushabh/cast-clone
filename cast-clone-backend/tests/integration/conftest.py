@@ -24,6 +24,16 @@ def event_loop():
     loop.close()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_python_extractor():
+    """Register the PythonExtractor once per session for all integration tests."""
+    from app.stages.treesitter.extractors import register_extractor
+    from app.stages.treesitter.extractors.python import PythonExtractor
+
+    register_extractor("python", PythonExtractor())
+    yield
+
+
 @pytest.fixture
 def petclinic_path() -> Path:
     """Path to the Spring PetClinic test fixture."""

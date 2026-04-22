@@ -12,19 +12,11 @@ from app.models.context import AnalysisContext
 from app.models.enums import EdgeKind, NodeKind
 from app.stages.discovery import discover_project
 from app.stages.plugins.django.settings import DjangoSettingsPlugin
-from app.stages.treesitter.extractors import register_extractor
-from app.stages.treesitter.extractors.python import PythonExtractor
 from app.stages.treesitter.parser import parse_with_treesitter
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 DJANGO_BLOG = FIXTURES / "django-blog"
 FASTAPI_TODO = FIXTURES / "fastapi-todo"
-
-
-@pytest.fixture(autouse=True)
-def _ensure_python_extractor():
-    register_extractor("python", PythonExtractor())
-    yield
 
 
 @pytest.mark.integration
@@ -57,6 +49,7 @@ class TestDjangoSettingsM2:
 
         # MIDDLEWARE: contains the security middleware at position 0.
         middleware = entries["MIDDLEWARE"].properties.get("middleware", [])
+        assert middleware, "MIDDLEWARE list is empty"
         assert (
             middleware[0] == "django.middleware.security.SecurityMiddleware"
         ), middleware
