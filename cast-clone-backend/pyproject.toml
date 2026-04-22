@@ -52,6 +52,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+norecursedirs = ["tests/fixtures"]
 markers = [
     "integration: marks tests that require external services (Docker)",
 ]
@@ -59,6 +60,7 @@ markers = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP"]
