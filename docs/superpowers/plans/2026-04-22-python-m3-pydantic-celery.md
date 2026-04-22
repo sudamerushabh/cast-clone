@@ -375,7 +375,7 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
         return PluginDetectionResult.not_detected()
 
     async def extract(self, context: AnalysisContext) -> PluginResult:
-        return PluginResult()
+        return PluginResult.empty()
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules.empty()
@@ -583,7 +583,7 @@ Replace the `extract()` method body in `pydantic.py` with:
             "fastapi_pydantic_extract_complete",
             pydantic_models=len(model_fqns),
         )
-        return PluginResult(warnings=[])
+        return PluginResult.empty()
 
     def _find_pydantic_model_fqns(self, graph) -> set[str]:
         """Return FQNs of classes whose INHERITS edge points at BaseModel."""
@@ -855,7 +855,7 @@ Then expand `extract()` so it also walks FIELD nodes contained by Pydantic class
             pydantic_models=len(model_fqns),
             field_constraints=constraints_applied,
         )
-        return PluginResult(warnings=[])
+        return PluginResult.empty()
 
     def _apply_field_constraints(self, graph, model_fqns: set[str]) -> int:
         applied = 0
@@ -1181,7 +1181,7 @@ Extend `extract()` to call a new `_tag_validators` method:
             field_constraints=constraints_applied,
             validators=validators_tagged,
         )
-        return PluginResult(warnings=[])
+        return PluginResult.empty()
 
     def _tag_validators(self, graph, model_fqns: set[str]) -> int:
         tagged = 0
@@ -1410,7 +1410,13 @@ Extend `extract()` to emit ACCEPTS edges:
             validators=validators_tagged,
             accepts_edges=sum(1 for e in edges if e.kind == EdgeKind.ACCEPTS),
         )
-        return PluginResult(edges=edges, warnings=[])
+        return PluginResult(
+            nodes=[],
+            edges=edges,
+            layer_assignments={},
+            entry_points=[],
+            warnings=[],
+        )
 
     def _emit_accepts_edges(self, graph, model_fqns: set[str]) -> list[GraphEdge]:
         edges: list[GraphEdge] = []
@@ -1579,7 +1585,7 @@ Expected: two new tests FAIL (no RETURNS edges yet).
 Add to `pydantic.py` at module scope:
 
 ```python
-_RESPONSE_MODEL_RE = re.compile(r"response_model\s*=\s*([A-Za-z_][\w\.\[\]|, ]*)")
+_RESPONSE_MODEL_RE = re.compile(r"response_model\s*=\s*([A-Za-z_][\w\.\[\]]+)")
 ```
 
 Extend the plugin with a new method and call it from `extract()`:
@@ -2097,7 +2103,7 @@ class CeleryPlugin(FrameworkPlugin):
         return PluginDetectionResult.not_detected()
 
     async def extract(self, context: AnalysisContext) -> PluginResult:
-        return PluginResult()
+        return PluginResult.empty()
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules(rules=[])
@@ -2355,6 +2361,8 @@ class CeleryPlugin(FrameworkPlugin):
 
         log.info("celery_extract_complete", tasks=len(tasks))
         return PluginResult(
+            nodes=[],
+            edges=[],
             entry_points=entry_points,
             layer_assignments=layer_assignments,
             warnings=[],

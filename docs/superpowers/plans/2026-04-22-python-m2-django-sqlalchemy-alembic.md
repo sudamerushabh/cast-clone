@@ -1234,7 +1234,7 @@ class TestAlembicDetection:
 
         result = AlembicPlugin().detect(ctx)
 
-        assert result.confidence == Confidence.NONE
+        assert result.confidence is None
 
 
 class TestAlembicEmptyExtract:

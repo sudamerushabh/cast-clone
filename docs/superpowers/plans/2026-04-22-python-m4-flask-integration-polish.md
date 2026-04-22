@@ -312,13 +312,17 @@ def test_detect_high_when_flask_route_decorator_present():
 
 
 def test_detect_high_from_manifest_framework():
+    from pathlib import Path
+
     from app.models.manifest import DetectedFramework, ProjectManifest
     from app.stages.plugins.flask_plugin.routes import FlaskPlugin
 
     ctx = _ctx()
     ctx.manifest = ProjectManifest(
-        project_root="/fake",
-        detected_frameworks=[DetectedFramework(name="Flask", version="3.0")],
+        root_path=Path("/fake"),
+        detected_frameworks=[
+            DetectedFramework(name="Flask", language="python", confidence=Confidence.HIGH)
+        ],
     )
     result = FlaskPlugin().detect(ctx)
     assert result.confidence == Confidence.HIGH
@@ -410,7 +414,7 @@ class FlaskPlugin(FrameworkPlugin):
         log = logger.bind(plugin=self.name)
         log.info("flask_extract_start")
         log.info("flask_extract_complete")
-        return PluginResult(warnings=[])
+        return PluginResult.empty()
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules(
@@ -846,7 +850,7 @@ Registration-time prefix wins if both are present. The helper `resolve_blueprint
 
 Our fixture in flask-inventory does not pass `url_prefix` to the constructor, so registration-time resolution is what matters. We parse register_blueprint calls by scanning FIELD nodes whose `value` property starts with `register_blueprint(` OR by reading module source text if the tree-sitter data is insufficient — since that escalates scope, M4 uses a simpler approach: locate FIELD nodes whose `value` contains `register_blueprint(` and parse them with a regex.
 
-The cleanest hook is `app/__init__.py`'s `create_app()` body, where the fixture's `register_blueprint` calls live. The tree-sitter extractor stores bodies as FUNCTION nodes with a `body_source` property... actually it does not. Therefore we fall back to **module file re-reading** for Flask app factories. Since the pipeline already knows `context.manifest.project_root`, `blueprints.py` can open the file that defined each blueprint variable and regex the register_blueprint calls out of it.
+The cleanest hook is `app/__init__.py`'s `create_app()` body, where the fixture's `register_blueprint` calls live. The tree-sitter extractor stores bodies as FUNCTION nodes with a `body_source` property... actually it does not. Therefore we fall back to **module file re-reading** for Flask app factories. Since the pipeline already knows `context.manifest.root_path`, `blueprints.py` can open the file that defined each blueprint variable and regex the register_blueprint calls out of it.
 
 To keep this deterministic and simple for M4: `resolve_blueprint_prefixes()` takes `(graph, project_root)` and:
 1. Finds every FIELD node whose `value` contains `Blueprint(`. Records `(name, file_path, ctor_prefix)`.
@@ -1106,7 +1110,7 @@ async def test_extract_applies_blueprint_prefix_to_endpoint(tmp_path):
     items_file.write_text('items_bp = Blueprint("items", __name__)\n')
 
     ctx = _ctx()
-    ctx.manifest = ProjectManifest(project_root=str(tmp_path))
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
     # Blueprint FIELD node
     ctx.graph.add_node(
         GraphNode(
@@ -1152,7 +1156,7 @@ async def test_extract_joins_blueprint_prefix_and_path_with_single_slash(tmp_pat
     items_file.write_text('items_bp = Blueprint("items", __name__)\n')
 
     ctx = _ctx()
-    ctx.manifest = ProjectManifest(project_root=str(tmp_path))
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
     ctx.graph.add_node(
         GraphNode(
             fqn="app.blueprints.items.items_bp",
@@ -1216,7 +1220,7 @@ Replace the `extract()` body so blueprint-tagged endpoints have their paths rewr
 
 ```python
         project_root = (
-            context.manifest.project_root if context.manifest is not None else ""
+            str(context.manifest.root_path) if context.manifest is not None else ""
         )
         bp_prefixes = resolve_blueprint_prefixes(graph, project_root) if project_root else {}
 
@@ -1702,7 +1706,7 @@ async def test_extract_emits_endpoints_per_resource_method(tmp_path):
     )
 
     ctx = _ctx()
-    ctx.manifest = ProjectManifest(project_root=str(tmp_path))
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
     cls = GraphNode(
         fqn="app.resources.ItemListResource",
         name="ItemListResource",
@@ -1907,7 +1911,7 @@ async def test_extract_endpoints_for_methodview_registered_via_add_resource(tmp_
     )
 
     ctx = _ctx()
-    ctx.manifest = ProjectManifest(project_root=str(tmp_path))
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
     cls = GraphNode(
         fqn="app.views.UserView",
         name="UserView",
