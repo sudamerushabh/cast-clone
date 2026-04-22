@@ -52,7 +52,10 @@ class TestSCIPSymbolToFQN:
             "semanticdb maven maven/org.springframework.samples/spring-petclinic "
             "4.0.0-SNAPSHOT org/springframework/samples/petclinic/owner/OwnerController#showOwner()."
         )
-        assert fqn == "org.springframework.samples.petclinic.owner.OwnerController.showOwner"
+        assert (
+            fqn
+            == "org.springframework.samples.petclinic.owner.OwnerController.showOwner"
+        )
 
     def test_semanticdb_java_nested_class(self):
         fqn = scip_symbol_to_fqn(
@@ -64,8 +67,7 @@ class TestSCIPSymbolToFQN:
     def test_semanticdb_java_init(self):
         """Back-ticked <init> should have back-ticks stripped."""
         fqn = scip_symbol_to_fqn(
-            "semanticdb maven maven/org.example/app "
-            "1.0 com/example/Foo#`<init>`()."
+            "semanticdb maven maven/org.example/app 1.0 com/example/Foo#`<init>`()."
         )
         assert fqn == "com.example.Foo.<init>"
 

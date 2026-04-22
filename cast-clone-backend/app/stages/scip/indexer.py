@@ -228,6 +228,7 @@ async def _run_scip_in_directory(
     timeout = indexer_config.timeout_seconds
     if timeout <= 0:
         from app.config import get_settings
+
         timeout = get_settings().scip_timeout
 
     result = await run_subprocess(
@@ -389,8 +390,10 @@ async def run_single_scip_indexer(
     build_tool: str | None = None
     if indexer_config.name == "scip-java" and context.manifest:
         java_build_tools = [
-            bt.name for bt in context.manifest.build_tools
-            if bt.language == "java" and bt.name in ("maven", "gradle")
+            bt.name
+            for bt in context.manifest.build_tools
+            if bt.language == "java"
+            and bt.name in ("maven", "gradle")
             and bt.subproject_root == "."
         ]
         if len(java_build_tools) > 1:
@@ -412,7 +415,11 @@ async def run_single_scip_indexer(
     if root_has_build:
         try:
             return await _run_scip_in_directory(
-                context, indexer_config, project_name, root_path, build_tool,
+                context,
+                indexer_config,
+                project_name,
+                root_path,
+                build_tool,
             )
         except RuntimeError as root_err:
             logger.warning(
@@ -430,9 +437,7 @@ async def run_single_scip_indexer(
             raise RuntimeError(
                 f"{indexer_config.name} failed at root and no subprojects found"
             )
-        raise RuntimeError(
-            f"No build tool found for {indexer_config.language}"
-        )
+        raise RuntimeError(f"No build tool found for {indexer_config.language}")
 
     logger.info(
         "scip.indexer.subprojects",
@@ -445,7 +450,11 @@ async def run_single_scip_indexer(
     # Run SCIP in each subproject in parallel
     tasks = [
         _run_scip_in_directory(
-            context, indexer_config, d.name, d, build_tool,
+            context,
+            indexer_config,
+            d.name,
+            d,
+            build_tool,
         )
         for d in sub_dirs
     ]

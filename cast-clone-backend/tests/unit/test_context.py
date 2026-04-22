@@ -22,9 +22,7 @@ class TestAnalysisContext:
 
     def test_graph_is_mutable(self):
         ctx = AnalysisContext(project_id="proj-1")
-        ctx.graph.add_node(
-            GraphNode(fqn="a.B", name="B", kind=NodeKind.CLASS)
-        )
+        ctx.graph.add_node(GraphNode(fqn="a.B", name="B", kind=NodeKind.CLASS))
         assert ctx.graph.node_count == 1
 
     def test_manifest_assignable(self):

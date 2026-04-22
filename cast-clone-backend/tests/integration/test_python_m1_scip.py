@@ -29,9 +29,7 @@ FASTAPI_TODO = FIXTURES / "fastapi-todo"
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.scip_python,
-    pytest.mark.skipif(
-        shutil.which("uv") is None, reason="uv not on PATH"
-    ),
+    pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH"),
     pytest.mark.skipif(
         shutil.which("scip-python") is None, reason="scip-python not on PATH"
     ),
@@ -81,7 +79,8 @@ async def test_fastapi_todo_scip_upgrades_cross_framework_calls():
 
     # Count CALLS edges from route handlers into service functions
     route_to_service_calls = [
-        e for e in graph.edges
+        e
+        for e in graph.edges
         if e.kind == EdgeKind.CALLS
         and "routes." in e.source_fqn
         and "services." in e.target_fqn

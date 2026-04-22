@@ -384,9 +384,7 @@ class TestBuildPythonVenv:
 
         assert venv is None
 
-    def test_install_timeout_returns_venv_path(
-        self, python_project: Path, monkeypatch
-    ):
+    def test_install_timeout_returns_venv_path(self, python_project: Path, monkeypatch):
         """On pip install timeout, the venv path is still returned."""
 
         def fake_run(cmd, **kwargs):

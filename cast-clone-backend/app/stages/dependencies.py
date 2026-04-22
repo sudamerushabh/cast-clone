@@ -448,8 +448,7 @@ def build_python_venv(project_root: Path) -> Path | None:
 
     # Stable per-project venv directory under TMPDIR
     venv_dir = (
-        Path(tempfile.gettempdir())
-        / f"cast-venv-{project_root.name}-{os.getpid()}"
+        Path(tempfile.gettempdir()) / f"cast-venv-{project_root.name}-{os.getpid()}"
     )
 
     try:

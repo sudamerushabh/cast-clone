@@ -150,7 +150,12 @@ class TestRunSingleSCIPIndexer:
                     cfg = SCIP_INDEXER_CONFIGS["java"]
                     mock_manifest = MagicMock(root_path=tmp_path)
                     mock_manifest.build_tools = [
-                        BuildTool(name="maven", config_file="pom.xml", language="java", subproject_root="."),
+                        BuildTool(
+                            name="maven",
+                            config_file="pom.xml",
+                            language="java",
+                            subproject_root=".",
+                        ),
                     ]
                     stats = await run_single_scip_indexer(
                         context=MagicMock(
@@ -185,7 +190,12 @@ class TestRunSingleSCIPIndexer:
             cfg = SCIP_INDEXER_CONFIGS["java"]
             mock_manifest = MagicMock(root_path=tmp_path)
             mock_manifest.build_tools = [
-                BuildTool(name="maven", config_file="pom.xml", language="java", subproject_root="."),
+                BuildTool(
+                    name="maven",
+                    config_file="pom.xml",
+                    language="java",
+                    subproject_root=".",
+                ),
             ]
             with pytest.raises(RuntimeError, match="failed at root and no subprojects"):
                 await run_single_scip_indexer(
@@ -349,19 +359,28 @@ class TestScipPythonEnvPassing:
             result = MagicMock(returncode=0, stdout="", stderr="")
             return result
 
-        with patch(
-            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
-        ), patch(
-            "app.stages.scip.indexer.parse_scip_index",
-            return_value=MagicMock(documents=[]),
-        ), patch(
-            "app.stages.scip.indexer.merge_scip_into_context",
-            return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
-        ), patch(
-            "pathlib.Path.exists", return_value=True,
+        with (
+            patch(
+                "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+            ),
+            patch(
+                "app.stages.scip.indexer.parse_scip_index",
+                return_value=MagicMock(documents=[]),
+            ),
+            patch(
+                "app.stages.scip.indexer.merge_scip_into_context",
+                return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
+            ),
+            patch(
+                "pathlib.Path.exists",
+                return_value=True,
+            ),
         ):
             await _run_scip_in_directory(
-                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+                ctx,
+                SCIP_INDEXER_CONFIGS["python"],
+                "p1",
+                tmp_path,
             )
 
         assert captured_env.get("VIRTUAL_ENV") == str(venv_dir)
@@ -370,7 +389,8 @@ class TestScipPythonEnvPassing:
 
     @pytest.mark.asyncio
     async def test_python_scip_without_venv_only_sets_node_options(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """If python_venv_path is None, only NODE_OPTIONS is set.
 
@@ -395,19 +415,28 @@ class TestScipPythonEnvPassing:
             captured_env.update(env or {})
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch(
-            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
-        ), patch(
-            "app.stages.scip.indexer.parse_scip_index",
-            return_value=MagicMock(documents=[]),
-        ), patch(
-            "app.stages.scip.indexer.merge_scip_into_context",
-            return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
-        ), patch(
-            "pathlib.Path.exists", return_value=True,
+        with (
+            patch(
+                "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+            ),
+            patch(
+                "app.stages.scip.indexer.parse_scip_index",
+                return_value=MagicMock(documents=[]),
+            ),
+            patch(
+                "app.stages.scip.indexer.merge_scip_into_context",
+                return_value=MagicMock(resolved_count=0, new_nodes=0, upgraded_edges=0),
+            ),
+            patch(
+                "pathlib.Path.exists",
+                return_value=True,
+            ),
         ):
             await _run_scip_in_directory(
-                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+                ctx,
+                SCIP_INDEXER_CONFIGS["python"],
+                "p1",
+                tmp_path,
             )
 
         assert "VIRTUAL_ENV" not in captured_env
@@ -437,17 +466,24 @@ class TestScipPartialIndexSuccess:
         async def fake_subprocess(*, command, cwd, timeout, env=None):
             return MagicMock(returncode=1, stdout="", stderr="decorator crash")
 
-        with patch(
-            "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
-        ), patch(
-            "app.stages.scip.indexer.parse_scip_index",
-            return_value=MagicMock(documents=[]),
-        ), patch(
-            "app.stages.scip.indexer.merge_scip_into_context",
-            return_value=MagicMock(resolved_count=5, new_nodes=0, upgraded_edges=3),
+        with (
+            patch(
+                "app.stages.scip.indexer.run_subprocess", side_effect=fake_subprocess
+            ),
+            patch(
+                "app.stages.scip.indexer.parse_scip_index",
+                return_value=MagicMock(documents=[]),
+            ),
+            patch(
+                "app.stages.scip.indexer.merge_scip_into_context",
+                return_value=MagicMock(resolved_count=5, new_nodes=0, upgraded_edges=3),
+            ),
         ):
             stats = await _run_scip_in_directory(
-                ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+                ctx,
+                SCIP_INDEXER_CONFIGS["python"],
+                "p1",
+                tmp_path,
             )
 
         assert stats.resolved_count == 5
@@ -477,5 +513,8 @@ class TestScipPartialIndexSuccess:
         ):
             with pytest.raises(RuntimeError):
                 await _run_scip_in_directory(
-                    ctx, SCIP_INDEXER_CONFIGS["python"], "p1", tmp_path,
+                    ctx,
+                    SCIP_INDEXER_CONFIGS["python"],
+                    "p1",
+                    tmp_path,
                 )
