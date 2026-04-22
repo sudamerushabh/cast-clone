@@ -10,7 +10,10 @@ This is ASYNC to future-proof for subprocess-based resolution in later phases.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -399,3 +402,97 @@ def parse_dotnet_dependencies(csproj_path: Path) -> list[ResolvedDependency]:
         deps.append(ResolvedDependency(name=name, version=version, scope="compile"))
 
     return deps
+
+
+# -- Python venv builder (Stage 2, M1) ─────────────────────────────
+
+# Default timeout in seconds for `uv pip install`. Covers mid-size repos.
+_UV_INSTALL_TIMEOUT_SECONDS = 300
+
+
+def build_python_venv(project_root: Path) -> Path | None:
+    """Create a sandboxed venv and install the project's Python dependencies.
+
+    Uses `uv venv` + `uv pip install` (falls back from `-e .` to `-r requirements.txt`).
+
+    Fail-open contract: any failure returns None and must be surfaced via the
+    caller's warnings list — never raises.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+
+    Returns:
+        Absolute path to the venv directory on success, else None.
+    """
+    # Skip projects with no Python build file
+    has_pyproject = (project_root / "pyproject.toml").is_file()
+    has_requirements = (project_root / "requirements.txt").is_file()
+    has_setup = (project_root / "setup.py").is_file()
+    if not (has_pyproject or has_requirements or has_setup):
+        return None
+
+    # Stable per-project venv directory under TMPDIR
+    venv_dir = Path(tempfile.gettempdir()) / f"cast-venv-{project_root.name}-{os.getpid()}"
+
+    try:
+        # 1. Create the venv
+        subprocess.run(
+            ["uv", "venv", str(venv_dir)],
+            cwd=project_root,
+            timeout=60,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.warning("venv.create_failed", project=str(project_root), error=str(e)[:200])
+        return None
+
+    # 2. Install dependencies: -e . first, fall back to requirements.txt
+    install_env = {**os.environ, "VIRTUAL_ENV": str(venv_dir)}
+    install_ok = False
+
+    if has_pyproject or has_setup:
+        try:
+            subprocess.run(
+                ["uv", "pip", "install", "-e", "."],
+                cwd=project_root,
+                timeout=_UV_INSTALL_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=install_env,
+            )
+            install_ok = True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            logger.warning(
+                "venv.install_editable_failed",
+                project=str(project_root),
+                error=str(e)[:200],
+            )
+
+    if not install_ok and has_requirements:
+        try:
+            subprocess.run(
+                ["uv", "pip", "install", "-r", "requirements.txt"],
+                cwd=project_root,
+                timeout=_UV_INSTALL_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=install_env,
+            )
+            install_ok = True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            logger.warning(
+                "venv.install_requirements_failed",
+                project=str(project_root),
+                error=str(e)[:200],
+            )
+
+    # Partial-install success is still success: scip-python can use whatever
+    # got installed. Only return None if BOTH install paths failed.
+    if not install_ok and (has_pyproject or has_setup or has_requirements):
+        logger.warning("venv.install_all_failed", project=str(project_root))
+        # Keep the venv anyway — even empty it gives scip-python the right Python interpreter
+    return venv_dir

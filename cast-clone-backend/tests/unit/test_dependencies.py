@@ -1,6 +1,8 @@
 """Tests for Stage 2: Dependency Resolution."""
 
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -11,6 +13,7 @@ from app.models.manifest import (
     ResolvedEnvironment,
 )
 from app.stages.dependencies import (
+    build_python_venv,
     parse_maven_dependencies,
     parse_npm_dependencies,
     parse_python_dependencies,
@@ -321,3 +324,37 @@ class TestResolveDependencies:
         env = await resolve_dependencies(manifest)
         assert "java" in env.dependencies
         assert "javascript" in env.dependencies
+
+
+# -- Python venv builder ──────────────────────────────────────────
+
+
+class TestBuildPythonVenv:
+    @pytest.fixture
+    def python_project(self, tmp_path: Path) -> Path:
+        """Create a minimal Python project with requirements.txt."""
+        (tmp_path / "requirements.txt").write_text("requests==2.31.0\n")
+        return tmp_path
+
+    def test_creates_venv_directory(self, python_project: Path, monkeypatch):
+        """On success, build_python_venv returns the venv path which must exist."""
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            # Simulate uv venv creating the directory
+            if cmd[:2] == ["uv", "venv"]:
+                Path(cmd[2]).mkdir(parents=True, exist_ok=True)
+                (Path(cmd[2]) / "bin").mkdir(exist_ok=True)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        venv = build_python_venv(python_project)
+
+        assert venv is not None
+        assert venv.exists()
+        # First call should be uv venv
+        assert calls[0][:2] == ["uv", "venv"]
+        # Second call should be uv pip install
+        assert any(c[:3] == ["uv", "pip", "install"] for c in calls)
