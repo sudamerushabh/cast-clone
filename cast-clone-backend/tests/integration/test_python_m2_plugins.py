@@ -50,9 +50,9 @@ class TestDjangoSettingsM2:
         # MIDDLEWARE: contains the security middleware at position 0.
         middleware = entries["MIDDLEWARE"].properties.get("middleware", [])
         assert middleware, "MIDDLEWARE list is empty"
-        assert (
-            middleware[0] == "django.middleware.security.SecurityMiddleware"
-        ), middleware
+        assert middleware[0] == "django.middleware.security.SecurityMiddleware", (
+            middleware
+        )
 
         # Single-string normalizations
         assert entries["AUTH_USER_MODEL"].properties.get("model") == "auth.User"
@@ -67,7 +67,8 @@ class TestDjangoSettingsM2:
         assert len(config_files) == 1
         cf_fqn = config_files[0].fqn
         contained = {
-            e.target_fqn for e in result.edges
+            e.target_fqn
+            for e in result.edges
             if e.kind == EdgeKind.CONTAINS and e.source_fqn == cf_fqn
         }
         assert len(contained) == 6, contained

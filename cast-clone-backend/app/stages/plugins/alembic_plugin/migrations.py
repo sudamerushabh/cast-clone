@@ -206,10 +206,7 @@ def _column_name_from_sa_column(args: list[ast.expr]) -> str | None:
         return None
     func_expr = second.func
     # Accept both `sa.Column(...)` and `Column(...)`.
-    is_sa_column = (
-        isinstance(func_expr, ast.Attribute)
-        and func_expr.attr == "Column"
-    )
+    is_sa_column = isinstance(func_expr, ast.Attribute) and func_expr.attr == "Column"
     is_bare_column = isinstance(func_expr, ast.Name) and func_expr.id == "Column"
     if not (is_sa_column or is_bare_column):
         return None
@@ -287,9 +284,7 @@ class AlembicPlugin(FrameworkPlugin):
                 continue
             info = parse_migration_file(py_file)
             if info is None:
-                warnings.append(
-                    f"Skipped unparseable migration file: {py_file.name}"
-                )
+                warnings.append(f"Skipped unparseable migration file: {py_file.name}")
                 continue
             migrations.append(info)
 

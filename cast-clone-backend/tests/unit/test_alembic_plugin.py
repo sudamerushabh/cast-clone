@@ -39,8 +39,7 @@ class TestAlembicDetection:
         migrations_dir = tmp_path / "migrations"
         migrations_dir.mkdir()
         (migrations_dir / "env.py").write_text(
-            "from alembic import context\n\n"
-            "config = context.config\n"
+            "from alembic import context\n\nconfig = context.config\n"
         )
 
         manifest = ProjectManifest(root_path=tmp_path)
@@ -62,8 +61,7 @@ class TestAlembicDetection:
         migrations_dir = tmp_path / "migrations"
         migrations_dir.mkdir()
         (migrations_dir / "env.py").write_text(
-            "import alembic\n\n"
-            "ctx = alembic.context.config\n"
+            "import alembic\n\nctx = alembic.context.config\n"
         )
 
         manifest = ProjectManifest(root_path=tmp_path)
@@ -112,9 +110,7 @@ class TestAlembicExtract:
         assert result.warnings == []
 
     @pytest.mark.asyncio
-    async def test_versions_dir_with_migrations_emits_nodes(
-        self, tmp_path: Path
-    ):
+    async def test_versions_dir_with_migrations_emits_nodes(self, tmp_path: Path):
         from app.models.context import AnalysisContext
         from app.models.enums import NodeKind
         from app.models.graph import SymbolGraph
@@ -149,9 +145,7 @@ class TestAlembicExtract:
         assert by_name["002_b"].properties["down_revision"] == "001_a"
 
     @pytest.mark.asyncio
-    async def test_unparseable_migration_is_warned_and_skipped(
-        self, tmp_path: Path
-    ):
+    async def test_unparseable_migration_is_warned_and_skipped(self, tmp_path: Path):
         """A syntax-error file alongside valid migrations produces a warning
         but does not block extraction of the valid ones."""
         from app.models.context import AnalysisContext
@@ -163,8 +157,7 @@ class TestAlembicExtract:
         versions = tmp_path / "migrations" / "versions"
         versions.mkdir(parents=True)
         (versions / "001_good.py").write_text(
-            'revision = "001_good"\n'
-            "down_revision = None\n"
+            'revision = "001_good"\ndown_revision = None\n'
         )
         (versions / "002_broken.py").write_text("def :::\n")
 
@@ -231,9 +224,7 @@ class TestAlembicRevisionParsing:
         assert info.revision_id == "002_add_todo_completed"
         assert info.down_revision == "001_initial"
 
-    def test_parse_migration_file_missing_revision_returns_none(
-        self, tmp_path: Path
-    ):
+    def test_parse_migration_file_missing_revision_returns_none(self, tmp_path: Path):
         from app.stages.plugins.alembic_plugin.migrations import (
             parse_migration_file,
         )
@@ -244,9 +235,7 @@ class TestAlembicRevisionParsing:
 
         assert parse_migration_file(path) is None
 
-    def test_parse_migration_file_syntax_error_returns_none(
-        self, tmp_path: Path
-    ):
+    def test_parse_migration_file_syntax_error_returns_none(self, tmp_path: Path):
         from app.stages.plugins.alembic_plugin.migrations import (
             parse_migration_file,
         )
@@ -278,9 +267,7 @@ class TestAlembicOpExtraction:
         path.write_text(src)
 
         tree = ast.parse(path.read_text())
-        funcs = {
-            fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)
-        }
+        funcs = {fn.name: fn for fn in tree.body if isinstance(fn, ast.FunctionDef)}
 
         upgrade_ops = extract_ops_from_function(funcs["upgrade"])
         downgrade_ops = extract_ops_from_function(funcs["downgrade"])
@@ -329,9 +316,7 @@ class TestAlembicOpExtraction:
         assert ops == [{"op": "create_table", "target": "x"}]
 
     @pytest.mark.asyncio
-    async def test_extract_populates_ops_on_config_file_node(
-        self, tmp_path: Path
-    ):
+    async def test_extract_populates_ops_on_config_file_node(self, tmp_path: Path):
         from app.models.context import AnalysisContext
         from app.models.enums import NodeKind
         from app.models.graph import SymbolGraph
@@ -442,9 +427,7 @@ class TestAlembicRevisionChain:
         assert ("alembic:001_a", "alembic:001_a") not in inherits
 
     @pytest.mark.asyncio
-    async def test_dangling_down_revision_emits_warning_not_edge(
-        self, tmp_path: Path
-    ):
+    async def test_dangling_down_revision_emits_warning_not_edge(self, tmp_path: Path):
         from app.models.context import AnalysisContext
         from app.models.enums import EdgeKind
         from app.models.graph import SymbolGraph
