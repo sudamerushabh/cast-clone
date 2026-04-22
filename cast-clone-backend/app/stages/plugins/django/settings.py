@@ -123,15 +123,20 @@ def parse_middleware(raw_value: str) -> list[str]:
 
 
 def strip_string_literal(raw_value: str) -> str:
-    """Strip surrounding single or double quotes from a string-literal RHS.
+    """Interpret a string-literal RHS and return its Python str value.
 
-    Returns the trimmed input unchanged when it isn't a well-formed literal.
-    Never raises.
+    Uses ``ast.literal_eval`` so escape sequences, single/double/triple quotes,
+    and prefixed variants are handled correctly. Returns the trimmed raw input
+    unchanged if it is not a parseable string literal (e.g. ``f"..."``,
+    unquoted identifiers, malformed input). Never raises.
     """
     trimmed = raw_value.strip()
-    if len(trimmed) >= 2:
-        if trimmed[0] == trimmed[-1] and trimmed[0] in {'"', "'"}:
-            return trimmed[1:-1]
+    try:
+        parsed = ast.literal_eval(trimmed)
+    except (ValueError, SyntaxError):
+        return trimmed
+    if isinstance(parsed, str):
+        return parsed
     return trimmed
 
 

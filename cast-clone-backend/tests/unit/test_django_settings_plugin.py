@@ -575,3 +575,21 @@ class TestSingleStringSettings:
         entries = {n.name: n for n in result.nodes if n.kind == NodeKind.CONFIG_ENTRY}
         for name, (_raw, prop_key, expected) in singles.items():
             assert entries[name].properties[prop_key] == expected
+
+    def test_strip_string_literal_escape_sequence(self):
+        """Escapes in the raw literal are interpreted as Python string escapes."""
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        assert strip_string_literal(r'"a\nb"') == "a\nb"
+
+    def test_strip_string_literal_f_string_passes_through(self):
+        """f-strings cannot be evaluated statically; return the raw literal."""
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        assert strip_string_literal('f"{MODEL_BASE}.User"') == 'f"{MODEL_BASE}.User"'
+
+    def test_strip_string_literal_triple_quoted(self):
+        """Triple-quoted literals are handled correctly, not partially stripped."""
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        assert strip_string_literal('"""x"""') == "x"
