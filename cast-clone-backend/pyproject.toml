@@ -55,6 +55,7 @@ testpaths = ["tests"]
 norecursedirs = ["tests/fixtures"]
 markers = [
     "integration: marks tests that require external services (Docker)",
+    "scip_python: requires scip-python binary and network access",
 ]
 
 [tool.ruff]
