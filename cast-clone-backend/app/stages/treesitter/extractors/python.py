@@ -798,11 +798,17 @@ class PythonExtractor:
             func_part = node.child_by_field_name("function")
             if func_part:
                 callee_text = _node_text(func_part, source)
-                # Find enclosing function to determine caller FQN
-                caller_fqn = self._find_enclosing_function_fqn(
+                # Find enclosing function/class FQN. Returns None for calls at
+                # module level (e.g. top-level scripts, ``if __name__ ==
+                # '__main__'`` blocks). Attribute the edge to the module in
+                # that case -- matches Python runtime semantics (module code
+                # executes in the module's namespace) and avoids malformed
+                # FQNs like ``mod.`` or ``mod..foo``.
+                enclosing_fqn = self._find_enclosing_function_fqn(
                     node, source, module_fqn, nodes
                 )
-                if caller_fqn:
+                caller_fqn = enclosing_fqn if enclosing_fqn is not None else module_fqn
+                if caller_fqn and callee_text:
                     edges.append(
                         GraphEdge(
                             source_fqn=caller_fqn,
@@ -824,24 +830,33 @@ class PythonExtractor:
         module_fqn: str,
         nodes: list[GraphNode],
     ) -> str | None:
-        """Walk up the tree to find the enclosing function and return its FQN."""
+        """Walk up the tree to find the enclosing function/class FQN.
+
+        Returns ``None`` when ``node`` is at module level (no enclosing
+        ``function_definition`` or ``class_definition``). Callers must
+        decide explicitly how to treat that case -- either attribute the
+        edge to the module FQN or skip it. This guard prevents malformed
+        FQNs such as ``mod.`` or ``mod..foo`` that would otherwise be
+        produced by blindly joining an empty parts list.
+
+        Any parent node whose ``name`` field is missing or empty is
+        skipped (rather than injecting an empty component into the FQN).
+        """
         current = node.parent
         fqn_parts: list[str] = []
 
         while current is not None:
-            if current.type == "function_definition":
+            if current.type in ("function_definition", "class_definition"):
                 name_node = current.child_by_field_name("name")
-                if name_node:
-                    fqn_parts.insert(0, _node_text(name_node, source))
-            elif current.type == "class_definition":
-                name_node = current.child_by_field_name("name")
-                if name_node:
-                    fqn_parts.insert(0, _node_text(name_node, source))
+                if name_node is not None:
+                    name_text = _node_text(name_node, source)
+                    if name_text:
+                        fqn_parts.insert(0, name_text)
             current = current.parent
 
         if not fqn_parts:
-            # Call at module level -- caller is the module
-            return module_fqn
+            # Call is at module level -- no enclosing function/class.
+            return None
 
         return f"{module_fqn}.{'.'.join(fqn_parts)}"
 
@@ -874,22 +889,26 @@ class PythonExtractor:
                     break
 
             if _looks_like_sql(stripped):
-                # Find which function contains this string
+                # Find which function contains this string. Returns None for
+                # module-level string literals -- skip those here because SQL
+                # strings are stored as a property on FUNCTION nodes and
+                # there is no function node to attach them to at module scope.
                 enclosing = self._find_enclosing_function_fqn(
                     str_node, source, module_fqn, nodes
                 )
-                if enclosing:
-                    # Store as a property tag -- downstream sqlglot stage will parse
-                    for n in nodes:
-                        if n.fqn == enclosing and n.kind == NodeKind.FUNCTION:
-                            sql_strings = n.properties.setdefault("sql_strings", [])
-                            sql_strings.append(
-                                {
-                                    "text": stripped,
-                                    "line": str_node.start_point[0] + 1,
-                                }
-                            )
-                            break
+                if enclosing is None:
+                    continue
+                # Store as a property tag -- downstream sqlglot stage will parse
+                for n in nodes:
+                    if n.fqn == enclosing and n.kind == NodeKind.FUNCTION:
+                        sql_strings = n.properties.setdefault("sql_strings", [])
+                        sql_strings.append(
+                            {
+                                "text": stripped,
+                                "line": str_node.start_point[0] + 1,
+                            }
+                        )
+                        break
 
     # ── Decorators ───────────────────────────────────────────────
 
