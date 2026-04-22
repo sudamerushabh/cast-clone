@@ -47,6 +47,11 @@ def parse_migration_file(path: Path) -> MigrationInfo | None:
     - The file cannot be read.
     - The file has a Python syntax error.
     - The file has no `revision = "..."` module-level assignment.
+
+    Limitation: merge migrations (where `down_revision = ("rev_a", "rev_b")`)
+    are treated as unparseable — the tuple fails the string-literal check in
+    `_literal_string_or_none`. A future task may add merge-node support;
+    until then, these are warned and skipped.
     """
     try:
         source = path.read_text(encoding="utf-8", errors="replace")
@@ -55,7 +60,13 @@ def parse_migration_file(path: Path) -> MigrationInfo | None:
 
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except SyntaxError as exc:
+        logger.warning(
+            "alembic_migration_syntax_error",
+            file=str(path),
+            line=exc.lineno,
+            error=str(exc.msg),
+        )
         return None
 
     revision: str | None = None
@@ -219,9 +230,10 @@ class AlembicPlugin(FrameworkPlugin):
                 return None
             for line in text.splitlines():
                 stripped = line.strip()
-                if stripped.startswith("script_location"):
-                    _, _, value = stripped.partition("=")
-                    script_location = value.strip()
+                key, sep, value = stripped.partition("=")
+                if sep and key.strip() == "script_location":
+                    # Handle inline comments: "script_location = migrations  # prod"
+                    script_location = value.split("#", 1)[0].strip()
                     if script_location:
                         candidate = root / script_location / "versions"
                         if candidate.is_dir():

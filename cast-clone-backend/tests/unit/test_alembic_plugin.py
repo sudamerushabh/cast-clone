@@ -92,7 +92,7 @@ class TestAlembicDetection:
         assert result.confidence is None
 
 
-class TestAlembicEmptyExtract:
+class TestAlembicExtract:
     @pytest.mark.asyncio
     async def test_empty_project_returns_empty_result(self, tmp_path: Path):
         from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
@@ -146,6 +146,35 @@ class TestAlembicEmptyExtract:
         by_name = {n.name: n for n in config_files}
         assert by_name["001_a"].properties["down_revision"] is None
         assert by_name["002_b"].properties["down_revision"] == "001_a"
+
+    @pytest.mark.asyncio
+    async def test_unparseable_migration_is_warned_and_skipped(
+        self, tmp_path: Path
+    ):
+        """A syntax-error file alongside valid migrations produces a warning
+        but does not block extraction of the valid ones."""
+        from app.models.context import AnalysisContext
+        from app.models.enums import NodeKind
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        versions = tmp_path / "migrations" / "versions"
+        versions.mkdir(parents=True)
+        (versions / "001_good.py").write_text(
+            'revision = "001_good"\n'
+            "down_revision = None\n"
+        )
+        (versions / "002_broken.py").write_text("def :::\n")
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(project_id="t", graph=SymbolGraph(), manifest=manifest)
+
+        result = await AlembicPlugin().extract(ctx)
+
+        config_files = [n for n in result.nodes if n.kind == NodeKind.CONFIG_FILE]
+        assert {n.name for n in config_files} == {"001_good"}
+        assert any("002_broken.py" in w for w in result.warnings), result.warnings
 
 
 class TestAlembicRevisionParsing:
