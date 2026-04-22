@@ -122,6 +122,19 @@ def parse_middleware(raw_value: str) -> list[str]:
     return [item for item in parsed if isinstance(item, str)]
 
 
+def strip_string_literal(raw_value: str) -> str:
+    """Strip surrounding single or double quotes from a string-literal RHS.
+
+    Returns the trimmed input unchanged when it isn't a well-formed literal.
+    Never raises.
+    """
+    trimmed = raw_value.strip()
+    if len(trimmed) >= 2:
+        if trimmed[0] == trimmed[-1] and trimmed[0] in {'"', "'"}:
+            return trimmed[1:-1]
+    return trimmed
+
+
 class DjangoSettingsPlugin(FrameworkPlugin):
     name = "django-settings"
     version = "1.0.0"
@@ -189,6 +202,12 @@ class DjangoSettingsPlugin(FrameworkPlugin):
                     entry_properties.update(parse_databases(raw_value))
                 elif field_node.name == "MIDDLEWARE":
                     entry_properties["middleware"] = parse_middleware(raw_value)
+                elif field_node.name == "AUTH_USER_MODEL":
+                    entry_properties["model"] = strip_string_literal(raw_value)
+                elif field_node.name == "ROOT_URLCONF":
+                    entry_properties["urlconf"] = strip_string_literal(raw_value)
+                elif field_node.name == "DEFAULT_AUTO_FIELD":
+                    entry_properties["field_class"] = strip_string_literal(raw_value)
 
                 entry_fqn = f"config:{module_fqn}.{field_node.name}"
                 entry = GraphNode(

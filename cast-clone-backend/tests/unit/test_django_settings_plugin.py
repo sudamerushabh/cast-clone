@@ -486,3 +486,92 @@ class TestMiddlewareParsing:
         assert "INSTALLED_APPS" in entries, (
             "anchor key must also be emitted; detection depends on it"
         )
+
+
+class TestSingleStringSettings:
+    def test_strip_string_literal_double_quotes(self):
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        assert strip_string_literal('"auth.User"') == "auth.User"
+
+    def test_strip_string_literal_single_quotes(self):
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        assert strip_string_literal("'blog_project.urls'") == "blog_project.urls"
+
+    def test_strip_string_literal_unquoted_fallback(self):
+        from app.stages.plugins.django.settings import strip_string_literal
+
+        # If the value is already unquoted or the literal isn't well-formed,
+        # return the trimmed input rather than raising.
+        assert strip_string_literal("not.quoted") == "not.quoted"
+        assert strip_string_literal("  leading space  ") == "leading space"
+        assert strip_string_literal("") == ""
+
+    @pytest.mark.asyncio
+    async def test_extract_emits_model_urlconf_field_properties(self):
+        from app.models.context import AnalysisContext
+        from app.models.enums import Confidence, EdgeKind, NodeKind
+        from app.models.graph import GraphEdge, GraphNode, SymbolGraph
+        from app.stages.plugins.django.settings import DjangoSettingsPlugin
+
+        graph = SymbolGraph()
+        module = GraphNode(
+            fqn="m.settings",
+            name="settings",
+            kind=NodeKind.MODULE,
+            language="python",
+        )
+        anchor = GraphNode(
+            fqn="m.settings.INSTALLED_APPS",
+            name="INSTALLED_APPS",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": "[]"},
+        )
+        graph.add_node(module)
+        graph.add_node(anchor)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=module.fqn,
+                target_fqn=anchor.fqn,
+                kind=EdgeKind.CONTAINS,
+                confidence=Confidence.HIGH,
+                evidence="test-setup",
+            )
+        )
+
+        singles = {
+            "AUTH_USER_MODEL": ('"auth.User"', "model", "auth.User"),
+            "ROOT_URLCONF": ('"blog_project.urls"', "urlconf", "blog_project.urls"),
+            "DEFAULT_AUTO_FIELD": (
+                '"django.db.models.BigAutoField"',
+                "field_class",
+                "django.db.models.BigAutoField",
+            ),
+        }
+        for name, (raw, _prop_key, _expected) in singles.items():
+            node = GraphNode(
+                fqn=f"m.settings.{name}",
+                name=name,
+                kind=NodeKind.FIELD,
+                language="python",
+                properties={"value": raw},
+            )
+            graph.add_node(node)
+            graph.add_edge(
+                GraphEdge(
+                    source_fqn=module.fqn,
+                    target_fqn=node.fqn,
+                    kind=EdgeKind.CONTAINS,
+                    confidence=Confidence.HIGH,
+                    evidence="test-setup",
+                )
+            )
+
+        ctx = AnalysisContext(project_id="t", graph=graph)
+        result = await DjangoSettingsPlugin().extract(ctx)
+
+        entries = {n.name: n for n in result.nodes if n.kind == NodeKind.CONFIG_ENTRY}
+        for name, (_raw, prop_key, expected) in singles.items():
+            assert entries[name].properties[prop_key] == expected
