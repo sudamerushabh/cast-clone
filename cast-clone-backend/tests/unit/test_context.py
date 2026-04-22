@@ -3,8 +3,8 @@ from pathlib import Path
 
 from app.models.context import AnalysisContext
 from app.models.enums import NodeKind
-from app.models.graph import GraphNode
-from app.models.manifest import ProjectManifest
+from app.models.graph import GraphNode, SymbolGraph
+from app.models.manifest import ProjectManifest, ResolvedEnvironment
 
 
 class TestAnalysisContext:
@@ -38,3 +38,14 @@ class TestAnalysisContext:
         assert "java" in ctx.scip_resolved_languages
         ctx.languages_needing_fallback.append("python")
         assert "python" in ctx.languages_needing_fallback
+
+
+class TestAnalysisContextVenv:
+    def test_python_venv_path_accessible_via_environment(self, tmp_path: Path):
+        ctx = AnalysisContext(
+            project_id="p1",
+            graph=SymbolGraph(),
+            environment=ResolvedEnvironment(python_venv_path=tmp_path / "venv"),
+        )
+        assert ctx.environment is not None
+        assert ctx.environment.python_venv_path == tmp_path / "venv"
