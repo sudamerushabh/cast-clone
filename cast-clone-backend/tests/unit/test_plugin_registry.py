@@ -602,3 +602,11 @@ class TestRunFrameworkPlugins:
         # Should complete without error
         await run_framework_plugins(context, registry=registry)
         assert context.plugin_new_nodes == 0
+
+
+class TestAlembicRegistration:
+    def test_alembic_plugin_discovered(self):
+        from app.stages.plugins import global_registry
+
+        names = [cls.name for cls in global_registry.plugin_classes]
+        assert "alembic" in names

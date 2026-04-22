@@ -4,6 +4,7 @@ Plugins detect framework usage, extract hidden relationships (DI wiring,
 ORM mappings, endpoint routes), and produce new graph nodes and edges.
 """
 
+from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRule,
@@ -57,6 +58,7 @@ global_registry.register(DjangoSettingsPlugin)
 global_registry.register(DjangoURLsPlugin)
 global_registry.register(DjangoORMPlugin)
 global_registry.register(DjangoDRFPlugin)
+global_registry.register(AlembicPlugin)
 
 __all__ = [
     "FrameworkPlugin",
@@ -65,6 +67,7 @@ __all__ = [
     "PluginDetectionResult",
     "PluginRegistry",
     "PluginResult",
+    "AlembicPlugin",
     "FastAPIPlugin",
     "SQLAlchemyPlugin",
     "global_registry",
