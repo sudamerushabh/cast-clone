@@ -432,9 +432,10 @@ class TestMiddlewareParsing:
         from app.stages.plugins.django.settings import parse_middleware
 
         assert parse_middleware("not a list") == []
+        assert parse_middleware("") == []
 
     @pytest.mark.asyncio
-    async def test_extract_emits_middleware_property(self, tmp_path):
+    async def test_extract_emits_middleware_property(self):
         from app.models.context import AnalysisContext
         from app.models.enums import Confidence, EdgeKind, NodeKind
         from app.models.graph import GraphEdge, GraphNode, SymbolGraph
@@ -482,3 +483,6 @@ class TestMiddlewareParsing:
         assert entries["MIDDLEWARE"].properties["middleware"] == [
             "django.middleware.security.SecurityMiddleware",
         ]
+        assert "INSTALLED_APPS" in entries, (
+            "anchor key must also be emitted; detection depends on it"
+        )
