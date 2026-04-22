@@ -684,3 +684,16 @@ src/plugins/
 **Priority languages:** Java, JavaScript/TypeScript, C#/.NET, Database (SQL). These four cover the vast majority of enterprise codebases. Python/Django comes later since it has simpler framework conventions and fewer invisible connections to resolve.
 
 **Spring comes first** because it's the most complex framework to analyze statically. ASP.NET's DI pattern is structurally similar to Spring (register interface->implementation, resolve via constructor injection), so the lessons from Spring DI directly transfer. NestJS also follows the same module+injectable pattern.
+
+---
+
+## Python Plugin Milestone Progress
+
+### Python — Django settings + async SQLAlchemy + Alembic (M2 complete)
+
+As of 2026-04-22, building on M1:
+- **Django settings plugin** (`app/stages/plugins/django/settings.py`) parses structured values for INSTALLED_APPS, DATABASES (default engine/name/host/port), MIDDLEWARE, AUTH_USER_MODEL, ROOT_URLCONF, and DEFAULT_AUTO_FIELD. Downstream plugins can consume these as typed properties without re-parsing.
+- **SQLAlchemy plugin** regression-pinned on SQLAlchemy 2.0 async-style models (`DeclarativeBase` + `Mapped[T]` + `mapped_column(...)`). ForeignKey REFERENCES edges work for both `Column(ForeignKey(...))` and `mapped_column(ForeignKey(...))`.
+- **Alembic plugin** (`app/stages/plugins/alembic_plugin/`) — new. Detects via `alembic.ini` or `migrations/env.py`. Parses each `migrations/versions/*.py`, emits one CONFIG_FILE per revision with `upgrade_ops` / `downgrade_ops` capturing the common `op.*` calls (`create_table`, `drop_table`, `add_column`, `drop_column`, `alter_column`, `rename_table`). Emits INHERITS edges to form the revision chain DAG; dangling parents become warnings, not dangling edges.
+
+Subsequent milestones (M3-M4) add Pydantic deep extraction, Celery, Flask, and integration polish.

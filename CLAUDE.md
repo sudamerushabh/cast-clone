@@ -310,3 +310,5 @@ No Celery. No task chains. SCIP indexers run as parallel async subprocesses. Tre
 | Tier 4 | Django, FastAPI, SQLAlchemy, Angular | Python + other |
 
 > **Python status (M1 complete, 2026-04-22):** SCIP foundation landed. Stage 2 builds a sandboxed venv; Stage 4 passes VIRTUAL_ENV + NODE_OPTIONS to `scip-python v0.6.6` with partial-index success. Framework plugins scheduled for M2–M4.
+
+> **Python status (M2 complete, 2026-04-22):** Django settings enriched (structured INSTALLED_APPS/DATABASES/MIDDLEWARE/AUTH_USER_MODEL/ROOT_URLCONF/DEFAULT_AUTO_FIELD); SQLAlchemy 2.0 async style pinned with tests; Alembic plugin landed with revision-chain DAG. M3 scheduled: Pydantic deep + Celery.
