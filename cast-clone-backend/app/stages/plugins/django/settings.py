@@ -62,6 +62,43 @@ def parse_installed_apps(raw_value: str) -> list[str]:
     return [item for item in parsed if isinstance(item, str)]
 
 
+def parse_databases(raw_value: str) -> dict[str, str]:
+    """Parse a DATABASES RHS, returning structured keys for the default conn.
+
+    Output keys (all optional, present only if the setting supplied them):
+    - default_engine
+    - default_name
+    - default_host
+    - default_port
+
+    Returns {} on malformed input or missing "default" key.
+    """
+    if not raw_value.strip():
+        return {}
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except (ValueError, SyntaxError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    default = parsed.get("default")
+    if not isinstance(default, dict):
+        return {}
+
+    mapping = {
+        "ENGINE": "default_engine",
+        "NAME": "default_name",
+        "HOST": "default_host",
+        "PORT": "default_port",
+    }
+    out: dict[str, str] = {}
+    for django_key, out_key in mapping.items():
+        value = default.get(django_key)
+        if isinstance(value, str):
+            out[out_key] = value
+    return out
+
+
 class DjangoSettingsPlugin(FrameworkPlugin):
     name = "django-settings"
     version = "1.0.0"
@@ -125,6 +162,8 @@ class DjangoSettingsPlugin(FrameworkPlugin):
                 }
                 if field_node.name == "INSTALLED_APPS":
                     entry_properties["apps"] = parse_installed_apps(raw_value)
+                elif field_node.name == "DATABASES":
+                    entry_properties.update(parse_databases(raw_value))
 
                 entry_fqn = f"config:{module_fqn}.{field_node.name}"
                 entry = GraphNode(

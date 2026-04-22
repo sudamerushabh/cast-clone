@@ -333,3 +333,61 @@ class TestInstalledAppsParsing:
             "django.contrib.auth",
             "posts",
         ]
+
+
+# ---------------------------------------------------------------------------
+# DATABASES parsing tests
+# ---------------------------------------------------------------------------
+
+
+class TestDatabasesParsing:
+    def test_postgres_default_parsed(self):
+        from app.stages.plugins.django.settings import parse_databases
+
+        raw = (
+            "{\n"
+            '    "default": {\n'
+            '        "ENGINE": "django.db.backends.postgresql",\n'
+            '        "NAME": "blog",\n'
+            '        "USER": "blog",\n'
+            '        "PASSWORD": "blog",\n'
+            '        "HOST": "localhost",\n'
+            '        "PORT": "5432",\n'
+            "    }\n"
+            "}"
+        )
+        info = parse_databases(raw)
+
+        assert info == {
+            "default_engine": "django.db.backends.postgresql",
+            "default_name": "blog",
+            "default_host": "localhost",
+            "default_port": "5432",
+        }
+
+    def test_sqlite_minimal(self):
+        from app.stages.plugins.django.settings import parse_databases
+
+        raw = (
+            '{"default": {"ENGINE": "django.db.backends.sqlite3", '
+            '"NAME": "db.sqlite3"}}'
+        )
+        info = parse_databases(raw)
+
+        assert info["default_engine"] == "django.db.backends.sqlite3"
+        assert info["default_name"] == "db.sqlite3"
+        # Absent keys are simply omitted, not set to None
+        assert "default_host" not in info
+        assert "default_port" not in info
+
+    def test_no_default_key_returns_empty(self):
+        from app.stages.plugins.django.settings import parse_databases
+
+        raw = '{"secondary": {"ENGINE": "x"}}'
+        assert parse_databases(raw) == {}
+
+    def test_malformed_returns_empty(self):
+        from app.stages.plugins.django.settings import parse_databases
+
+        assert parse_databases("not a dict") == {}
+        assert parse_databases("") == {}
