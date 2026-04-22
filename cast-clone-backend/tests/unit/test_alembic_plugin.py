@@ -399,3 +399,69 @@ class TestAlembicOpExtraction:
 
         ops = extract_ops_from_function(funcs["upgrade"])
         assert ops == [{"op": "create_table", "target": "conditional"}]
+
+
+class TestAlembicRevisionChain:
+    @pytest.mark.asyncio
+    async def test_linear_chain_emits_inherits_edges(self, tmp_path: Path):
+        from app.models.context import AnalysisContext
+        from app.models.enums import EdgeKind
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        versions = tmp_path / "migrations" / "versions"
+        versions.mkdir(parents=True)
+        (versions / "001_a.py").write_text(
+            'revision = "001_a"\ndown_revision = None\n'
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        (versions / "002_b.py").write_text(
+            'revision = "002_b"\ndown_revision = "001_a"\n'
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        (versions / "003_c.py").write_text(
+            'revision = "003_c"\ndown_revision = "002_b"\n'
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(project_id="t", graph=SymbolGraph(), manifest=manifest)
+        result = await AlembicPlugin().extract(ctx)
+
+        inherits = {
+            (e.source_fqn, e.target_fqn)
+            for e in result.edges
+            if e.kind == EdgeKind.INHERITS
+        }
+        assert inherits == {
+            ("alembic:002_b", "alembic:001_a"),
+            ("alembic:003_c", "alembic:002_b"),
+        }
+        # Root migration has no outgoing INHERITS.
+        assert ("alembic:001_a", "alembic:001_a") not in inherits
+
+    @pytest.mark.asyncio
+    async def test_dangling_down_revision_emits_warning_not_edge(
+        self, tmp_path: Path
+    ):
+        from app.models.context import AnalysisContext
+        from app.models.enums import EdgeKind
+        from app.models.graph import SymbolGraph
+        from app.models.manifest import ProjectManifest
+        from app.stages.plugins.alembic_plugin.migrations import AlembicPlugin
+
+        versions = tmp_path / "migrations" / "versions"
+        versions.mkdir(parents=True)
+        (versions / "007.py").write_text(
+            'revision = "007"\ndown_revision = "missing_parent"\n'
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+
+        manifest = ProjectManifest(root_path=tmp_path)
+        ctx = AnalysisContext(project_id="t", graph=SymbolGraph(), manifest=manifest)
+        result = await AlembicPlugin().extract(ctx)
+
+        inherits = [e for e in result.edges if e.kind == EdgeKind.INHERITS]
+        assert inherits == []
+        assert any("missing_parent" in w for w in result.warnings), result.warnings

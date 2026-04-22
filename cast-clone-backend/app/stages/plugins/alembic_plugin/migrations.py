@@ -21,7 +21,7 @@ from pathlib import Path
 import structlog
 
 from app.models.context import AnalysisContext
-from app.models.enums import Confidence, NodeKind
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphEdge, GraphNode
 from app.stages.plugins.base import (
     FrameworkPlugin,
@@ -308,6 +308,26 @@ class AlembicPlugin(FrameworkPlugin):
                 },
             )
             nodes.append(node)
+
+        known_revisions = {info.revision_id for info in migrations}
+        for info in migrations:
+            if info.down_revision is None:
+                continue
+            if info.down_revision not in known_revisions:
+                warnings.append(
+                    f"Migration {info.revision_id} references unknown parent "
+                    f"{info.down_revision}; skipping INHERITS edge"
+                )
+                continue
+            edges.append(
+                GraphEdge(
+                    source_fqn=f"alembic:{info.revision_id}",
+                    target_fqn=f"alembic:{info.down_revision}",
+                    kind=EdgeKind.INHERITS,
+                    confidence=Confidence.HIGH,
+                    evidence="alembic-revision-chain",
+                )
+            )
 
         log.info(
             "alembic_extract_complete",
