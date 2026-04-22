@@ -690,8 +690,10 @@ class PythonExtractor:
                 continue
             right = expr.child_by_field_name("right")
             if right is None:
-                # Bare annotated declaration (``X: int``) with no value —
-                # nothing for DjangoSettingsPlugin to read.
+                # e.g. bare type annotation: X: int (no RHS value)
+                continue
+            if right.type == "assignment":
+                # Chained assignment (A = B = 42) — value is not a literal RHS; skip.
                 continue
 
             field_name = _node_text(left, source)

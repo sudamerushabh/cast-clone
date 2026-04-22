@@ -591,3 +591,8 @@ class C:
         nodes, edges = extractor.extract(source, "/proj/mod.py", "/proj")
         fields = [n for n in nodes if n.kind == NodeKind.FIELD]
         assert fields == []
+
+    def test_chained_assignment_skipped(self, extractor):
+        source = b"A = B = 42\n"
+        nodes, _ = extractor.extract(source, "/proj/mod.py", "/proj")
+        assert not any(n.kind == NodeKind.FIELD for n in nodes)
