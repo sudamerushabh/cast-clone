@@ -449,7 +449,11 @@ def build_python_venv(project_root: Path) -> Path | None:
         return None
 
     # 2. Install dependencies: -e . first, fall back to requirements.txt
-    install_env = {**os.environ, "VIRTUAL_ENV": str(venv_dir)}
+    install_env = {
+        **os.environ,
+        "VIRTUAL_ENV": str(venv_dir),
+        "PATH": f"{venv_dir}/bin:{os.environ.get('PATH', '')}",
+    }
     install_ok = False
 
     if has_pyproject or has_setup:
@@ -492,7 +496,7 @@ def build_python_venv(project_root: Path) -> Path | None:
 
     # Partial-install success is still success: scip-python can use whatever
     # got installed. Only return None if BOTH install paths failed.
-    if not install_ok and (has_pyproject or has_setup or has_requirements):
+    if not install_ok:
         logger.warning("venv.install_all_failed", project=str(project_root))
         # Keep the venv anyway — even empty it gives scip-python the right Python interpreter
     return venv_dir
