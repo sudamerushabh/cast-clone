@@ -15,6 +15,7 @@ Produces:
 from __future__ import annotations
 
 import ast
+from typing import Any
 
 import structlog
 
@@ -56,7 +57,7 @@ def parse_installed_apps(raw_value: str) -> list[str]:
         parsed = ast.literal_eval(raw_value)
     except (ValueError, SyntaxError):
         return []
-    if not isinstance(parsed, list):
+    if not isinstance(parsed, (list, tuple)):
         return []
     return [item for item in parsed if isinstance(item, str)]
 
@@ -118,7 +119,7 @@ class DjangoSettingsPlugin(FrameworkPlugin):
             # Extract settings entries
             for field_fqn, field_node in self._get_settings_fields(graph, module_fqn):
                 raw_value = field_node.properties.get("value", "")
-                entry_properties: dict[str, object] = {
+                entry_properties: dict[str, Any] = {
                     "value": raw_value,
                     "setting_key": field_node.name,
                 }

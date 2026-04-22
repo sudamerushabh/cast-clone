@@ -278,6 +278,20 @@ class TestInstalledAppsParsing:
         raw = '["app1", 42, "app2"]'
         assert parse_installed_apps(raw) == ["app1", "app2"]
 
+    def test_tuple_syntax_parsed(self):
+        """Django settings commonly use tuple literal for INSTALLED_APPS."""
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        raw = '("django.contrib.admin", "myapp",)'
+        assert parse_installed_apps(raw) == ["django.contrib.admin", "myapp"]
+
+    def test_nested_list_filtered(self):
+        """Nested list entries are dropped (only strings survive)."""
+        from app.stages.plugins.django.settings import parse_installed_apps
+
+        raw = '[["nested"], "app1"]'
+        assert parse_installed_apps(raw) == ["app1"]
+
     @pytest.mark.asyncio
     async def test_extract_emits_apps_property(self, tmp_path):
         """End-to-end: a synthetic graph with an INSTALLED_APPS FIELD
