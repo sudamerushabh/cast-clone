@@ -530,6 +530,20 @@ Extracts route definitions from `<Route>`, `createBrowserRouter()`, or `createRo
 
 These follow the same pattern: tree-sitter queries -> framework-specific post-processing -> graph nodes/edges. Django is the most complex in this tier (4 plugins with dependency chain), but structurally simpler than Spring.
 
+#### Python — SCIP foundation (M1 complete)
+
+As of 2026-04-22, Python is indexed by:
+- Stage 2: sandboxed `uv venv` + `uv pip install -e . || -r requirements.txt` produces `ResolvedEnvironment.python_venv_path`.
+- Stage 4: `scip-python v0.6.6` runs with `VIRTUAL_ENV` and `NODE_OPTIONS=--max-old-space-size=8192` from the Stage-2 venv. Non-zero exits are tolerated if `index.scip` is non-empty (partial-index success mode).
+- Merger: handles scip-python's `scip-python python <pkg> <ver> <descriptors>` symbol format.
+
+Fixtures for regression testing live under `tests/fixtures/`:
+- `fastapi-todo/` — FastAPI + async SQLAlchemy + Alembic + Pydantic v2
+- `django-blog/` — Django + DRF + Celery
+- `flask-inventory/` — Flask + Flask-SQLAlchemy + Flask-RESTful
+
+Subsequent milestones (M2-M4) add framework plugins on top.
+
 ---
 
 ## Cross-Technology Linkers
