@@ -317,3 +317,76 @@ async def test_extract_field_constraints_merges_with_existing():
 
     constraints = ctx.graph.get_node("M.title").properties["constraints"]
     assert constraints == {"description": "preset", "min_length": "1"}
+
+
+@pytest.mark.asyncio
+async def test_extract_parses_annotated_field_constraints():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.User",
+        name="User",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    email_field = GraphNode(
+        fqn="app.schemas.User.email",
+        name="email",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={
+            "type": "Annotated[str, Field(min_length=3, max_length=254)]",
+            "value": "",
+        },
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(email_field)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn=email_field.fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    constraints = ctx.graph.get_node(email_field.fqn).properties.get("constraints")
+    assert constraints == {"min_length": "3", "max_length": "254"}
+
+
+@pytest.mark.asyncio
+async def test_extract_merges_constraints_from_type_and_value():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    # Defensive case: both type and value carry Field() — should merge,
+    # with value taking precedence on key collision.
+    f = GraphNode(
+        fqn="M.x",
+        name="x",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={
+            "type": "Annotated[int, Field(ge=0)]",
+            "value": "Field(le=100)",
+        },
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(f)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.x", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    constraints = ctx.graph.get_node("M.x").properties.get("constraints")
+    assert constraints == {"ge": "0", "le": "100"}

@@ -198,11 +198,14 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             field_node = graph.get_node(edge.target_fqn)
             if field_node is None or field_node.kind != NodeKind.FIELD:
                 continue
-            raw = field_node.properties.get("value", "")
-            constraints = _parse_field_constraints(raw)
-            if constraints:
+            combined: dict[str, str] = {}
+            type_source = field_node.properties.get("type", "")
+            value_source = field_node.properties.get("value", "")
+            combined.update(_parse_field_constraints(type_source))
+            combined.update(_parse_field_constraints(value_source))
+            if combined:
                 existing = field_node.properties.get("constraints", {})
-                field_node.properties["constraints"] = {**existing, **constraints}
+                field_node.properties["constraints"] = {**existing, **combined}
                 applied += 1
         return applied
 
