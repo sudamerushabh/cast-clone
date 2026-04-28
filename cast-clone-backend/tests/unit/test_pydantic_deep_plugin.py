@@ -282,7 +282,9 @@ async def test_extract_ignores_non_field_value():
     )
     ctx.graph.add_node(model)
     ctx.graph.add_node(plain)
-    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="M.x", kind=EdgeKind.CONTAINS))
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.x", kind=EdgeKind.CONTAINS)
+    )
     ctx.graph.add_edge(
         GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
     )
@@ -310,8 +312,12 @@ async def test_extract_field_constraints_merges_with_existing():
     )
     ctx.graph.add_node(model)
     ctx.graph.add_node(field)
-    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="M.title", kind=EdgeKind.CONTAINS))
-    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS))
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.title", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
 
     await FastAPIPydanticPlugin().extract(ctx)
 
