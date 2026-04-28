@@ -18,7 +18,7 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import SymbolGraph
+from app.models.graph import GraphEdge, SymbolGraph
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRules,
@@ -186,14 +186,101 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
 
         constraints_applied = self._apply_field_constraints(graph, model_fqns)
         validators_tagged = self._tag_validators(graph, model_fqns)
+        edges: list[GraphEdge] = []
+        edges.extend(self._emit_accepts_edges(graph, model_fqns))
 
         logger.info(
             "fastapi_pydantic_extract_end",
             pydantic_models=len(model_fqns),
             field_constraints=constraints_applied,
             validators=validators_tagged,
+            accepts_edges=sum(1 for e in edges if e.kind == EdgeKind.ACCEPTS),
         )
-        return PluginResult.empty()
+        return PluginResult(
+            nodes=[],
+            edges=edges,
+            layer_assignments={},
+            entry_points=[],
+            warnings=[],
+        )
+
+    def _resolve_pydantic_type(
+        self,
+        graph: SymbolGraph,
+        type_source: str,
+        model_fqns: set[str],
+        scope_module: str,
+    ) -> str | None:
+        """Resolve a type-annotation string (e.g., 'TodoCreate' or 'list[TodoRead]')
+        to a Pydantic model FQN. Returns None if no match.
+        """
+        if not type_source:
+            return None
+
+        # Strip generic wrappers: list[X], List[X], Optional[X], Union[X, None] → X.
+        inner = type_source.strip()
+        for wrapper in ("list[", "List[", "Optional[", "Union["):
+            if inner.startswith(wrapper) and inner.endswith("]"):
+                inner = inner[len(wrapper) : -1]
+                # Drop a trailing ", None" for Union[X, None].
+                if inner.endswith(", None"):
+                    inner = inner[: -len(", None")]
+                break
+
+        inner = inner.split("|")[0].strip()  # `X | None` → `X`
+        if not inner:
+            return None
+
+        # Exact FQN match.
+        if inner in model_fqns:
+            return inner
+
+        # Same-module FQN match.
+        candidate = f"{scope_module}.{inner}" if scope_module else inner
+        if candidate in model_fqns:
+            return candidate
+
+        # Fallback: endswith `.Name` search.
+        for fqn in model_fqns:
+            if fqn.endswith(f".{inner}"):
+                return fqn
+
+        return None
+
+    def _emit_accepts_edges(
+        self, graph: SymbolGraph, model_fqns: set[str]
+    ) -> list[GraphEdge]:
+        edges: list[GraphEdge] = []
+        for handles_edge in graph.edges:
+            if handles_edge.kind != EdgeKind.HANDLES:
+                continue
+            handler = graph.get_node(handles_edge.source_fqn)
+            endpoint = graph.get_node(handles_edge.target_fqn)
+            if (
+                handler is None
+                or endpoint is None
+                or handler.kind != NodeKind.FUNCTION
+                or endpoint.kind != NodeKind.API_ENDPOINT
+            ):
+                continue
+            scope_module = handler.fqn.rsplit(".", 1)[0] if "." in handler.fqn else ""
+            for param in handler.properties.get("params", []):
+                type_source = param.get("type", "")
+                target = self._resolve_pydantic_type(
+                    graph, type_source, model_fqns, scope_module
+                )
+                if target is None:
+                    continue
+                edges.append(
+                    GraphEdge(
+                        source_fqn=endpoint.fqn,
+                        target_fqn=target,
+                        kind=EdgeKind.ACCEPTS,
+                        confidence=Confidence.HIGH,
+                        evidence="fastapi-body-param",
+                    )
+                )
+        return edges
 
     def _apply_field_constraints(self, graph: SymbolGraph, model_fqns: set[str]) -> int:
         applied = 0

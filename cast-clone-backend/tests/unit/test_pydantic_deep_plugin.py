@@ -508,3 +508,90 @@ async def test_extract_tags_v1_validator_and_root_validator():
     root_props = ctx.graph.get_node("M.root").properties
     assert root_props.get("validator_kind") == "root_validator"
     assert "target_field" not in root_props
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_accepts_edge_for_body_param():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    # Pydantic model
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoCreate",
+        name="TodoCreate",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+    # FastAPI endpoint handler
+    handler = GraphNode(
+        fqn="app.routes.todos.create_todo",
+        name="create_todo",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={
+            "params": [
+                {"name": "data", "type": "TodoCreate", "default": ""},
+                {
+                    "name": "session",
+                    "type": "AsyncSession",
+                    "default": "Depends(get_session)",
+                },
+            ],
+            "return_type": "TodoRead",
+        },
+    )
+    endpoint = GraphNode(
+        fqn="POST:/todos",
+        name="POST /todos",
+        kind=NodeKind.API_ENDPOINT,
+        language="python",
+        properties={"method": "POST", "path": "/todos"},
+    )
+    ctx.graph.add_node(handler)
+    ctx.graph.add_node(endpoint)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=handler.fqn,
+            target_fqn=endpoint.fqn,
+            kind=EdgeKind.HANDLES,
+            confidence=Confidence.HIGH,
+        )
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    accepts = [e for e in result.edges if e.kind == EdgeKind.ACCEPTS]
+    assert len(accepts) == 1
+    assert accepts[0].source_fqn == endpoint.fqn
+    assert accepts[0].target_fqn == model.fqn
+    assert accepts[0].confidence == Confidence.HIGH
+
+
+@pytest.mark.asyncio
+async def test_extract_accepts_skips_non_pydantic_types():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    handler = GraphNode(
+        fqn="m.h",
+        name="h",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"params": [{"name": "q", "type": "str", "default": ""}]},
+    )
+    endpoint = GraphNode(
+        fqn="GET:/q", name="GET /q", kind=NodeKind.API_ENDPOINT, language="python"
+    )
+    ctx.graph.add_node(handler)
+    ctx.graph.add_node(endpoint)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="m.h", target_fqn="GET:/q", kind=EdgeKind.HANDLES)
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    assert [e for e in result.edges if e.kind == EdgeKind.ACCEPTS] == []
