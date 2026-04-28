@@ -50,6 +50,8 @@ class EdgeKind(StrEnum):
     PASSES_PROP = "PASSES_PROP"
     MANAGES = "MANAGES"
     MIDDLEWARE_CHAIN = "MIDDLEWARE_CHAIN"
+    ACCEPTS = "ACCEPTS"
+    RETURNS = "RETURNS"
 
 
 class Confidence(int, Enum):

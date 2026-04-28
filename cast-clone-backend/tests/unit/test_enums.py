@@ -29,3 +29,10 @@ def test_analysis_status_values():
     assert AnalysisStatus.ANALYZING.value == "analyzing"
     assert AnalysisStatus.ANALYZED.value == "analyzed"
     assert AnalysisStatus.FAILED.value == "failed"
+
+
+def test_edge_kind_includes_pydantic_endpoint_edges():
+    assert EdgeKind.ACCEPTS == "ACCEPTS"
+    assert EdgeKind.RETURNS == "RETURNS"
+    assert EdgeKind("ACCEPTS") is EdgeKind.ACCEPTS
+    assert EdgeKind("RETURNS") is EdgeKind.RETURNS
