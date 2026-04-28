@@ -34,6 +34,10 @@ _FIELD_KWARG_RE = re.compile(
     r"(\"[^\"]*\"|'[^']*'|\([^)]*\)|\[[^\]]*\]|[^,)\s]+)"
 )
 
+# Matches `response_model=X` inside a FastAPI route decorator. Captures the
+# bare type expression (e.g. `TodoRead`, `list[TodoRead]`, `pkg.mod.TodoRead`).
+_RESPONSE_MODEL_RE = re.compile(r"response_model\s*=\s*([A-Za-z_][\w\.\[\]]+)")
+
 # Matches a Pydantic validator decorator and (optionally) the first quoted
 # positional arg (the target field name). Group 1: kind. Group 2/3: target.
 _VALIDATOR_DECORATOR_RE = re.compile(
@@ -188,6 +192,7 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
         validators_tagged = self._tag_validators(graph, model_fqns)
         edges: list[GraphEdge] = []
         edges.extend(self._emit_accepts_edges(graph, model_fqns))
+        edges.extend(self._emit_returns_edges(graph, model_fqns))
 
         logger.info(
             "fastapi_pydantic_extract_end",
@@ -195,6 +200,7 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             field_constraints=constraints_applied,
             validators=validators_tagged,
             accepts_edges=sum(1 for e in edges if e.kind == EdgeKind.ACCEPTS),
+            returns_edges=sum(1 for e in edges if e.kind == EdgeKind.RETURNS),
         )
         return PluginResult(
             nodes=[],
@@ -280,6 +286,64 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
                         evidence="fastapi-body-param",
                     )
                 )
+        return edges
+
+    def _emit_returns_edges(
+        self, graph: SymbolGraph, model_fqns: set[str]
+    ) -> list[GraphEdge]:
+        edges: list[GraphEdge] = []
+        for handles_edge in graph.edges:
+            if handles_edge.kind != EdgeKind.HANDLES:
+                continue
+            handler = graph.get_node(handles_edge.source_fqn)
+            endpoint = graph.get_node(handles_edge.target_fqn)
+            if (
+                handler is None
+                or endpoint is None
+                or handler.kind != NodeKind.FUNCTION
+                or endpoint.kind != NodeKind.API_ENDPOINT
+            ):
+                continue
+            scope_module = handler.fqn.rsplit(".", 1)[0] if "." in handler.fqn else ""
+
+            target: str | None = None
+            evidence: str | None = None
+
+            # Preferred: response_model= kwarg in any decorator annotation.
+            for deco in handler.properties.get("annotations", []):
+                match = _RESPONSE_MODEL_RE.search(deco)
+                if not match:
+                    continue
+                resolved = self._resolve_pydantic_type(
+                    graph, match.group(1), model_fqns, scope_module
+                )
+                if resolved is not None:
+                    target = resolved
+                    evidence = "fastapi-response-model"
+                    break
+
+            # Fallback: function return-type annotation.
+            if target is None:
+                return_type = handler.properties.get("return_type", "")
+                resolved = self._resolve_pydantic_type(
+                    graph, return_type, model_fqns, scope_module
+                )
+                if resolved is not None:
+                    target = resolved
+                    evidence = "fastapi-return-annotation"
+
+            if target is None or evidence is None:
+                continue
+
+            edges.append(
+                GraphEdge(
+                    source_fqn=endpoint.fqn,
+                    target_fqn=target,
+                    kind=EdgeKind.RETURNS,
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
         return edges
 
     def _apply_field_constraints(self, graph: SymbolGraph, model_fqns: set[str]) -> int:

@@ -595,3 +595,106 @@ async def test_extract_accepts_skips_non_pydantic_types():
     result = await FastAPIPydanticPlugin().extract(ctx)
 
     assert [e for e in result.edges if e.kind == EdgeKind.ACCEPTS] == []
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_returns_edge_from_response_model():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoRead",
+        name="TodoRead",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+    handler = GraphNode(
+        fqn="app.routes.todos.create_todo",
+        name="create_todo",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={
+            "annotations": [
+                '@router.post("", response_model=TodoRead, status_code=201)'
+            ],
+            "return_type": "TodoRead",
+            "params": [],
+        },
+    )
+    endpoint = GraphNode(
+        fqn="POST:/todos",
+        name="POST /todos",
+        kind=NodeKind.API_ENDPOINT,
+        language="python",
+    )
+    ctx.graph.add_node(handler)
+    ctx.graph.add_node(endpoint)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=handler.fqn,
+            target_fqn=endpoint.fqn,
+            kind=EdgeKind.HANDLES,
+        )
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    returns = [e for e in result.edges if e.kind == EdgeKind.RETURNS]
+    assert len(returns) == 1
+    assert returns[0].source_fqn == endpoint.fqn
+    assert returns[0].target_fqn == model.fqn
+    assert returns[0].evidence == "fastapi-response-model"
+
+
+@pytest.mark.asyncio
+async def test_extract_falls_back_to_return_type_when_no_response_model():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoRead",
+        name="TodoRead",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+    handler = GraphNode(
+        fqn="app.routes.todos.list_todos",
+        name="list_todos",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={
+            "annotations": ['@router.get("/owner/{owner_id}")'],
+            "return_type": "list[TodoRead]",
+            "params": [],
+        },
+    )
+    endpoint = GraphNode(
+        fqn="GET:/owner/{owner_id}",
+        name="GET /owner/{owner_id}",
+        kind=NodeKind.API_ENDPOINT,
+        language="python",
+    )
+    ctx.graph.add_node(handler)
+    ctx.graph.add_node(endpoint)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=handler.fqn,
+            target_fqn=endpoint.fqn,
+            kind=EdgeKind.HANDLES,
+        )
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    returns = [e for e in result.edges if e.kind == EdgeKind.RETURNS]
+    assert len(returns) == 1
+    assert returns[0].target_fqn == model.fqn
+    assert returns[0].evidence == "fastapi-return-annotation"
