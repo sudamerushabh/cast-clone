@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.models.context import AnalysisContext
 from app.models.enums import (
     Confidence,
@@ -140,3 +142,42 @@ def test_detect_recognises_pydantic_root_model():
 
     result = FastAPIPydanticPlugin().detect(ctx)
     assert result.confidence == Confidence.HIGH
+
+
+@pytest.mark.asyncio
+async def test_extract_tags_pydantic_model_classes():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoCreate",
+        name="TodoCreate",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    non_model = GraphNode(
+        fqn="app.services.TodoService",
+        name="TodoService",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(non_model)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="BaseModel",
+            kind=EdgeKind.INHERITS,
+        )
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    # Plugin does not duplicate the class node — it mutates the existing one.
+    updated = ctx.graph.get_node(model.fqn)
+    assert updated is not None
+    assert updated.properties.get("is_pydantic_model") is True
+    other = ctx.graph.get_node(non_model.fqn)
+    assert other is not None
+    assert other.properties.get("is_pydantic_model") is not True
+    assert result.warnings == []
