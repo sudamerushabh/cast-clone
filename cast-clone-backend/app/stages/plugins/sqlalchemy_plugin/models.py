@@ -16,6 +16,7 @@ Produces:
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import structlog
 
@@ -32,6 +33,13 @@ logger = structlog.get_logger()
 
 # Regex patterns for parsing Column/mapped_column values
 _COLUMN_RE = re.compile(r"^(Column|mapped_column)\(")
+# Captures the first positional argument of ``mapped_column``/``Column`` —
+# the SQL type, e.g. ``Integer``, ``String(255)``, ``DateTime(timezone=True)``,
+# ``ForeignKey("users.id")``.  ``ForeignKey`` is filtered downstream because
+# its first arg is a column reference, not a type literal.
+_COLUMN_TYPE_RE = re.compile(
+    r"^(?:Column|mapped_column)\(\s*([A-Z][A-Za-z0-9_]*)(?:\([^)]*\))?"
+)
 # No closing-paren anchor — intentional: kwargs like ondelete="CASCADE"
 # may follow the target string.
 _FK_RE = re.compile(r'ForeignKey\(\s*["\']([^"\']+)["\']')
@@ -177,15 +185,24 @@ class SQLAlchemyPlugin(FrameworkPlugin):
                 continue
 
             is_pk = bool(_PK_RE.search(value))
+            col_props: dict[str, Any] = {
+                "is_primary_key": is_pk,
+                "table": table_name,
+            }
+            # Pull the SQL type literal off the first positional arg.
+            # ``ForeignKey(...)`` matches the regex but is a column reference,
+            # not a type — skip it.  Falls through to no-type for non-matching
+            # columns; downstream linkers (Pydantic MAPS_TO) treat empty type
+            # as "do not match", which is the safe default.
+            type_match = _COLUMN_TYPE_RE.match(value)
+            if type_match and type_match.group(1) != "ForeignKey":
+                col_props["type"] = type_match.group(1)
             col_fqn = f"table:{table_name}.{field_name}"
             col_node = GraphNode(
                 fqn=col_fqn,
                 name=field_name,
                 kind=NodeKind.COLUMN,
-                properties={
-                    "is_primary_key": is_pk,
-                    "table": table_name,
-                },
+                properties=col_props,
             )
             col_nodes.append(col_node)
 
