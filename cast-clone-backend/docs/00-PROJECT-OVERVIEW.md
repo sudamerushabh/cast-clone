@@ -1,20 +1,20 @@
-# CodeLens — Software Architecture Intelligence Platform
+# ChangeSafe — Software Architecture Intelligence Platform
 
 ## Project Overview
 
-CodeLens is an on-premise software architecture intelligence platform that automatically reverse-engineers, visualizes, and analyzes the inner workings of complex software applications. It performs semantic analysis of source code, database scripts, and configuration files to produce interactive architecture maps — enabling software architects, engineers, and AI agents to understand, maintain, modernize, and migrate applications with speed and confidence.
+ChangeSafe is an on-premise software architecture intelligence platform that automatically reverse-engineers, visualizes, and analyzes the inner workings of complex software applications. It performs semantic analysis of source code, database scripts, and configuration files to produce interactive architecture maps — enabling software architects, engineers, and AI agents to understand, maintain, modernize, and migrate applications with speed and confidence.
 
 ---
 
 ## Vision
 
-Build the most accurate, AI-native, developer-friendly alternative to CAST Imaging — positioning CodeLens as the "MRI for Software" that turns source code into actionable architectural intelligence.
+Build the most accurate, AI-native, developer-friendly alternative to CAST Imaging — positioning ChangeSafe as the "MRI for Software" that turns source code into actionable architectural intelligence.
 
 ---
 
 ## Key Differentiators vs. CAST Imaging
 
-| Area | CAST Imaging | CodeLens (Target) |
+| Area | CAST Imaging | ChangeSafe (Target) |
 |------|-------------|-------------------|
 | Onboarding | Heavy "CAST Console" setup process | Paste a Git URL or point to a directory and wait |
 | Learning Curve | Steep — users report difficulty at the start | Intuitive UI with guided exploration |
