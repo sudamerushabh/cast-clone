@@ -87,3 +87,56 @@ def test_detect_recognises_qualified_basemodel():
     result = FastAPIPydanticPlugin().detect(ctx)
 
     assert result.confidence == Confidence.HIGH
+
+
+def test_detect_ignores_non_pydantic_basemodel_inherits():
+    """A class inheriting from app.base.BaseModel must not trigger detection.
+
+    Common SQLAlchemy declarative bases or custom base classes share the
+    BaseModel name but are not pydantic.BaseModel.
+    """
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.models.User",
+        name="User",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="app.base.BaseModel",
+            kind=EdgeKind.INHERITS,
+            confidence=Confidence.LOW,
+        )
+    )
+
+    result = FastAPIPydanticPlugin().detect(ctx)
+    assert result.confidence is None
+
+
+def test_detect_recognises_pydantic_root_model():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.IDList",
+        name="IDList",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="pydantic.RootModel",
+            kind=EdgeKind.INHERITS,
+            confidence=Confidence.LOW,
+        )
+    )
+
+    result = FastAPIPydanticPlugin().detect(ctx)
+    assert result.confidence == Confidence.HIGH

@@ -29,6 +29,22 @@ logger = structlog.get_logger()
 # Tests monkeypatch this constant; production runs never mutate it.
 ENABLE_PYDANTIC_ORM_LINKING = True
 
+# FQNs accepted as Pydantic base classes for INHERITS-edge detection.
+# Bare names cover pre-SCIP (tree-sitter only) output where the supertype
+# identifier is unresolved; qualified forms cover post-SCIP. RootModel is
+# the v2 root-type base and is recognised here for forward compatibility
+# with downstream tasks (tagging/extraction).
+PYDANTIC_BASE_MODEL_NAMES = frozenset(
+    {
+        "BaseModel",
+        "pydantic.BaseModel",
+        "pydantic.main.BaseModel",
+        "RootModel",
+        "pydantic.RootModel",
+        "pydantic.main.RootModel",
+    }
+)
+
 
 class FastAPIPydanticPlugin(FrameworkPlugin):
     name = "fastapi_pydantic"
@@ -41,7 +57,15 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             if edge.kind != EdgeKind.INHERITS:
                 continue
             target = edge.target_fqn
-            if target == "BaseModel" or target.endswith(".BaseModel"):
+            # Accept exact bare/qualified pydantic FQNs, OR a qualified name
+            # ending in .BaseModel/.RootModel whose package path *contains*
+            # the literal segment "pydantic" — this rejects user bases like
+            # `app.base.BaseModel` (SQLAlchemy declarative) while still
+            # tolerating reexports such as `pydantic.v1.BaseModel`.
+            if target in PYDANTIC_BASE_MODEL_NAMES or (
+                (target.endswith(".BaseModel") or target.endswith(".RootModel"))
+                and "pydantic" in target.split(".")
+            ):
                 return PluginDetectionResult(
                     confidence=Confidence.HIGH,
                     reason="Pydantic BaseModel subclass found via INHERITS edge",
