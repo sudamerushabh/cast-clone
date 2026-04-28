@@ -12,6 +12,7 @@ from app.stages.plugins.base import (
     PluginDetectionResult,
     PluginResult,
 )
+from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
 from app.stages.plugins.django.drf import DjangoDRFPlugin
 from app.stages.plugins.django.orm import DjangoORMPlugin
 from app.stages.plugins.django.settings import DjangoSettingsPlugin
@@ -61,6 +62,7 @@ global_registry.register(DjangoURLsPlugin)
 global_registry.register(DjangoORMPlugin)
 global_registry.register(DjangoDRFPlugin)
 global_registry.register(AlembicPlugin)
+global_registry.register(CeleryPlugin)
 
 __all__ = [
     "FrameworkPlugin",
@@ -70,6 +72,7 @@ __all__ = [
     "PluginRegistry",
     "PluginResult",
     "AlembicPlugin",
+    "CeleryPlugin",
     "FastAPIPlugin",
     "FastAPIPydanticPlugin",
     "SQLAlchemyPlugin",

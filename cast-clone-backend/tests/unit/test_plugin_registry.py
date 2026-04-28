@@ -617,3 +617,10 @@ def test_fastapi_pydantic_plugin_is_registered():
     from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
 
     assert FastAPIPydanticPlugin in global_registry.plugin_classes
+
+
+def test_celery_plugin_is_registered():
+    from app.stages.plugins import global_registry
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    assert CeleryPlugin in global_registry.plugin_classes
