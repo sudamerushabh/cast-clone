@@ -13,6 +13,7 @@ from app.stages.scip.merger import (
     MergeStats,
     match_scip_symbol_to_node,
     merge_scip_into_context,
+    scip_descriptor_kind,
     scip_symbol_to_fqn,
 )
 from app.stages.scip.protobuf_parser import (
@@ -142,6 +143,81 @@ class TestMatchSCIPSymbolToNode:
             line=1,
         )
         assert matched is None
+
+    def test_kind_hint_rejects_wrong_kind_at_same_line(self):
+        """A SCIP field at line 6 (0-indexed) must NOT bind to a CLASS at line 6
+        (1-indexed).  This is the regression that turned ``TodoCreate``'s
+        INHERITS edge source into ``TodoCreate.title`` for fastapi-todo.
+        """
+        graph = SymbolGraph()
+        cls = GraphNode(
+            fqn="app.schemas.todo.TodoCreate",
+            name="TodoCreate",
+            kind=NodeKind.CLASS,
+            path="app/schemas/todo.py",
+            line=6,  # tree-sitter 1-indexed
+            end_line=9,
+        )
+        graph.add_node(cls)
+
+        # SCIP field definition: 0-indexed line 6 == tree-sitter line 7
+        # would normally collide with the class at line 6 via the legacy
+        # file:line scan.  The ``field`` kind hint must reject CLASS.
+        matched = match_scip_symbol_to_node(
+            graph,
+            fqn="fastapi-todo.app.schemas.todo.TodoCreate.title",
+            file_path="app/schemas/todo.py",
+            line=6,
+            kind_hint="field",
+        )
+        assert matched is None
+
+    def test_kind_hint_accepts_off_by_one_line_for_python(self):
+        """Tree-sitter is 1-indexed, scip-python is 0-indexed; ``line+1`` must
+        also be a valid match when a kind hint is supplied so the class at
+        tree-sitter line 6 binds to the SCIP class definition at 0-indexed
+        line 5.
+        """
+        graph = SymbolGraph()
+        cls = GraphNode(
+            fqn="app.schemas.todo.TodoCreate",
+            name="TodoCreate",
+            kind=NodeKind.CLASS,
+            path="app/schemas/todo.py",
+            line=6,  # tree-sitter 1-indexed
+        )
+        graph.add_node(cls)
+
+        matched = match_scip_symbol_to_node(
+            graph,
+            fqn="fastapi-todo.app.schemas.todo.TodoCreate",
+            file_path="app/schemas/todo.py",
+            line=5,  # SCIP 0-indexed
+            kind_hint="class",
+        )
+        assert matched is cls
+
+    def test_no_kind_hint_keeps_legacy_strict_line_match(self):
+        """Without a kind hint, the line must match exactly (no off-by-one
+        widening).  This preserves Java/Spring behaviour where the unit-test
+        fixtures assume aligned line numbers.
+        """
+        graph = SymbolGraph()
+        node = GraphNode(
+            fqn="UserService",
+            name="UserService",
+            kind=NodeKind.CLASS,
+            path="src/UserService.java",
+            line=10,
+        )
+        graph.add_node(node)
+        # Legacy callers (no hint) require strict line equality.
+        assert (
+            match_scip_symbol_to_node(
+                graph, fqn="x", file_path="src/UserService.java", line=11
+            )
+            is None
+        )
 
 
 class TestMergeStats:
@@ -412,6 +488,153 @@ class TestMergeSCIPIntoContext:
         assert stats.resolved_count == 0
         assert stats.upgraded_edges == 0
 
+    def test_python_class_field_collision_does_not_rewrite_class_fqn(self):
+        """Regression: a SCIP field-definition occurrence at the same file:line
+        as a tree-sitter CLASS (because tree-sitter is 1-indexed and
+        scip-python is 0-indexed) must NOT rewrite the CLASS FQN to the field
+        FQN.  Before the kind-gating fix, ``TodoCreate`` was being renamed
+        to ``TodoCreate.title`` and INHERITS edges followed the rename,
+        which broke M3's Pydantic plugin (it tagged FIELDs as Pydantic
+        models instead of CLASSes).
+        """
+        graph = SymbolGraph()
+        cls = GraphNode(
+            fqn="app.schemas.todo.TodoCreate",
+            name="TodoCreate",
+            kind=NodeKind.CLASS,
+            path="app/schemas/todo.py",
+            line=6,
+            end_line=9,
+        )
+        field = GraphNode(
+            fqn="app.schemas.todo.TodoCreate.title",
+            name="title",
+            kind=NodeKind.FIELD,
+            path="app/schemas/todo.py",
+            line=7,
+        )
+        graph.add_node(cls)
+        graph.add_node(field)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn="app.schemas.todo.TodoCreate",
+                target_fqn="BaseModel",
+                kind=EdgeKind.INHERITS,
+            )
+        )
+
+        ctx = self._make_context(graph)
+
+        scip_index = SCIPIndex(
+            documents=[
+                SCIPDocument(
+                    relative_path="app/schemas/todo.py",
+                    occurrences=[
+                        # Class at SCIP 0-indexed line 5 (tree-sitter line 6)
+                        SCIPOccurrence(
+                            range=[5, 6, 16],
+                            symbol=(
+                                "scip-python python myapp 0.1.0 "
+                                "`app.schemas.todo`/TodoCreate#"
+                            ),
+                            symbol_roles=0x1,
+                        ),
+                        # Field at SCIP 0-indexed line 6 (tree-sitter line 7) —
+                        # this used to collide with the class at line 6
+                        # (1-indexed) and rename CLASS -> CLASS.title.
+                        SCIPOccurrence(
+                            range=[6, 4, 9],
+                            symbol=(
+                                "scip-python python myapp 0.1.0 "
+                                "`app.schemas.todo`/TodoCreate#title."
+                            ),
+                            symbol_roles=0x1,
+                        ),
+                    ],
+                    symbols=[],
+                ),
+            ],
+        )
+
+        merge_scip_into_context(ctx, scip_index, "python")
+
+        # The class FQN should be the SCIP-upgraded form.
+        renamed_class = graph.get_node("myapp.app.schemas.todo.TodoCreate")
+        assert renamed_class is not None
+        assert renamed_class.kind == NodeKind.CLASS
+
+        # The INHERITS edge must follow the class rename and source must
+        # still point at the CLASS, NOT at a FIELD.
+        inherits = [e for e in graph.edges if e.kind == EdgeKind.INHERITS]
+        assert len(inherits) == 1
+        src_fqn = inherits[0].source_fqn
+        src_node = graph.get_node(src_fqn)
+        assert src_node is not None
+        assert src_node.kind == NodeKind.CLASS, (
+            f"INHERITS source rebound to {src_node.kind} ({src_fqn}); "
+            "must remain CLASS"
+        )
+
+    def test_python_function_parameter_does_not_rewrite_function_fqn(self):
+        """Regression: a SCIP parameter occurrence (``foo().(param)``) must NOT
+        be matched against any graph node — kept it would rewrite the
+        containing function's FQN to ``foo().(param)``, garbling
+        downstream consumers like the FastAPI Pydantic plugin which does
+        ``handler.fqn.rsplit('.', 1)``.
+        """
+        graph = SymbolGraph()
+        func = GraphNode(
+            fqn="app.routes.todos.update_todo",
+            name="update_todo",
+            kind=NodeKind.FUNCTION,
+            path="app/routes/todos.py",
+            line=8,
+            end_line=15,
+        )
+        graph.add_node(func)
+
+        ctx = self._make_context(graph)
+
+        scip_index = SCIPIndex(
+            documents=[
+                SCIPDocument(
+                    relative_path="app/routes/todos.py",
+                    occurrences=[
+                        # Function definition.
+                        SCIPOccurrence(
+                            range=[7, 4, 14],
+                            symbol=(
+                                "scip-python python myapp 0.1.0 "
+                                "`app.routes.todos`/update_todo()."
+                            ),
+                            symbol_roles=0x1,
+                        ),
+                        # Parameter definition (would collide via file:line).
+                        SCIPOccurrence(
+                            range=[7, 15, 22],
+                            symbol=(
+                                "scip-python python myapp 0.1.0 "
+                                "`app.routes.todos`/update_todo().(todo_id)"
+                            ),
+                            symbol_roles=0x1,
+                        ),
+                    ],
+                    symbols=[],
+                ),
+            ],
+        )
+
+        merge_scip_into_context(ctx, scip_index, "python")
+
+        # The function FQN must be the SCIP-upgraded plain form — never the
+        # parameter-suffixed form.
+        renamed = graph.get_node("myapp.app.routes.todos.update_todo")
+        assert renamed is not None
+        assert renamed.kind == NodeKind.FUNCTION
+        # Confirm no node carries the malformed parameter-suffixed FQN.
+        for n in graph.nodes.values():
+            assert "()." not in n.fqn, f"parameter FQN leaked: {n.fqn}"
+
     def test_scip_local_symbols_skipped(self):
         """Local symbols (compiler internals) are ignored."""
         graph = SymbolGraph()
@@ -466,3 +689,73 @@ class TestScipPythonSymbolFormat:
 
     def test_empty_symbol_returns_empty(self):
         assert scip_symbol_to_fqn("") == ""
+
+    def test_parameter_descriptor_returns_empty(self):
+        """SCIP parameter symbols (``foo().(param)``) must NOT produce an FQN.
+
+        Pyright/scip-python emits one of these per function parameter; if we
+        kept them they would collide with the parent function via file:line
+        fallback and rewrite the function FQN to e.g.
+        ``update_todo().(todo_id)`` — which then breaks any plugin that does
+        ``handler.fqn.rsplit('.', 1)`` to derive the module path.
+        """
+        s = (
+            "scip-python python myapp 0.1.0 "
+            "myapp/routes/todos.py/update_todo().(todo_id)"
+        )
+        assert scip_symbol_to_fqn(s) == ""
+
+    def test_type_parameter_descriptor_returns_empty(self):
+        """SCIP generic-type-parameter descriptors (``foo().[T]``) also skip."""
+        s = "scip-python python myapp 0.1.0 myapp/utils.py/identity().[T]"
+        assert scip_symbol_to_fqn(s) == ""
+
+
+class TestScipDescriptorKind:
+    """Locks in the kind-hint extraction used to gate file:line matching."""
+
+    def test_class_descriptor(self):
+        assert (
+            scip_descriptor_kind(
+                "scip-python python myapp 0.1.0 myapp/models.py/User#"
+            )
+            == "class"
+        )
+
+    def test_function_descriptor(self):
+        assert (
+            scip_descriptor_kind(
+                "scip-python python myapp 0.1.0 myapp/views.py/index()."
+            )
+            == "function"
+        )
+
+    def test_field_descriptor(self):
+        assert (
+            scip_descriptor_kind(
+                "scip-python python myapp 0.1.0 myapp/models.py/User#name."
+            )
+            == "field"
+        )
+
+    def test_module_descriptor(self):
+        assert (
+            scip_descriptor_kind(
+                "scip-python python myapp 0.1.0 `myapp.routes`/__init__:"
+            )
+            == "module"
+        )
+
+    def test_parameter_descriptor(self):
+        assert (
+            scip_descriptor_kind(
+                "scip-python python myapp 0.1.0 myapp/views.py/index().(req)"
+            )
+            == "parameter"
+        )
+
+    def test_local_descriptor(self):
+        assert scip_descriptor_kind("local 42") == "local"
+
+    def test_empty_returns_none(self):
+        assert scip_descriptor_kind("") is None
