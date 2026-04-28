@@ -32,7 +32,7 @@ def test_analysis_status_values():
 
 
 def test_edge_kind_includes_pydantic_endpoint_edges():
-    assert EdgeKind.ACCEPTS == "ACCEPTS"
-    assert EdgeKind.RETURNS == "RETURNS"
+    assert EdgeKind.ACCEPTS.value == "ACCEPTS"
+    assert EdgeKind.RETURNS.value == "RETURNS"
     assert EdgeKind("ACCEPTS") is EdgeKind.ACCEPTS
     assert EdgeKind("RETURNS") is EdgeKind.RETURNS

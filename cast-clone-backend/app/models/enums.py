@@ -50,8 +50,8 @@ class EdgeKind(StrEnum):
     PASSES_PROP = "PASSES_PROP"
     MANAGES = "MANAGES"
     MIDDLEWARE_CHAIN = "MIDDLEWARE_CHAIN"
-    ACCEPTS = "ACCEPTS"
-    RETURNS = "RETURNS"
+    ACCEPTS = "ACCEPTS"  # API_ENDPOINT -[ACCEPTS]-> CLASS (request body model)
+    RETURNS = "RETURNS"  # API_ENDPOINT -[RETURNS]-> CLASS (response model)
 
 
 class Confidence(int, Enum):
