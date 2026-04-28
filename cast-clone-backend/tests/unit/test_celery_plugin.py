@@ -208,3 +208,87 @@ async def test_extract_defaults_queue_to_celery_when_kwarg_missing():
     topics = [n for n in result.nodes if n.kind == NodeKind.MESSAGE_TOPIC]
     assert len(topics) == 1
     assert topics[0].name == "celery"
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_produces_edge_from_delay_caller():
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="posts.tasks.notify",
+            name="notify",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@shared_task(queue="notifications")']},
+        )
+    )
+    # Producer caller with a CALLS edge to posts.tasks.notify.delay
+    caller = GraphNode(
+        fqn="posts.views.PostViewSet.perform_create",
+        name="perform_create",
+        kind=NodeKind.FUNCTION,
+        language="python",
+    )
+    ctx.graph.add_node(caller)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=caller.fqn,
+            target_fqn="posts.tasks.notify.delay",
+            kind=EdgeKind.CALLS,
+            confidence=Confidence.MEDIUM,
+        )
+    )
+
+    result = await CeleryPlugin().extract(ctx)
+
+    produces = [e for e in result.edges if e.kind == EdgeKind.PRODUCES]
+    assert len(produces) == 1
+    assert produces[0].source_fqn == caller.fqn
+    assert produces[0].target_fqn == "queue::notifications"
+    assert produces[0].properties.get("queue") == "notifications"
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_produces_for_apply_async_and_signature():
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="t.run",
+            name="run",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@shared_task(queue="q")']},
+        )
+    )
+    caller = GraphNode(
+        fqn="svc.enqueue",
+        name="enqueue",
+        kind=NodeKind.FUNCTION,
+        language="python",
+    )
+    ctx.graph.add_node(caller)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=caller.fqn,
+            target_fqn="t.run.apply_async",
+            kind=EdgeKind.CALLS,
+        )
+    )
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=caller.fqn,
+            target_fqn="t.run.s",
+            kind=EdgeKind.CALLS,
+        )
+    )
+
+    result = await CeleryPlugin().extract(ctx)
+
+    produces = [e for e in result.edges if e.kind == EdgeKind.PRODUCES]
+    assert len(produces) == 2
+    for e in produces:
+        assert e.target_fqn == "queue::q"

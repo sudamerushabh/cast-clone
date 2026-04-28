@@ -16,6 +16,7 @@ from app.stages.plugins.base import (
     PluginDetectionResult,
     PluginResult,
 )
+from app.stages.plugins.celery_plugin.producers import resolve_producer_edges
 
 logger = structlog.get_logger()
 
@@ -110,10 +111,17 @@ class CeleryPlugin(FrameworkPlugin):
 
         nodes.extend(queue_nodes.values())
 
+        task_to_queue: dict[str, str] = {
+            task.fqn: task.properties["queue"] for task in tasks
+        }
+        producer_edges = resolve_producer_edges(graph, task_to_queue)
+        edges.extend(producer_edges)
+
         log.info(
             "celery_extract_complete",
             tasks=len(tasks),
             queues=len(queue_nodes),
+            producers=len(producer_edges),
         )
         return PluginResult(
             nodes=nodes,
