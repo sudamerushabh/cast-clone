@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest  # noqa: F401  -- used in forthcoming M3 tasks
-
 from app.models.context import AnalysisContext
 from app.models.enums import (  # noqa: F401  -- used in forthcoming M3 tasks
     Confidence,
