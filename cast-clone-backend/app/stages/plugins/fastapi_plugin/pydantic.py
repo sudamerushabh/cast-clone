@@ -40,8 +40,12 @@ _RESPONSE_MODEL_RE = re.compile(r"response_model\s*=\s*([A-Za-z_][\w\.\[\]]+)")
 
 # Matches a Pydantic validator decorator and (optionally) the first quoted
 # positional arg (the target field name). Group 1: kind. Group 2/3: target.
+# NOTE: PythonExtractor strips the leading ``@`` from decorators before
+# storing them in ``properties["annotations"]``, but unit-test fixtures
+# construct GraphNodes directly with ``@``-prefixed annotations.  The
+# optional ``@?`` makes the matcher tolerant of either form.
 _VALIDATOR_DECORATOR_RE = re.compile(
-    r"^@(field_validator|model_validator|validator|root_validator)\b"
+    r"^@?(field_validator|model_validator|validator|root_validator)\b"
     r"(?:\(\s*\"([^\"]+)\"|\(\s*'([^']+)'|)"
 )
 

@@ -20,7 +20,12 @@ from app.stages.plugins.celery_plugin.producers import resolve_producer_edges
 
 logger = structlog.get_logger()
 
-_TASK_DECORATOR_RE = re.compile(r"^@(?:shared_task|celery\.task|app\.task)\b")
+# NOTE: the Python extractor strips the leading ``@`` from decorator strings
+# before storing them in ``properties["annotations"]`` (see PythonExtractor
+# ._get_decorators), but unit-test fixtures construct GraphNodes directly
+# with ``@``-prefixed annotations.  The optional ``@?`` makes the matcher
+# tolerant of either form.
+_TASK_DECORATOR_RE = re.compile(r"^@?(?:shared_task|celery\.task|app\.task)\b")
 _QUEUE_KWARG_RE = re.compile(r"""queue\s*=\s*["']([^"']+)["']""")
 _DEFAULT_QUEUE = "celery"
 
