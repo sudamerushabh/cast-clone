@@ -15,7 +15,7 @@ from __future__ import annotations
 import structlog
 
 from app.models.context import AnalysisContext
-from app.models.enums import Confidence  # noqa: F401  -- used in forthcoming M3 tasks
+from app.models.enums import Confidence, EdgeKind
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRules,
@@ -37,6 +37,15 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
     depends_on: list[str] = ["fastapi"]
 
     def detect(self, context: AnalysisContext) -> PluginDetectionResult:
+        for edge in context.graph.edges:
+            if edge.kind != EdgeKind.INHERITS:
+                continue
+            target = edge.target_fqn
+            if target == "BaseModel" or target.endswith(".BaseModel"):
+                return PluginDetectionResult(
+                    confidence=Confidence.HIGH,
+                    reason="Pydantic BaseModel subclass found via INHERITS edge",
+                )
         return PluginDetectionResult.not_detected()
 
     async def extract(self, context: AnalysisContext) -> PluginResult:

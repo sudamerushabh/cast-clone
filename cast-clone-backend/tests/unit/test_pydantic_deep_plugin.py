@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from app.models.context import AnalysisContext
-from app.models.enums import (  # noqa: F401  -- used in forthcoming M3 tasks
+from app.models.enums import (
     Confidence,
     EdgeKind,
     NodeKind,
 )
-from app.models.graph import (  # noqa: F401  -- used in forthcoming M3 tasks
+from app.models.graph import (  # noqa: F401  -- SymbolGraph used in forthcoming M3 tasks
     GraphEdge,
     GraphNode,
     SymbolGraph,
@@ -35,3 +35,55 @@ def test_detect_returns_not_detected_when_no_basemodel_inherits():
     plugin = FastAPIPydanticPlugin()
     result = plugin.detect(ctx)
     assert result.confidence is None
+
+
+def test_detect_high_when_basemodel_inherits_edge_present():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoCreate",
+        name="TodoCreate",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="BaseModel",
+            kind=EdgeKind.INHERITS,
+            confidence=Confidence.LOW,
+            evidence="tree-sitter",
+        )
+    )
+
+    result = FastAPIPydanticPlugin().detect(ctx)
+
+    assert result.confidence == Confidence.HIGH
+    assert "Pydantic" in result.reason
+
+
+def test_detect_recognises_qualified_basemodel():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="pkg.schemas.User",
+        name="User",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="pydantic.BaseModel",
+            kind=EdgeKind.INHERITS,
+            confidence=Confidence.LOW,
+        )
+    )
+
+    result = FastAPIPydanticPlugin().detect(ctx)
+
+    assert result.confidence == Confidence.HIGH
