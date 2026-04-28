@@ -181,3 +181,112 @@ async def test_extract_tags_pydantic_model_classes():
     assert other is not None
     assert other.properties.get("is_pydantic_model") is not True
     assert result.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_extract_parses_class_body_field_constraints():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoCreate",
+        name="TodoCreate",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    field_node = GraphNode(
+        fqn="app.schemas.todo.TodoCreate.title",
+        name="title",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={
+            "type": "str",
+            "value": "Field(min_length=1, max_length=200)",
+        },
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(field_node)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn=field_node.fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn="BaseModel",
+            kind=EdgeKind.INHERITS,
+        )
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    updated = ctx.graph.get_node(field_node.fqn)
+    assert updated is not None
+    constraints = updated.properties.get("constraints")
+    assert constraints == {"min_length": "1", "max_length": "200"}
+
+
+@pytest.mark.asyncio
+async def test_extract_parses_ge_and_le_numeric_constraints():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.todo.TodoCreate",
+        name="TodoCreate",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    owner_id = GraphNode(
+        fqn="app.schemas.todo.TodoCreate.owner_id",
+        name="owner_id",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"type": "int", "value": "Field(ge=1, le=1000)"},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(owner_id)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn=owner_id.fqn, kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    constraints = ctx.graph.get_node(owner_id.fqn).properties.get("constraints")
+    assert constraints == {"ge": "1", "le": "1000"}
+
+
+@pytest.mark.asyncio
+async def test_extract_ignores_non_field_value():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="M",
+        name="M",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    plain = GraphNode(
+        fqn="M.x",
+        name="x",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"type": "int", "value": "42"},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(plain)
+    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="M.x", kind=EdgeKind.CONTAINS))
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    assert "constraints" not in ctx.graph.get_node(plain.fqn).properties
