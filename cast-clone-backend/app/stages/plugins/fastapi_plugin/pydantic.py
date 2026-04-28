@@ -34,6 +34,13 @@ _FIELD_KWARG_RE = re.compile(
     r"(\"[^\"]*\"|'[^']*'|\([^)]*\)|\[[^\]]*\]|[^,)\s]+)"
 )
 
+# Matches a Pydantic validator decorator and (optionally) the first quoted
+# positional arg (the target field name). Group 1: kind. Group 2/3: target.
+_VALIDATOR_DECORATOR_RE = re.compile(
+    r"^@(field_validator|model_validator|validator|root_validator)\b"
+    r"(?:\(\s*\"([^\"]+)\"|\(\s*'([^']+)'|)"
+)
+
 _RECOGNISED_CONSTRAINTS = frozenset(
     {
         "min_length",
@@ -178,17 +185,17 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             node.properties["is_pydantic_model"] = True
 
         constraints_applied = self._apply_field_constraints(graph, model_fqns)
+        validators_tagged = self._tag_validators(graph, model_fqns)
 
         logger.info(
             "fastapi_pydantic_extract_end",
             pydantic_models=len(model_fqns),
             field_constraints=constraints_applied,
+            validators=validators_tagged,
         )
         return PluginResult.empty()
 
-    def _apply_field_constraints(
-        self, graph: SymbolGraph, model_fqns: set[str]
-    ) -> int:
+    def _apply_field_constraints(self, graph: SymbolGraph, model_fqns: set[str]) -> int:
         applied = 0
         for edge in graph.edges:
             if edge.kind != EdgeKind.CONTAINS:
@@ -208,6 +215,30 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
                 field_node.properties["constraints"] = {**existing, **combined}
                 applied += 1
         return applied
+
+    def _tag_validators(self, graph: SymbolGraph, model_fqns: set[str]) -> int:
+        tagged = 0
+        for edge in graph.edges:
+            if edge.kind != EdgeKind.CONTAINS:
+                continue
+            if edge.source_fqn not in model_fqns:
+                continue
+            func = graph.get_node(edge.target_fqn)
+            if func is None or func.kind != NodeKind.FUNCTION:
+                continue
+            for deco in func.properties.get("annotations", []):
+                match = _VALIDATOR_DECORATOR_RE.match(deco)
+                if not match:
+                    continue
+                kind = match.group(1)
+                target = match.group(2) or match.group(3)
+                func.properties["is_validator"] = True
+                func.properties["validator_kind"] = kind
+                if target:
+                    func.properties["target_field"] = target
+                tagged += 1
+                break
+        return tagged
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules.empty()

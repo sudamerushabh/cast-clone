@@ -396,3 +396,115 @@ async def test_extract_merges_constraints_from_type_and_value():
 
     constraints = ctx.graph.get_node("M.x").properties.get("constraints")
     assert constraints == {"ge": "0", "le": "100"}
+
+
+@pytest.mark.asyncio
+async def test_extract_tags_field_validator_function():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.User",
+        name="User",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    validator = GraphNode(
+        fqn="app.schemas.User.normalise_email",
+        name="normalise_email",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ['@field_validator("email")']},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(validator)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn,
+            target_fqn=validator.fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    updated = ctx.graph.get_node(validator.fqn)
+    assert updated.properties.get("is_validator") is True
+    assert updated.properties.get("validator_kind") == "field_validator"
+    assert updated.properties.get("target_field") == "email"
+
+
+@pytest.mark.asyncio
+async def test_extract_tags_model_validator_without_target_field():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    mv = GraphNode(
+        fqn="M.check",
+        name="check",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ['@model_validator(mode="after")']},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(mv)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.check", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    props = ctx.graph.get_node("M.check").properties
+    assert props.get("is_validator") is True
+    assert props.get("validator_kind") == "model_validator"
+    assert "target_field" not in props
+
+
+@pytest.mark.asyncio
+async def test_extract_tags_v1_validator_and_root_validator():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    v1 = GraphNode(
+        fqn="M.v1",
+        name="v1",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ['@validator("x", pre=True)']},
+    )
+    root = GraphNode(
+        fqn="M.root",
+        name="root",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ["@root_validator"]},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(v1)
+    ctx.graph.add_node(root)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.v1", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.root", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    v1_props = ctx.graph.get_node("M.v1").properties
+    assert v1_props.get("validator_kind") == "validator"
+    assert v1_props.get("target_field") == "x"
+    root_props = ctx.graph.get_node("M.root").properties
+    assert root_props.get("validator_kind") == "root_validator"
+    assert "target_field" not in root_props
