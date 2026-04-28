@@ -698,3 +698,144 @@ async def test_extract_falls_back_to_return_type_when_no_response_model():
     assert len(returns) == 1
     assert returns[0].target_fqn == model.fqn
     assert returns[0].evidence == "fastapi-return-annotation"
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_maps_to_for_unique_column_match():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(
+        fqn="app.schemas.User",
+        name="User",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    email_field = GraphNode(
+        fqn="app.schemas.User.email",
+        name="email",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"type": "str", "value": ""},
+    )
+    users_table = GraphNode(
+        fqn="app.db.users",
+        name="users",
+        kind=NodeKind.TABLE,
+        language="python",
+    )
+    email_column = GraphNode(
+        fqn="app.db.users.email",
+        name="email",
+        kind=NodeKind.COLUMN,
+        language="python",
+        properties={"type": "VARCHAR"},
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(email_field)
+    ctx.graph.add_node(users_table)
+    ctx.graph.add_node(email_column)
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=model.fqn, target_fqn=email_field.fqn, kind=EdgeKind.CONTAINS
+        )
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=model.fqn, target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(
+            source_fqn=users_table.fqn,
+            target_fqn=email_column.fqn,
+            kind=EdgeKind.HAS_COLUMN,
+        )
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    maps = [e for e in result.edges if e.kind == EdgeKind.MAPS_TO]
+    assert len(maps) == 1
+    assert maps[0].source_fqn == email_field.fqn
+    assert maps[0].target_fqn == email_column.fqn
+    assert maps[0].confidence == Confidence.MEDIUM
+    assert maps[0].properties.get("source") == "pydantic"
+    assert maps[0].properties.get("confidence_reason") == "name_and_type_match"
+
+
+@pytest.mark.asyncio
+async def test_extract_uses_low_confidence_on_ambiguous_matches():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    field = GraphNode(
+        fqn="M.email",
+        name="email",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"type": "str"},
+    )
+    col1 = GraphNode(
+        fqn="t1.email",
+        name="email",
+        kind=NodeKind.COLUMN,
+        language="python",
+        properties={"type": "VARCHAR"},
+    )
+    col2 = GraphNode(
+        fqn="t2.email",
+        name="email",
+        kind=NodeKind.COLUMN,
+        language="python",
+        properties={"type": "TEXT"},
+    )
+    for n in (model, field, col1, col2):
+        ctx.graph.add_node(n)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.email", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    result = await FastAPIPydanticPlugin().extract(ctx)
+
+    maps = [e for e in result.edges if e.kind == EdgeKind.MAPS_TO]
+    assert len(maps) == 2
+    assert all(e.confidence == Confidence.LOW for e in maps)
+
+
+@pytest.mark.asyncio
+async def test_extract_skips_maps_to_when_flag_disabled(monkeypatch):
+    import app.stages.plugins.fastapi_plugin.pydantic as mod
+
+    monkeypatch.setattr(mod, "ENABLE_PYDANTIC_ORM_LINKING", False)
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    field = GraphNode(
+        fqn="M.email",
+        name="email",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"type": "str"},
+    )
+    col = GraphNode(
+        fqn="t.email",
+        name="email",
+        kind=NodeKind.COLUMN,
+        language="python",
+        properties={"type": "VARCHAR"},
+    )
+    for n in (model, field, col):
+        ctx.graph.add_node(n)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="M.email", kind=EdgeKind.CONTAINS)
+    )
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS)
+    )
+
+    result = await mod.FastAPIPydanticPlugin().extract(ctx)
+
+    assert [e for e in result.edges if e.kind == EdgeKind.MAPS_TO] == []

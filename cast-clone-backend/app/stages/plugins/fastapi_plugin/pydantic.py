@@ -18,7 +18,7 @@ import structlog
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphEdge, SymbolGraph
+from app.models.graph import GraphEdge, GraphNode, SymbolGraph
 from app.stages.plugins.base import (
     FrameworkPlugin,
     LayerRules,
@@ -114,6 +114,36 @@ def _parse_field_constraints(raw_value: str) -> dict[str, str]:
 # Tests monkeypatch this constant; production runs never mutate it.
 ENABLE_PYDANTIC_ORM_LINKING = True
 
+# Python type-name → set of compatible SQL type names. Both sides are normalised
+# (Python: outer wrapper / `| None` stripped; SQL: uppercased and `(...)` stripped)
+# before lookup. Keys are bare Python builtins; values are upper-case SQL types.
+_PY_TO_SQL_TYPES: dict[str, frozenset[str]] = {
+    "str": frozenset({"VARCHAR", "TEXT", "CHAR", "STRING", "CITEXT"}),
+    "int": frozenset({"INTEGER", "BIGINT", "SMALLINT", "INT"}),
+    "bool": frozenset({"BOOLEAN", "BOOL"}),
+    "float": frozenset(
+        {"REAL", "FLOAT", "DOUBLE", "DOUBLE PRECISION", "NUMERIC", "DECIMAL"}
+    ),
+    "datetime": frozenset({"TIMESTAMP", "DATETIME", "TIMESTAMPTZ"}),
+    "date": frozenset({"DATE"}),
+}
+
+
+def _python_type_compatible(py_type: str, sql_type: str) -> bool:
+    """Return True if a Python annotation string is compatible with a SQL type.
+
+    Handles common wrappers: ``Optional[str]``/``str | None`` → ``str``,
+    ``VARCHAR(255)`` → ``VARCHAR``. Unknown Python types map to no SQL types
+    (returns False).
+    """
+    if not py_type or not sql_type:
+        return False
+    py_norm = py_type.strip().split("[")[0].split("|")[0].strip()
+    sql_norm = sql_type.strip().upper().split("(")[0].strip()
+    allowed = _PY_TO_SQL_TYPES.get(py_norm, frozenset())
+    return sql_norm in allowed
+
+
 # FQNs accepted as Pydantic base classes for INHERITS-edge detection.
 # Bare names cover pre-SCIP (tree-sitter only) output where the supertype
 # identifier is unresolved; qualified forms cover post-SCIP. RootModel is
@@ -193,6 +223,7 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
         edges: list[GraphEdge] = []
         edges.extend(self._emit_accepts_edges(graph, model_fqns))
         edges.extend(self._emit_returns_edges(graph, model_fqns))
+        edges.extend(self._emit_maps_to_edges(graph, model_fqns))
 
         logger.info(
             "fastapi_pydantic_extract_end",
@@ -201,6 +232,7 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             validators=validators_tagged,
             accepts_edges=sum(1 for e in edges if e.kind == EdgeKind.ACCEPTS),
             returns_edges=sum(1 for e in edges if e.kind == EdgeKind.RETURNS),
+            maps_to_edges=sum(1 for e in edges if e.kind == EdgeKind.MAPS_TO),
         )
         return PluginResult(
             nodes=[],
@@ -390,6 +422,86 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
                 tagged += 1
                 break
         return tagged
+
+    def _emit_maps_to_edges(
+        self, graph: SymbolGraph, model_fqns: set[str]
+    ) -> list[GraphEdge]:
+        """Heuristically link Pydantic fields to SQLAlchemy columns.
+
+        Match requires identical column name AND compatible Python/SQL types.
+        Confidence is MEDIUM if exactly one candidate column matches a field,
+        LOW per-candidate when multiple columns match. Reads the module-level
+        ``ENABLE_PYDANTIC_ORM_LINKING`` toggle on each call so tests can disable
+        the pass via monkeypatch.
+        """
+        # Read the toggle each call — DO NOT cache at import or in __init__.
+        if not ENABLE_PYDANTIC_ORM_LINKING:
+            return []
+
+        # Index columns by name for O(1) candidate lookup per field.
+        columns_by_name: dict[str, list[GraphNode]] = {}
+        for node in graph.nodes.values():
+            if node.kind != NodeKind.COLUMN:
+                continue
+            columns_by_name.setdefault(node.name, []).append(node)
+
+        if not columns_by_name:
+            return []
+
+        edges: list[GraphEdge] = []
+        for edge in graph.edges:
+            if edge.kind != EdgeKind.CONTAINS:
+                continue
+            if edge.source_fqn not in model_fqns:
+                continue
+            field_node = graph.get_node(edge.target_fqn)
+            if field_node is None or field_node.kind != NodeKind.FIELD:
+                continue
+
+            candidates = columns_by_name.get(field_node.name, [])
+            if not candidates:
+                continue
+
+            py_type = field_node.properties.get("type", "")
+            compatible = [
+                col
+                for col in candidates
+                if _python_type_compatible(py_type, col.properties.get("type", ""))
+            ]
+            if not compatible:
+                continue
+
+            if len(compatible) == 1:
+                col = compatible[0]
+                edges.append(
+                    GraphEdge(
+                        source_fqn=field_node.fqn,
+                        target_fqn=col.fqn,
+                        kind=EdgeKind.MAPS_TO,
+                        confidence=Confidence.MEDIUM,
+                        evidence="pydantic-orm-name-and-type",
+                        properties={
+                            "source": "pydantic",
+                            "confidence_reason": "name_and_type_match",
+                        },
+                    )
+                )
+            else:
+                for col in compatible:
+                    edges.append(
+                        GraphEdge(
+                            source_fqn=field_node.fqn,
+                            target_fqn=col.fqn,
+                            kind=EdgeKind.MAPS_TO,
+                            confidence=Confidence.LOW,
+                            evidence="pydantic-orm-name-and-type-ambiguous",
+                            properties={
+                                "source": "pydantic",
+                                "confidence_reason": "ambiguous_multiple_candidates",
+                            },
+                        )
+                    )
+        return edges
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules.empty()
