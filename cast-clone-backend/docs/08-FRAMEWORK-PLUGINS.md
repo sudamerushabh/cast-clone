@@ -697,3 +697,47 @@ As of 2026-04-22, building on M1:
 - **Alembic plugin** (`app/stages/plugins/alembic_plugin/`) — new. Detects via `alembic.ini` or `migrations/env.py`. Parses each `migrations/versions/*.py`, emits one CONFIG_FILE per revision with `upgrade_ops` / `downgrade_ops` capturing the common `op.*` calls (`create_table`, `drop_table`, `add_column`, `drop_column`, `alter_column`, `rename_table`). Emits INHERITS edges to form the revision chain DAG; dangling parents become warnings, not dangling edges.
 
 Subsequent milestones (M3-M4) add Pydantic deep extraction, Celery, Flask, and integration polish.
+
+### Python — FastAPI Pydantic deep + Celery (M3 complete)
+
+As of 2026-04-28, building on M1+M2:
+
+#### FastAPIPydanticPlugin
+
+Deep extraction of Pydantic v1 and v2 models used as FastAPI request and response bodies.
+
+| Output | Kind | Condition |
+|---|---|---|
+| Tag on CLASS node | `properties.is_pydantic_model = True` | Class has INHERITS edge to `BaseModel` or `RootModel` (bare or `pydantic.*` qualified) |
+| Field constraints | `properties.constraints` dict on FIELD | `Field(...)` call present in class-body or `Annotated[...]` form |
+| Validator tags | `is_validator`, `validator_kind`, `target_field` on FUNCTION | Decorated with `@field_validator`, `@model_validator`, `@validator`, or `@root_validator` |
+| ACCEPTS edge | `APIEndpoint → CLASS` | Endpoint param type resolves to a Pydantic model (3-step matcher: exact FQN → same-module → endswith) |
+| RETURNS edge | `APIEndpoint → CLASS` | `response_model=` decorator kwarg (preferred) or function return annotation resolves to a Pydantic model |
+| MAPS_TO edge | `FIELD → COLUMN` | Field name equals column name AND Python↔SQL type is compatible |
+
+**Detection:** Tightened predicate accepts bare `BaseModel`/`RootModel` (pre-SCIP tree-sitter output) or qualified forms whose package path contains the literal segment `pydantic`. Rejects user-defined supertypes like `app.base.BaseModel` (SQLAlchemy declarative) that would otherwise false-positive on suffix match.
+
+**MAPS_TO confidence:** `MEDIUM` for a unique candidate column. `LOW` per-candidate when multiple columns share the field name (one edge each, downstream consumer resolves ambiguity).
+
+**Toggle:** `ENABLE_PYDANTIC_ORM_LINKING` module-level constant in `pydantic.py`. Default `True`. Tests monkeypatch it to disable.
+
+#### CeleryPlugin
+
+Celery task discovery, queue extraction, and producer linking.
+
+| Output | Kind | Condition |
+|---|---|---|
+| Task tags | `framework="celery"`, `is_message_consumer=True`, `task_name`, `queue` on FUNCTION | Decorated with `@shared_task`, `@celery.task`, or `@app.task` (with or without args) |
+| MESSAGE_TOPIC node | `fqn="queue::<name>"`, `transport="celery"` | One per unique `queue=` kwarg value (deduped across tasks) |
+| CONSUMES edge | `FUNCTION → MESSAGE_TOPIC` | Task function to its queue topic, `evidence="celery-task-decorator"` |
+| PRODUCES edge | `FUNCTION → MESSAGE_TOPIC` | Caller of `.delay()`, `.apply_async()`, `.s()`, `.signature()` (resolved against task FQN registry; bare-name fallback for tree-sitter pre-SCIP targets) |
+| Entry point | `kind="message_consumer"` with `task_name` + `queue` metadata | One per task |
+| Layer assignment | `Business Logic` | Per discovered task |
+
+**Default queue:** `"celery"` when no `queue=` kwarg present (matches Celery runtime default).
+
+**EdgeKinds added:** `ACCEPTS`, `RETURNS` — flow into Neo4j via `apoc.merge.relationship(from, e.type, ...)` without writer changes.
+
+**SCIP merger fixes (under M3):** parameter-descriptor leaks (`func().(arg)`) now skipped at `scip_symbol_to_fqn`; file:line fallback gated by SCIP descriptor kind to prevent FIELD↔CLASS cross-binding (off-by-one between scip-python's 0-indexed and tree-sitter's 1-indexed lines).
+
+**Deferred:** Celery Canvas (`chain`, `group`, `chord`), beat schedules, retry/backoff metadata.

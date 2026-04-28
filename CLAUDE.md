@@ -307,8 +307,10 @@ No Celery. No task chains. SCIP indexers run as parallel async subprocesses. Tre
 | Tier 1 | Spring DI + Web + Data, Hibernate/JPA, SQL Parser + Migration | Java + Database |
 | Tier 2a | React + Router, Express, NestJS, HTTP Endpoint Matcher | JS/TS |
 | Tier 2b | ASP.NET Core + Entity Framework | C#/.NET |
-| Tier 4 | Django, FastAPI, SQLAlchemy, Angular | Python + other |
+| Tier 4 | Django (Settings, ORM, URLs, DRF), FastAPI (Routes, Pydantic Deep), SQLAlchemy (sync+async), Alembic, Celery, Flask | Python |
 
 > **Python status (M1 complete, 2026-04-22):** SCIP foundation landed. Stage 2 builds a sandboxed venv; Stage 4 passes VIRTUAL_ENV + NODE_OPTIONS to `scip-python v0.6.6` with partial-index success. Framework plugins scheduled for M2–M4.
 
 > **Python status (M2 complete, 2026-04-22):** Django settings enriched (structured INSTALLED_APPS/DATABASES/MIDDLEWARE/AUTH_USER_MODEL/ROOT_URLCONF/DEFAULT_AUTO_FIELD); SQLAlchemy 2.0 async style pinned with tests; Alembic plugin landed with revision-chain DAG. M3 scheduled: Pydantic deep + Celery.
+
+> **Python status (M3 complete, 2026-04-28):** FastAPIPydanticPlugin emits ACCEPTS/RETURNS edges from endpoints to Pydantic models, MAPS_TO edges from Pydantic FIELDs to SQLAlchemy COLUMNs (MEDIUM/LOW confidence), tags validator functions, extracts Field(...) constraints in class-body and Annotated[...] forms. CeleryPlugin discovers @shared_task/@celery.task/@app.task tasks, dedupes MESSAGE_TOPIC nodes per queue, emits CONSUMES + PRODUCES (.delay/.apply_async/.s/.signature). Two new EdgeKinds (ACCEPTS, RETURNS) flow through writer unchanged via apoc dynamic edge type. SCIP merger hardened: parameter-descriptor leaks dropped, file:line fallback now gated by descriptor kind to prevent FIELD↔CLASS cross-binding. M4 scheduled: Flask + integration polish.
