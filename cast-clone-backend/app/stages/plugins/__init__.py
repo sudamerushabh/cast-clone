@@ -22,6 +22,7 @@ from app.stages.plugins.dotnet.grpc import GRPCPlugin
 from app.stages.plugins.dotnet.middleware import ASPNetMiddlewarePlugin
 from app.stages.plugins.dotnet.signalr import SignalRPlugin
 from app.stages.plugins.dotnet.web import ASPNetWebPlugin
+from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
 from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
 from app.stages.plugins.hibernate.jpa import HibernateJPAPlugin
 from app.stages.plugins.registry import (
@@ -53,6 +54,7 @@ global_registry.register(EntityFrameworkPlugin)
 global_registry.register(SignalRPlugin)
 global_registry.register(GRPCPlugin)
 global_registry.register(FastAPIPlugin)
+global_registry.register(FastAPIPydanticPlugin)
 global_registry.register(SQLAlchemyPlugin)
 global_registry.register(DjangoSettingsPlugin)
 global_registry.register(DjangoURLsPlugin)
@@ -69,6 +71,7 @@ __all__ = [
     "PluginResult",
     "AlembicPlugin",
     "FastAPIPlugin",
+    "FastAPIPydanticPlugin",
     "SQLAlchemyPlugin",
     "global_registry",
     "run_framework_plugins",
