@@ -708,7 +708,12 @@ class PythonExtractor:
 
             type_node = expr.child_by_field_name("type")
             if type_node is not None:
-                props["type_annotation"] = _node_text(type_node, source)
+                annotation = _node_text(type_node, source)
+                # Store under both keys: ``type_annotation`` for legacy
+                # Python-extractor consumers and ``type`` for cross-language
+                # plugin consumers (Spring/JPA/Pydantic etc. all read ``type``).
+                props["type_annotation"] = annotation
+                props["type"] = annotation
 
             nodes.append(
                 GraphNode(
@@ -780,7 +785,10 @@ class PythonExtractor:
                 field_fqn = f"{class_fqn}.{field_name}"
                 props: dict[str, Any] = {}
                 if field_type:
+                    # See note above: dual-key for legacy ``type_annotation``
+                    # tests and the cross-language ``type`` convention.
                     props["type_annotation"] = field_type
+                    props["type"] = field_type
                 if field_value is not None:
                     props["value"] = field_value
                 nodes.append(
