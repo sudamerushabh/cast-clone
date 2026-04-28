@@ -290,3 +290,30 @@ async def test_extract_ignores_non_field_value():
     await FastAPIPydanticPlugin().extract(ctx)
 
     assert "constraints" not in ctx.graph.get_node(plain.fqn).properties
+
+
+@pytest.mark.asyncio
+async def test_extract_field_constraints_merges_with_existing():
+    from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
+
+    ctx = _ctx()
+    model = GraphNode(fqn="M", name="M", kind=NodeKind.CLASS, language="python")
+    field = GraphNode(
+        fqn="M.title",
+        name="title",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={
+            "value": "Field(min_length=1)",
+            "constraints": {"description": "preset"},
+        },
+    )
+    ctx.graph.add_node(model)
+    ctx.graph.add_node(field)
+    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="M.title", kind=EdgeKind.CONTAINS))
+    ctx.graph.add_edge(GraphEdge(source_fqn="M", target_fqn="BaseModel", kind=EdgeKind.INHERITS))
+
+    await FastAPIPydanticPlugin().extract(ctx)
+
+    constraints = ctx.graph.get_node("M.title").properties["constraints"]
+    assert constraints == {"description": "preset", "min_length": "1"}

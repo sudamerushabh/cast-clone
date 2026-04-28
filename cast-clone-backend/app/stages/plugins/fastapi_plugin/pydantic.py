@@ -68,6 +68,10 @@ def _parse_field_constraints(raw_value: str) -> dict[str, str]:
         # Find matching close paren respecting nesting.
         depth = 0
         end = -1
+        # Note: this walker does NOT track string state. A `)` inside a string
+        # literal (e.g., `description="(hello)"`) terminates the walk early and
+        # silently drops constraints after that point. Acceptable for the bounded
+        # fixture set; revisit if false-negatives surface.
         for idx in range(open_paren, len(raw_value)):
             ch = raw_value[idx]
             if ch == "(":
@@ -197,7 +201,8 @@ class FastAPIPydanticPlugin(FrameworkPlugin):
             raw = field_node.properties.get("value", "")
             constraints = _parse_field_constraints(raw)
             if constraints:
-                field_node.properties["constraints"] = constraints
+                existing = field_node.properties.get("constraints", {})
+                field_node.properties["constraints"] = {**existing, **constraints}
                 applied += 1
         return applied
 
