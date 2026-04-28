@@ -115,3 +115,55 @@ class TestFastAPITodoPydanticChain:
         assert len(pydantic_maps) >= 1, (
             "expected >=1 Pydantic field -> SQLAlchemy column MAPS_TO edge"
         )
+
+
+class TestDjangoBlogCeleryChain:
+    """Acceptance: endpoint -> producer function -> Celery task -> queue topic."""
+
+    @pytest.fixture(scope="class")
+    async def ctx(self) -> AnalysisContext:
+        fixture = FIXTURES_ROOT / "django-blog"
+        return await _run_pipeline_stages_1_to_5(fixture, "django-blog-m3")
+
+    async def test_task_nodes_tagged_with_celery_framework(
+        self, ctx: AnalysisContext
+    ) -> None:
+        tasks = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.FUNCTION and n.properties.get("framework") == "celery"
+        ]
+        assert len(tasks) >= 2, (
+            f"expected >=2 Celery tasks in django-blog; got {len(tasks)}"
+        )
+
+    async def test_message_topic_exists_for_notifications(
+        self, ctx: AnalysisContext
+    ) -> None:
+        topics = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.MESSAGE_TOPIC and n.name == "notifications"
+        ]
+        assert len(topics) == 1, (
+            f"expected exactly one 'notifications' MESSAGE_TOPIC; got {len(topics)}"
+        )
+
+    async def test_consumes_edge_from_task_to_topic(self, ctx: AnalysisContext) -> None:
+        consumes = [e for e in ctx.graph.edges if e.kind == EdgeKind.CONSUMES]
+        assert any(e.target_fqn == "queue::notifications" for e in consumes), (
+            "expected CONSUMES edge pointing to queue::notifications"
+        )
+
+    async def test_produces_edge_from_view_caller_to_topic(
+        self, ctx: AnalysisContext
+    ) -> None:
+        produces = [e for e in ctx.graph.edges if e.kind == EdgeKind.PRODUCES]
+        assert any(
+            e.target_fqn == "queue::notifications"
+            and e.source_fqn.endswith("perform_create")
+            for e in produces
+        ), (
+            "expected PRODUCES edge from PostViewSet.perform_create to "
+            "queue::notifications"
+        )
