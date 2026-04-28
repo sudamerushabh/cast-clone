@@ -123,3 +123,88 @@ async def test_extract_tags_task_functions_and_emits_entry_points():
         for ep in result.entry_points
     )
     assert result.layer_assignments.get(task.fqn) == "Business Logic"
+
+
+@pytest.mark.asyncio
+async def test_extract_creates_message_topic_and_consumes_edge():
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="posts.tasks.notify",
+            name="notify",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@shared_task(queue="notifications")']},
+        )
+    )
+
+    result = await CeleryPlugin().extract(ctx)
+
+    topics = [n for n in result.nodes if n.kind == NodeKind.MESSAGE_TOPIC]
+    assert len(topics) == 1
+    assert topics[0].fqn == "queue::notifications"
+    assert topics[0].name == "notifications"
+
+    consumes = [e for e in result.edges if e.kind == EdgeKind.CONSUMES]
+    assert len(consumes) == 1
+    assert consumes[0].source_fqn == "posts.tasks.notify"
+    assert consumes[0].target_fqn == "queue::notifications"
+    assert consumes[0].properties.get("queue") == "notifications"
+
+
+@pytest.mark.asyncio
+async def test_extract_dedupes_queue_nodes_across_tasks():
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="a",
+            name="a",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@shared_task(queue="q1")']},
+        )
+    )
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="b",
+            name="b",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@shared_task(queue="q1")']},
+        )
+    )
+
+    result = await CeleryPlugin().extract(ctx)
+
+    topics = [n for n in result.nodes if n.kind == NodeKind.MESSAGE_TOPIC]
+    assert len(topics) == 1
+    assert topics[0].fqn == "queue::q1"
+
+    consumes = [e for e in result.edges if e.kind == EdgeKind.CONSUMES]
+    assert len(consumes) == 2
+
+
+@pytest.mark.asyncio
+async def test_extract_defaults_queue_to_celery_when_kwarg_missing():
+    from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="a",
+            name="a",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ["@shared_task"]},
+        )
+    )
+
+    result = await CeleryPlugin().extract(ctx)
+
+    topics = [n for n in result.nodes if n.kind == NodeKind.MESSAGE_TOPIC]
+    assert len(topics) == 1
+    assert topics[0].name == "celery"
