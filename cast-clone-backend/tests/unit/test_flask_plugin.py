@@ -646,3 +646,46 @@ async def test_extract_emits_endpoints_per_resource_method(tmp_path):
         e.source_fqn == f"{cls.fqn}.post" and e.target_fqn == "POST:/api/items"
         for e in handles
     )
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoints_for_methodview_registered_via_add_resource(tmp_path):
+    from app.models.manifest import ProjectManifest
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text(
+        'api = Api(app)\napi.add_resource(UserView, "/users/<int:user_id>")\n'
+    )
+
+    ctx = _ctx()
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
+    cls = GraphNode(
+        fqn="app.views.UserView",
+        name="UserView",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(cls)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="MethodView", kind=EdgeKind.INHERITS)
+    )
+    for method_name in ("get", "delete"):
+        m = GraphNode(
+            fqn=f"{cls.fqn}.{method_name}",
+            name=method_name,
+            kind=NodeKind.FUNCTION,
+            language="python",
+        )
+        ctx.graph.add_node(m)
+        ctx.graph.add_edge(
+            GraphEdge(source_fqn=cls.fqn, target_fqn=m.fqn, kind=EdgeKind.CONTAINS)
+        )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    paths = {(ep.properties["method"], ep.properties["path"]) for ep in endpoints}
+    assert ("GET", "/users/<int:user_id>") in paths
+    assert ("DELETE", "/users/<int:user_id>") in paths
