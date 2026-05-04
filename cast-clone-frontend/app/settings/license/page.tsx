@@ -13,10 +13,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Copy, Check, Upload, Shield, AlertTriangle } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  FileText,
+  Loader2,
+  Shield,
+  Upload,
+  X,
+} from "lucide-react";
 
 // ── Helpers ──
 
@@ -245,6 +253,139 @@ function LocBreakdownTable({
 
 // ── Upload Form ──
 
+const MAX_LICENSE_BYTES = 1024 * 1024; // 1 MB sanity cap; real licenses are <10 KB.
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface JwtPreview {
+  expiresAt: number | null;
+  tier: number | string | null;
+  customerName: string | null;
+  organization: string | null;
+  locLimit: number | null;
+}
+
+// Decode JWT payload without verifying the signature — purely for UI preview.
+// The server re-verifies on upload, so a tampered preview can't grant access.
+function decodeJwtPreview(token: string): JwtPreview | null {
+  try {
+    const segments = token.trim().split(".");
+    if (segments.length < 2) return null;
+    const padded = segments[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    const claims = JSON.parse(json) as {
+      exp?: number;
+      license?: {
+        tier?: number | string;
+        loc_limit?: number;
+        customer?: { name?: string; organization?: string };
+      };
+    };
+    return {
+      expiresAt: claims.exp ?? null,
+      tier: claims.license?.tier ?? null,
+      customerName: claims.license?.customer?.name ?? null,
+      organization: claims.license?.customer?.organization ?? null,
+      locLimit: claims.license?.loc_limit ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function FilePreviewCard({
+  file,
+  preview,
+  onClear,
+  disabled,
+}: {
+  file: File;
+  preview: JwtPreview | null;
+  onClear: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="rounded-md border bg-muted/30">
+      <div className="flex items-center justify-between gap-3 p-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{file.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {formatBytes(file.size)}
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onClear}
+          disabled={disabled}
+          aria-label="Remove file"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      {preview && (
+        <div className="border-t bg-background/50 px-3 py-2">
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+            License preview
+          </p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            {preview.customerName && (
+              <>
+                <span className="text-muted-foreground">Customer</span>
+                <span className="text-right font-medium">
+                  {preview.customerName}
+                </span>
+              </>
+            )}
+            {preview.organization && (
+              <>
+                <span className="text-muted-foreground">Organization</span>
+                <span className="text-right font-medium">
+                  {preview.organization}
+                </span>
+              </>
+            )}
+            {preview.tier != null && (
+              <>
+                <span className="text-muted-foreground">Tier</span>
+                <span className="text-right font-medium">
+                  {typeof preview.tier === "number"
+                    ? `Tier ${preview.tier}`
+                    : preview.tier}
+                </span>
+              </>
+            )}
+            {preview.locLimit != null && (
+              <>
+                <span className="text-muted-foreground">LOC limit</span>
+                <span className="text-right font-medium tabular-nums">
+                  {formatNumber(preview.locLimit)}
+                </span>
+              </>
+            )}
+            {preview.expiresAt != null && (
+              <>
+                <span className="text-muted-foreground">Expires</span>
+                <span className="text-right font-medium">
+                  {formatDate(preview.expiresAt)}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UploadForm({
   onSuccess,
   isAdmin,
@@ -253,14 +394,47 @@ function UploadForm({
   isAdmin: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<JwtPreview | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
 
-  const handleUpload = useCallback(async () => {
-    const file = fileRef.current?.files?.[0];
+  const handleFileSelect = useCallback(async (selected: File) => {
+    setUploadError("");
+    setUploadSuccess(false);
+
+    if (selected.size > MAX_LICENSE_BYTES) {
+      setUploadError(
+        `File is too large (${formatBytes(selected.size)}). License files are typically under 10 KB.`,
+      );
+      return;
+    }
+    if (!selected.name.toLowerCase().endsWith(".jwt")) {
+      setUploadError("Expected a .jwt license file.");
+      return;
+    }
+
+    setFile(selected);
+    try {
+      const text = await selected.text();
+      setPreview(decodeJwtPreview(text));
+    } catch {
+      setPreview(null);
+    }
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setFile(null);
+    setPreview(null);
+    setUploadError("");
+    setUploadSuccess(false);
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
     if (!file) return;
-
     setUploading(true);
     setUploadError("");
     setUploadSuccess(false);
@@ -268,6 +442,8 @@ function UploadForm({
     try {
       await uploadLicense(file);
       setUploadSuccess(true);
+      setFile(null);
+      setPreview(null);
       if (fileRef.current) fileRef.current.value = "";
       onSuccess();
     } catch (err: unknown) {
@@ -277,7 +453,7 @@ function UploadForm({
     } finally {
       setUploading(false);
     }
-  }, [onSuccess]);
+  }, [file, onSuccess]);
 
   if (!isAdmin) {
     return (
@@ -290,31 +466,95 @@ function UploadForm({
 
   return (
     <div className="space-y-3">
-      <Label htmlFor="license-file">License File (.jwt)</Label>
-      <div className="flex items-center gap-2">
-        <Input
-          id="license-file"
-          ref={fileRef}
-          type="file"
-          accept=".jwt"
-          className="flex-1"
-        />
-        <Button
-          onClick={handleUpload}
-          disabled={uploading}
+      <input
+        ref={fileRef}
+        id="license-file"
+        type="file"
+        accept=".jwt"
+        className="hidden"
+        onChange={(e) => {
+          const selected = e.target.files?.[0];
+          if (selected) void handleFileSelect(selected);
+        }}
+      />
+
+      {!file ? (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!uploading) setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragActive(false);
+            if (uploading) return;
+            const dropped = e.dataTransfer.files?.[0];
+            if (dropped) void handleFileSelect(dropped);
+          }}
+          className={`flex w-full flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-4 py-8 text-center transition-colors hover:bg-muted/50 ${
+            dragActive
+              ? "border-primary bg-primary/5"
+              : "border-muted-foreground/25"
+          }`}
         >
-          <Upload className="mr-2 h-4 w-4" />
-          {uploading ? "Uploading..." : "Upload"}
-        </Button>
-      </div>
+          <Upload className="h-6 w-6 text-muted-foreground" />
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Choose a license file</p>
+            <p className="text-xs text-muted-foreground">
+              Click to browse or drag and drop a <code>.jwt</code> file
+            </p>
+          </div>
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <FilePreviewCard
+            file={file}
+            preview={preview}
+            onClear={handleClear}
+            disabled={uploading}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleClear}
+              disabled={uploading}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={uploading}
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Activating...
+                </>
+              ) : (
+                <>
+                  <Shield className="mr-2 h-4 w-4" />
+                  Activate License
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {uploadError && (
         <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
           {uploadError}
         </div>
       )}
       {uploadSuccess && (
-        <div className="rounded-md bg-emerald-500/10 p-3 text-sm text-emerald-600">
-          License uploaded successfully.
+        <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 p-3 text-sm text-emerald-600">
+          <Check className="h-4 w-4 shrink-0" />
+          <span>License activated successfully.</span>
         </div>
       )}
     </div>
