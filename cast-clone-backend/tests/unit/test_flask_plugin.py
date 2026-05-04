@@ -299,3 +299,90 @@ def test_resolve_blueprint_prefixes_falls_back_to_constructor(tmp_path):
     result = resolve_blueprint_prefixes(graph, project_root=str(tmp_path))
 
     assert result == {"bp": "/only"}
+
+
+@pytest.mark.asyncio
+async def test_extract_applies_blueprint_prefix_to_endpoint(tmp_path):
+    from app.models.manifest import ProjectManifest
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text('app.register_blueprint(items_bp, url_prefix="/items")\n')
+    items_file = tmp_path / "app" / "blueprints" / "items.py"
+    items_file.parent.mkdir(parents=True)
+    items_file.write_text('items_bp = Blueprint("items", __name__)\n')
+
+    ctx = _ctx()
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.blueprints.items.items_bp",
+            name="items_bp",
+            kind=NodeKind.FIELD,
+            language="python",
+            path=str(items_file),
+            properties={"value": 'Blueprint("items", __name__)'},
+        )
+    )
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.blueprints.items.list_items",
+            name="list_items",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@items_bp.route("", methods=["GET"])']},
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert len(endpoints) == 1
+    assert endpoints[0].properties["path"] == "/items"
+    assert endpoints[0].fqn == "GET:/items"
+
+
+@pytest.mark.asyncio
+async def test_extract_joins_blueprint_prefix_and_path_with_single_slash(tmp_path):
+    from app.models.manifest import ProjectManifest
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text('app.register_blueprint(items_bp, url_prefix="/items")\n')
+    items_file = tmp_path / "app" / "blueprints" / "items.py"
+    items_file.parent.mkdir(parents=True)
+    items_file.write_text('items_bp = Blueprint("items", __name__)\n')
+
+    ctx = _ctx()
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.blueprints.items.items_bp",
+            name="items_bp",
+            kind=NodeKind.FIELD,
+            language="python",
+            path=str(items_file),
+            properties={"value": 'Blueprint("items", __name__)'},
+        )
+    )
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.blueprints.items.adjust",
+            name="adjust",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={
+                "annotations": [
+                    '@items_bp.route("/<int:item_id>/adjust", methods=["POST"])'
+                ]
+            },
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert endpoints[0].properties["path"] == "/items/<int:item_id>/adjust"
+    assert endpoints[0].fqn == "POST:/items/<int:item_id>/adjust"

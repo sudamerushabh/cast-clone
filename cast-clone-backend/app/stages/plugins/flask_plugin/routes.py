@@ -19,6 +19,7 @@ from app.stages.plugins.base import (
     PluginDetectionResult,
     PluginResult,
 )
+from app.stages.plugins.flask_plugin.blueprints import resolve_blueprint_prefixes
 
 logger = structlog.get_logger()
 
@@ -86,6 +87,19 @@ def _make_endpoint(
     return endpoint, edge, entry
 
 
+def _join_prefix_and_path(prefix: str, path: str) -> str:
+    """Join a Flask url_prefix with a route path using exactly one slash."""
+    if not prefix:
+        return path
+    if not path:
+        return prefix
+    if prefix.endswith("/") and path.startswith("/"):
+        return prefix + path[1:]
+    if not prefix.endswith("/") and not path.startswith("/"):
+        return f"{prefix}/{path}"
+    return prefix + path
+
+
 class FlaskPlugin(FrameworkPlugin):
     name = "flask"
     version = "1.0.0"
@@ -118,6 +132,13 @@ class FlaskPlugin(FrameworkPlugin):
         layer_assignments: dict[str, str] = {}
         warnings: list[str] = []
 
+        project_root = (
+            str(context.manifest.root_path) if context.manifest is not None else ""
+        )
+        bp_prefixes = (
+            resolve_blueprint_prefixes(graph, project_root) if project_root else {}
+        )
+
         for func in graph.nodes.values():
             if func.kind != NodeKind.FUNCTION or func.language != "python":
                 continue
@@ -125,11 +146,13 @@ class FlaskPlugin(FrameworkPlugin):
                 match = _ROUTE_DECORATOR_RE.match(deco)
                 if not match:
                     continue
-                var_name, path = match.group(1), match.group(2)
+                var_name, raw_path = match.group(1), match.group(2)
                 blueprint = None if var_name in APP_ROUTE_VARS else var_name
+                prefix = bp_prefixes.get(var_name, "") if blueprint else ""
+                full_path = _join_prefix_and_path(prefix, raw_path)
                 for method in _parse_methods(deco):
                     endpoint, edge, entry = _make_endpoint(
-                        path=path,
+                        path=full_path,
                         method=method,
                         handler_fqn=func.fqn,
                         blueprint=blueprint,
