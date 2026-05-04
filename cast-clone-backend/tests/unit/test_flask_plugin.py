@@ -560,3 +560,89 @@ def test_enumerate_resource_methods_supports_methodview():
     )
 
     assert result == {cls.fqn: [("DELETE", f"{cls.fqn}.delete")]}
+
+
+def test_resolve_restful_bindings_reads_api_prefix_and_add_resource(tmp_path):
+    from app.stages.plugins.flask_plugin.restful import resolve_restful_bindings
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text(
+        'api = Api(app, prefix="/api")\n'
+        'api.add_resource(ItemListResource, "/items")\n'
+        'api.add_resource(ItemResource, "/items/<int:item_id>")\n'
+    )
+
+    bindings = resolve_restful_bindings(project_root=str(tmp_path))
+
+    assert bindings == {
+        "ItemListResource": "/api/items",
+        "ItemResource": "/api/items/<int:item_id>",
+    }
+
+
+def test_resolve_restful_bindings_no_api_prefix(tmp_path):
+    from app.stages.plugins.flask_plugin.restful import resolve_restful_bindings
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text(
+        'api = Api(app)\napi.add_resource(HealthResource, "/healthz")\n'
+    )
+
+    bindings = resolve_restful_bindings(project_root=str(tmp_path))
+
+    assert bindings == {"HealthResource": "/healthz"}
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_endpoints_per_resource_method(tmp_path):
+    from app.models.manifest import ProjectManifest
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    app_init = tmp_path / "app" / "__init__.py"
+    app_init.parent.mkdir(parents=True)
+    app_init.write_text(
+        'api = Api(app, prefix="/api")\napi.add_resource(ItemListResource, "/items")\n'
+    )
+
+    ctx = _ctx()
+    ctx.manifest = ProjectManifest(root_path=tmp_path)
+    cls = GraphNode(
+        fqn="app.resources.ItemListResource",
+        name="ItemListResource",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    ctx.graph.add_node(cls)
+    ctx.graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="Resource", kind=EdgeKind.INHERITS)
+    )
+    for method_name in ("get", "post"):
+        m = GraphNode(
+            fqn=f"{cls.fqn}.{method_name}",
+            name=method_name,
+            kind=NodeKind.FUNCTION,
+            language="python",
+        )
+        ctx.graph.add_node(m)
+        ctx.graph.add_edge(
+            GraphEdge(source_fqn=cls.fqn, target_fqn=m.fqn, kind=EdgeKind.CONTAINS)
+        )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    ep_map = {(ep.properties["method"], ep.properties["path"]): ep for ep in endpoints}
+    assert ("GET", "/api/items") in ep_map
+    assert ("POST", "/api/items") in ep_map
+
+    handles = [e for e in result.edges if e.kind == EdgeKind.HANDLES]
+    assert any(
+        e.source_fqn == f"{cls.fqn}.get" and e.target_fqn == "GET:/api/items"
+        for e in handles
+    )
+    assert any(
+        e.source_fqn == f"{cls.fqn}.post" and e.target_fqn == "POST:/api/items"
+        for e in handles
+    )

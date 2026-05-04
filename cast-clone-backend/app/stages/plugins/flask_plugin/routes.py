@@ -20,6 +20,10 @@ from app.stages.plugins.base import (
     PluginResult,
 )
 from app.stages.plugins.flask_plugin.blueprints import resolve_blueprint_prefixes
+from app.stages.plugins.flask_plugin.restful import (
+    enumerate_resource_methods,
+    resolve_restful_bindings,
+)
 
 logger = structlog.get_logger()
 
@@ -33,6 +37,7 @@ _ADD_URL_RULE_RE = re.compile(
 )
 
 APP_ROUTE_VARS: frozenset[str] = frozenset({"app"})
+_RESTFUL_BASE_CLASSES: frozenset[str] = frozenset({"Resource", "MethodView"})
 
 
 def _parse_methods(decorator: str) -> list[str]:
@@ -174,6 +179,14 @@ class FlaskPlugin(FrameworkPlugin):
         entry_points.extend(rule_entries)
         warnings.extend(rule_warnings)
 
+        rest_nodes, rest_edges, rest_entries, rest_warnings = (
+            self._extract_restful_endpoints(graph, project_root)
+        )
+        nodes.extend(rest_nodes)
+        edges.extend(rest_edges)
+        entry_points.extend(rest_entries)
+        warnings.extend(rest_warnings)
+
         log.info(
             "flask_extract_complete",
             endpoints=len([n for n in nodes if n.kind == NodeKind.API_ENDPOINT]),
@@ -229,6 +242,38 @@ class FlaskPlugin(FrameworkPlugin):
                 endpoint, edge, entry = _make_endpoint(
                     path=path,
                     method=method,
+                    handler_fqn=handler_fqn,
+                )
+                nodes.append(endpoint)
+                edges.append(edge)
+                entry_points.append(entry)
+        return nodes, edges, entry_points, warnings
+
+    def _extract_restful_endpoints(
+        self, graph: SymbolGraph, project_root: str
+    ) -> tuple[list[GraphNode], list[GraphEdge], list[EntryPoint], list[str]]:
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        entry_points: list[EntryPoint] = []
+        warnings: list[str] = []
+
+        bindings = resolve_restful_bindings(project_root) if project_root else {}
+        methods_by_class = enumerate_resource_methods(graph, _RESTFUL_BASE_CLASSES)
+
+        for class_fqn, methods in methods_by_class.items():
+            class_node = graph.get_node(class_fqn)
+            if class_node is None:
+                continue
+            path = bindings.get(class_node.name)
+            if path is None:
+                warnings.append(
+                    f"restful resource {class_node.name} has no add_resource binding"
+                )
+                continue
+            for http_method, handler_fqn in methods:
+                endpoint, edge, entry = _make_endpoint(
+                    path=path,
+                    method=http_method,
                     handler_fqn=handler_fqn,
                 )
                 nodes.append(endpoint)

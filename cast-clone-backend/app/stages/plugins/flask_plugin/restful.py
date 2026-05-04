@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
+
 from app.models.enums import EdgeKind, NodeKind
 from app.models.graph import SymbolGraph
 
 _HTTP_METHOD_NAMES: frozenset[str] = frozenset(
     {"get", "post", "put", "patch", "delete", "head", "options"}
 )
+
+_API_CTOR_RE = re.compile(r"Api\([^)]*?prefix\s*=\s*[\"']([^\"']+)[\"']")
+_ADD_RESOURCE_RE = re.compile(r"add_resource\(\s*(\w+)\s*,\s*[\"']([^\"']+)[\"']")
 
 
 def _class_inherits_from(
@@ -59,3 +66,45 @@ def enumerate_resource_methods(
         if methods:
             result[node.fqn] = methods
     return result
+
+
+def _join_prefix(prefix: str, path: str) -> str:
+    if not prefix:
+        return path
+    if not path:
+        return prefix
+    if prefix.endswith("/") and path.startswith("/"):
+        return prefix + path[1:]
+    if not prefix.endswith("/") and not path.startswith("/"):
+        return f"{prefix}/{path}"
+    return prefix + path
+
+
+def resolve_restful_bindings(project_root: str) -> dict[str, str]:
+    """Return `{resource_class_name: effective_path}` by scanning .py files.
+
+    Resolves the Api(prefix=...) global prefix and joins it with every
+    api.add_resource(cls, "/path") call. When no Api prefix is present,
+    the path is used as-is.
+    """
+    bindings: dict[str, str] = {}
+    root = Path(project_root)
+    if not root.exists():
+        return bindings
+
+    for dirpath, _dirs, files in os.walk(root):
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            fpath = Path(dirpath) / fname
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            api_prefix_match = _API_CTOR_RE.search(text)
+            api_prefix = api_prefix_match.group(1) if api_prefix_match else ""
+            for match in _ADD_RESOURCE_RE.finditer(text):
+                cls_name = match.group(1)
+                path = match.group(2)
+                bindings[cls_name] = _join_prefix(api_prefix, path)
+    return bindings
