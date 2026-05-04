@@ -741,3 +741,64 @@ Celery task discovery, queue extraction, and producer linking.
 **SCIP merger fixes (under M3):** parameter-descriptor leaks (`func().(arg)`) now skipped at `scip_symbol_to_fqn`; file:line fallback gated by SCIP descriptor kind to prevent FIELD↔CLASS cross-binding (off-by-one between scip-python's 0-indexed and tree-sitter's 1-indexed lines).
 
 **Deferred:** Celery Canvas (`chain`, `group`, `chord`), beat schedules, retry/backoff metadata.
+
+---
+
+## Python — Flask + Flask-RESTful + Flask-SQLAlchemy (M4 complete)
+
+### FlaskPlugin (`flask_plugin/`)
+
+Covers Flask-core routes, Blueprint prefix chaining, Flask-RESTful `Resource`/`MethodView`, and the Flask-SQLAlchemy `db.Model` pattern. Composed of four modules:
+
+- `routes.py` — `FlaskPlugin` class + `@app.route`/`@bp.route`/`add_url_rule` extraction
+- `blueprints.py` — `resolve_blueprint_prefixes()` (FIELD ctor scan + filesystem `register_blueprint` scan)
+- `restful.py` — `enumerate_resource_methods()` (graph-only) + `resolve_restful_bindings()` (filesystem)
+- `sqlalchemy_adapter.py` — `extract_flask_sqlalchemy_tables()` + `extract_flask_sqlalchemy_columns()`
+
+**Detection:** `Flask` framework in manifest, or any `@<var>.route(...)` annotation in the graph (annotation-stripped form `<var>.route(...)` also matches — PythonExtractor strips the `@`).
+
+### Routes & blueprints
+
+| Pattern | Emits |
+|---|---|
+| `@app.route("/path", methods=[...])` | `APIEndpoint` + `HANDLES` per HTTP method (default `GET`) |
+| `@bp.route("/path", methods=[...])` | `APIEndpoint` tagged `blueprint=<var>`; path includes registered prefix |
+| `Blueprint("name", __name__, url_prefix="/x")` | Recorded as construction-time prefix |
+| `app.register_blueprint(bp, url_prefix="/x")` | Recorded as registration-time prefix (wins over constructor) |
+| `add_url_rule("/path", view_func=f, methods=[...])` | `APIEndpoint` + `HANDLES`; warns if `view_func` is unresolved |
+
+Method names are case-insensitive (`methods=["get", "post"]` is normalized to `["GET", "POST"]`).
+
+### Flask-RESTful + MethodView
+
+| Pattern | Emits |
+|---|---|
+| `class X(Resource):` with `get`/`post`/etc. methods | One `APIEndpoint` per HTTP-named method per registered path |
+| `class X(MethodView):` with HTTP methods | Same, when registered via `api.add_resource` |
+| `Api(app, prefix="/api")` | Global prefix applied to every `api.add_resource(...)` path |
+| `api.add_resource(X, "/path")` | Binds X's HTTP methods to the combined path |
+
+### Flask-SQLAlchemy adapter
+
+| Pattern | Emits |
+|---|---|
+| `class X(db.Model):` | `TABLE` node (name from `__tablename__` or snake_cased class name) |
+| `db.Column(db.Integer, ...)` | `COLUMN` + `HAS_COLUMN` edge with `type`, `primary_key`, `nullable`, `unique` |
+| `db.Column(db.String(N))` | COLUMN type `VARCHAR(N)` |
+| `db.ForeignKey("other_table.col")` | `REFERENCES` edge column → referenced column |
+
+**Plugin layering with M2 SQLAlchemyPlugin:** SQLAlchemyPlugin now skips classes whose `INHERITS` edge target is `db.Model` — those are exclusively owned by FlaskPlugin's adapter, which understands the `db.Column` / `db.ForeignKey` syntax that the M2 plugin doesn't recognize. This prevents duplicate `TABLE` nodes when both plugins detect the same fixture.
+
+### Known limitations
+
+- `MethodView` registered via `app.add_url_rule("/p", view_func=V.as_view("name"))` is not recognized (the `as_view()` call is not parsed). Use `api.add_resource()` to register MethodView subclasses if discovery is required.
+- `db.relationship(...)` ORM relationships are not emitted; `REFERENCES` is the only cross-table edge M4 produces.
+- Blueprint chaining of more than one level (`app.register_blueprint(outer_bp)` where `outer_bp` itself contains `register_blueprint(inner_bp, ...)`) collapses to the outer-most prefix only.
+
+### Phase 1 acceptance gate (locked by `tests/e2e/test_python_full_stack.py`)
+
+- All three Python fixtures (`fastapi-todo`, `django-blog`, `flask-inventory`) complete Stages 1-7 in <5 minutes wall clock each.
+- Each fixture surfaces ≤5 warnings.
+- Each fixture produces a non-empty graph (>0 nodes, >0 edges).
+
+Observed (M4 ship): 0 warnings per fixture, ~4s per fixture wall time, 40-340 edges per fixture.

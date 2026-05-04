@@ -178,13 +178,14 @@ Detailed specs live in `cast-clone-backend/docs/`. **READ these before implement
 
 ## Roadmap Summary
 
-### Phase 1 — Core Analysis Engine (Months 1-3) ← CURRENT
+### Phase 1 — Core Analysis Engine (Months 1-3) ← COMPLETE
 Parse code → build graph → store in Neo4j → expose via API.
 - 4-layer parsing: tree-sitter (structure) + SCIP (type resolution) + framework plugins (invisible connections) + sqlglot (embedded SQL)
 - 9-stage pipeline: discover → dependencies → tree-sitter → SCIP → plugins → cross-tech link → enrich → write Neo4j → transactions
 - Tier 1 plugins: Spring DI/Web/Data, Hibernate/JPA, SQL Parser, SQL Migration
 - REST API for triggering analysis and querying graph
 - No frontend visualization yet — API returns JSON
+- Python production-ready: FastAPI, Django, Flask, SQLAlchemy (sync+async), Alembic, Celery, Pydantic deep
 
 ### Phase 2 — Visualization & Navigation (Months 3-5)
 Make the graph explorable via the Next.js frontend.
@@ -307,10 +308,12 @@ No Celery. No task chains. SCIP indexers run as parallel async subprocesses. Tre
 | Tier 1 | Spring DI + Web + Data, Hibernate/JPA, SQL Parser + Migration | Java + Database |
 | Tier 2a | React + Router, Express, NestJS, HTTP Endpoint Matcher | JS/TS |
 | Tier 2b | ASP.NET Core + Entity Framework | C#/.NET |
-| Tier 4 | Django (Settings, ORM, URLs, DRF), FastAPI (Routes, Pydantic Deep), SQLAlchemy (sync+async), Alembic, Celery, Flask | Python |
+| Tier 4 | Django (Settings, ORM, URLs, DRF), FastAPI (Routes, Pydantic Deep), SQLAlchemy (sync+async), Alembic, Celery, Flask (Routes, Blueprints, RESTful, SQLAlchemy adapter) | Python |
 
 > **Python status (M1 complete, 2026-04-22):** SCIP foundation landed. Stage 2 builds a sandboxed venv; Stage 4 passes VIRTUAL_ENV + NODE_OPTIONS to `scip-python v0.6.6` with partial-index success. Framework plugins scheduled for M2–M4.
 
 > **Python status (M2 complete, 2026-04-22):** Django settings enriched (structured INSTALLED_APPS/DATABASES/MIDDLEWARE/AUTH_USER_MODEL/ROOT_URLCONF/DEFAULT_AUTO_FIELD); SQLAlchemy 2.0 async style pinned with tests; Alembic plugin landed with revision-chain DAG. M3 scheduled: Pydantic deep + Celery.
 
-> **Python status (M3 complete, 2026-04-28):** FastAPIPydanticPlugin emits ACCEPTS/RETURNS edges from endpoints to Pydantic models, MAPS_TO edges from Pydantic FIELDs to SQLAlchemy COLUMNs (MEDIUM/LOW confidence), tags validator functions, extracts Field(...) constraints in class-body and Annotated[...] forms. CeleryPlugin discovers @shared_task/@celery.task/@app.task tasks, dedupes MESSAGE_TOPIC nodes per queue, emits CONSUMES + PRODUCES (.delay/.apply_async/.s/.signature). Two new EdgeKinds (ACCEPTS, RETURNS) flow through writer unchanged via apoc dynamic edge type. SCIP merger hardened: parameter-descriptor leaks dropped, file:line fallback now gated by descriptor kind to prevent FIELD↔CLASS cross-binding. M4 scheduled: Flask + integration polish.
+> **Python status (M3 complete, 2026-04-28):** FastAPIPydanticPlugin emits ACCEPTS/RETURNS edges from endpoints to Pydantic models, MAPS_TO edges from Pydantic FIELDs to SQLAlchemy COLUMNs (MEDIUM/LOW confidence), tags validator functions, extracts Field(...) constraints in class-body and Annotated[...] forms. CeleryPlugin discovers @shared_task/@celery.task/@app.task tasks, dedupes MESSAGE_TOPIC nodes per queue, emits CONSUMES + PRODUCES (.delay/.apply_async/.s/.signature). Two new EdgeKinds (ACCEPTS, RETURNS) flow through writer unchanged via apoc dynamic edge type. SCIP merger hardened: parameter-descriptor leaks dropped, file:line fallback now gated by descriptor kind to prevent FIELD↔CLASS cross-binding.
+
+> **Python status (M4 complete, 2026-05-04):** FlaskPlugin landed with four sub-modules — routes (`@app.route`/`@bp.route`/`add_url_rule`), blueprints (registration-time prefix wins), restful (Resource/MethodView via INHERITS+CONTAINS, `Api(prefix=)` + `add_resource` binding), sqlalchemy_adapter (`db.Model` → TABLE, `db.Column` → COLUMN, `db.ForeignKey` → REFERENCES). Decorator regexes tolerate the @-prefix-stripped form PythonExtractor produces. M2 SQLAlchemyPlugin now cedes `db.Model` subclasses to FlaskPlugin to avoid duplicate TABLE nodes. Phase 1 Python is production-ready: e2e smoke runs all three fixtures (fastapi-todo, django-blog, flask-inventory) through Stages 1-7 in <5s each with 0 warnings.
