@@ -122,3 +122,61 @@ class TestFlaskInventoryBlueprints:
             e.target_fqn == "GET:/items" and e.source_fqn.endswith("list_items")
             for e in handles
         ), "expected HANDLES edge from list_items -> GET:/items"
+
+
+class TestFlaskInventoryRestful:
+    """Acceptance: Flask-RESTful resources produce endpoints with Api prefix applied."""
+
+    @pytest.fixture(scope="class")
+    async def ctx(self) -> AnalysisContext:
+        return await _run_pipeline_stages_1_to_5(
+            FIXTURES_ROOT / "flask-inventory", "flask-inventory-m4-restful"
+        )
+
+    async def test_api_items_list_get(self, ctx: AnalysisContext) -> None:
+        eps = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.API_ENDPOINT
+            and n.properties.get("path") == "/api/items"
+            and n.properties.get("method") == "GET"
+        ]
+        assert len(eps) == 1
+
+    async def test_api_items_list_post(self, ctx: AnalysisContext) -> None:
+        eps = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.API_ENDPOINT
+            and n.properties.get("path") == "/api/items"
+            and n.properties.get("method") == "POST"
+        ]
+        assert len(eps) == 1
+
+    async def test_api_items_detail_get(self, ctx: AnalysisContext) -> None:
+        eps = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.API_ENDPOINT
+            and n.properties.get("path") == "/api/items/<int:item_id>"
+            and n.properties.get("method") == "GET"
+        ]
+        assert len(eps) == 1
+
+    async def test_api_items_detail_delete(self, ctx: AnalysisContext) -> None:
+        eps = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.API_ENDPOINT
+            and n.properties.get("path") == "/api/items/<int:item_id>"
+            and n.properties.get("method") == "DELETE"
+        ]
+        assert len(eps) == 1
+
+    async def test_resource_method_has_handles_edge(self, ctx: AnalysisContext) -> None:
+        handles = [e for e in ctx.graph.edges if e.kind == EdgeKind.HANDLES]
+        assert any(
+            e.target_fqn == "DELETE:/api/items/<int:item_id>"
+            and e.source_fqn.endswith("ItemResource.delete")
+            for e in handles
+        )
