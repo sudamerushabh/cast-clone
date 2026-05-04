@@ -6,7 +6,7 @@ import pytest
 
 from app.models.context import AnalysisContext
 from app.models.enums import Confidence, EdgeKind, NodeKind
-from app.models.graph import GraphNode
+from app.models.graph import GraphEdge, GraphNode
 
 
 def _ctx() -> AnalysisContext:
@@ -448,3 +448,115 @@ async def test_extract_warns_on_unresolvable_add_url_rule_view_func():
     result = await FlaskPlugin().extract(ctx)
 
     assert any("ghost" in w for w in result.warnings)
+
+
+def test_enumerate_resource_methods_finds_defined_http_methods():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.restful import (
+        enumerate_resource_methods,
+    )
+
+    graph = SymbolGraph()
+    resource_class = GraphNode(
+        fqn="app.resources.ItemListResource",
+        name="ItemListResource",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(resource_class)
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=resource_class.fqn,
+            target_fqn="Resource",
+            kind=EdgeKind.INHERITS,
+        )
+    )
+    for method_name in ("get", "post"):
+        m = GraphNode(
+            fqn=f"{resource_class.fqn}.{method_name}",
+            name=method_name,
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"is_method": True},
+        )
+        graph.add_node(m)
+        graph.add_edge(
+            GraphEdge(
+                source_fqn=resource_class.fqn,
+                target_fqn=m.fqn,
+                kind=EdgeKind.CONTAINS,
+            )
+        )
+    helper = GraphNode(
+        fqn=f"{resource_class.fqn}.internal",
+        name="internal",
+        kind=NodeKind.FUNCTION,
+        language="python",
+    )
+    graph.add_node(helper)
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=resource_class.fqn,
+            target_fqn=helper.fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+
+    result = enumerate_resource_methods(graph, base_classes=frozenset({"Resource"}))
+
+    assert resource_class.fqn in result
+    methods = result[resource_class.fqn]
+    assert sorted(methods) == [
+        ("GET", f"{resource_class.fqn}.get"),
+        ("POST", f"{resource_class.fqn}.post"),
+    ]
+
+
+def test_enumerate_resource_methods_ignores_unrelated_classes():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.restful import enumerate_resource_methods
+
+    graph = SymbolGraph()
+    graph.add_node(
+        GraphNode(
+            fqn="app.services.TodoService",
+            name="TodoService",
+            kind=NodeKind.CLASS,
+            language="python",
+        )
+    )
+
+    assert enumerate_resource_methods(graph, base_classes=frozenset({"Resource"})) == {}
+
+
+def test_enumerate_resource_methods_supports_methodview():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.restful import enumerate_resource_methods
+
+    graph = SymbolGraph()
+    cls = GraphNode(
+        fqn="app.views.UserView",
+        name="UserView",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(cls)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="MethodView", kind=EdgeKind.INHERITS)
+    )
+    m = GraphNode(
+        fqn=f"{cls.fqn}.delete",
+        name="delete",
+        kind=NodeKind.FUNCTION,
+        language="python",
+    )
+    graph.add_node(m)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn=m.fqn, kind=EdgeKind.CONTAINS)
+    )
+
+    result = enumerate_resource_methods(
+        graph, base_classes=frozenset({"Resource", "MethodView"})
+    )
+
+    assert result == {cls.fqn: [("DELETE", f"{cls.fqn}.delete")]}
