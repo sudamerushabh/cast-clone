@@ -25,6 +25,7 @@ from app.stages.plugins.dotnet.signalr import SignalRPlugin
 from app.stages.plugins.dotnet.web import ASPNetWebPlugin
 from app.stages.plugins.fastapi_plugin.pydantic import FastAPIPydanticPlugin
 from app.stages.plugins.fastapi_plugin.routes import FastAPIPlugin
+from app.stages.plugins.flask_plugin.routes import FlaskPlugin
 from app.stages.plugins.hibernate.jpa import HibernateJPAPlugin
 from app.stages.plugins.registry import (
     PluginRegistry,
@@ -63,6 +64,7 @@ global_registry.register(DjangoORMPlugin)
 global_registry.register(DjangoDRFPlugin)
 global_registry.register(AlembicPlugin)
 global_registry.register(CeleryPlugin)
+global_registry.register(FlaskPlugin)
 
 __all__ = [
     "FrameworkPlugin",
@@ -75,6 +77,7 @@ __all__ = [
     "CeleryPlugin",
     "FastAPIPlugin",
     "FastAPIPydanticPlugin",
+    "FlaskPlugin",
     "SQLAlchemyPlugin",
     "global_registry",
     "run_framework_plugins",

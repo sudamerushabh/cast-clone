@@ -624,3 +624,10 @@ def test_celery_plugin_is_registered():
     from app.stages.plugins.celery_plugin.tasks import CeleryPlugin
 
     assert CeleryPlugin in global_registry.plugin_classes
+
+
+def test_flask_plugin_is_registered():
+    from app.stages.plugins import global_registry
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    assert FlaskPlugin in global_registry.plugin_classes
