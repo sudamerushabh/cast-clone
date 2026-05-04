@@ -115,3 +115,29 @@ async def test_extract_defaults_app_route_method_to_get():
     assert len(endpoints) == 1
     assert endpoints[0].properties["method"] == "GET"
     assert endpoints[0].properties["path"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_extract_normalizes_lowercase_methods():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.wsgi.search",
+            name="search",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={
+                "annotations": ['@app.route("/search", methods=["get", "post"])']
+            },
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    methods = sorted(ep.properties["method"] for ep in endpoints)
+    assert methods == ["GET", "POST"], (
+        "lowercase methods=['get','post'] must produce two upper-cased endpoints"
+    )

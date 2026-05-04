@@ -25,7 +25,7 @@ logger = structlog.get_logger()
 # @<var>.route("/path", methods=["GET", "POST"])
 _ROUTE_DECORATOR_RE = re.compile(r"^@(\w+)\.route\(\s*[\"']([^\"']*)[\"']")
 _METHODS_KWARG_RE = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
-_METHOD_STRING_RE = re.compile(r"[\"']([A-Z]+)[\"']")
+_METHOD_STRING_RE = re.compile(r"[\"']([A-Za-z]+)[\"']")
 
 APP_ROUTE_VARS: frozenset[str] = frozenset({"app"})
 
