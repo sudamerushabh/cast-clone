@@ -180,3 +180,54 @@ class TestFlaskInventoryRestful:
             and e.source_fqn.endswith("ItemResource.delete")
             for e in handles
         )
+
+
+class TestFlaskInventoryModels:
+    """Acceptance: Flask-SQLAlchemy db.Model subclasses produce TABLE + COLUMN + REFERENCES."""
+
+    @pytest.fixture(scope="class")
+    async def ctx(self) -> AnalysisContext:
+        return await _run_pipeline_stages_1_to_5(
+            FIXTURES_ROOT / "flask-inventory", "flask-inventory-m4-models"
+        )
+
+    async def test_warehouses_table_exists(self, ctx: AnalysisContext) -> None:
+        tables = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.TABLE and n.name == "warehouses"
+        ]
+        assert len(tables) == 1
+
+    async def test_items_table_exists(self, ctx: AnalysisContext) -> None:
+        tables = [
+            n
+            for n in ctx.graph.nodes.values()
+            if n.kind == NodeKind.TABLE and n.name == "items"
+        ]
+        assert len(tables) == 1
+
+    async def test_items_has_expected_columns(self, ctx: AnalysisContext) -> None:
+        has_columns = [
+            e
+            for e in ctx.graph.edges
+            if e.kind == EdgeKind.HAS_COLUMN and e.source_fqn == "table::items"
+        ]
+        col_names = {
+            ctx.graph.get_node(e.target_fqn).name
+            for e in has_columns
+            if ctx.graph.get_node(e.target_fqn) is not None
+        }
+        assert {"id", "sku", "name", "quantity", "warehouse_id"} <= col_names
+
+    async def test_items_warehouse_id_references_warehouses_id(
+        self, ctx: AnalysisContext
+    ) -> None:
+        refs = [
+            e
+            for e in ctx.graph.edges
+            if e.kind == EdgeKind.REFERENCES
+            and e.source_fqn == "column::items.warehouse_id"
+            and e.target_fqn == "column::warehouses.id"
+        ]
+        assert len(refs) == 1

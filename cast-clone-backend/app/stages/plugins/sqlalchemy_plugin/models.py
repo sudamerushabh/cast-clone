@@ -134,10 +134,17 @@ class SQLAlchemyPlugin(FrameworkPlugin):
         )
 
     def _find_models(self, graph: SymbolGraph) -> dict[str, str]:
-        """Find classes with __tablename__ field. Returns {class_fqn: table_name}."""
+        """Find classes with __tablename__ field. Returns {class_fqn: table_name}.
+
+        Skips classes that inherit from Flask-SQLAlchemy's ``db.Model`` — those
+        are owned by FlaskPlugin's sqlalchemy_adapter, which understands the
+        ``db.Column(...)`` / ``db.ForeignKey(...)`` syntax this plugin doesn't.
+        """
         models: dict[str, str] = {}
         for node in graph.nodes.values():
             if node.kind != NodeKind.CLASS or node.language != "python":
+                continue
+            if self._inherits_flask_db_model(graph, node.fqn):
                 continue
             for edge in graph.get_edges_from(node.fqn):
                 if edge.kind != EdgeKind.CONTAINS:
@@ -154,6 +161,17 @@ class SQLAlchemyPlugin(FrameworkPlugin):
                         models[node.fqn] = match.group(1)
                     break
         return models
+
+    @staticmethod
+    def _inherits_flask_db_model(graph: SymbolGraph, class_fqn: str) -> bool:
+        """True iff the class has an INHERITS edge whose target is ``db.Model``."""
+        for edge in graph.get_edges_from(class_fqn):
+            if edge.kind != EdgeKind.INHERITS:
+                continue
+            target = edge.target_fqn
+            if target == "db.Model" or target.endswith(".db.Model"):
+                return True
+        return False
 
     def _extract_columns(
         self,
