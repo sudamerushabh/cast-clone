@@ -27,6 +27,10 @@ logger = structlog.get_logger()
 _ROUTE_DECORATOR_RE = re.compile(r"^@(\w+)\.route\(\s*[\"']([^\"']*)[\"']")
 _METHODS_KWARG_RE = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
 _METHOD_STRING_RE = re.compile(r"[\"']([A-Za-z]+)[\"']")
+_ADD_URL_RULE_RE = re.compile(
+    r"^add_url_rule\(\s*[\"']([^\"']+)[\"'].*?view_func\s*=\s*(\w+)",
+    re.DOTALL,
+)
 
 APP_ROUTE_VARS: frozenset[str] = frozenset({"app"})
 
@@ -162,6 +166,14 @@ class FlaskPlugin(FrameworkPlugin):
                     entry_points.append(entry)
                     layer_assignments[func.fqn] = "Presentation"
 
+        rule_nodes, rule_edges, rule_entries, rule_warnings = (
+            self._extract_add_url_rule_endpoints(graph)
+        )
+        nodes.extend(rule_nodes)
+        edges.extend(rule_edges)
+        entry_points.extend(rule_entries)
+        warnings.extend(rule_warnings)
+
         log.info(
             "flask_extract_complete",
             endpoints=len([n for n in nodes if n.kind == NodeKind.API_ENDPOINT]),
@@ -173,6 +185,56 @@ class FlaskPlugin(FrameworkPlugin):
             entry_points=entry_points,
             warnings=warnings,
         )
+
+    def _extract_add_url_rule_endpoints(
+        self, graph: SymbolGraph
+    ) -> tuple[list[GraphNode], list[GraphEdge], list[EntryPoint], list[str]]:
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        entry_points: list[EntryPoint] = []
+        warnings: list[str] = []
+
+        for node in graph.nodes.values():
+            if node.kind != NodeKind.FIELD or node.language != "python":
+                continue
+            raw = node.properties.get("value", "")
+            if not raw.startswith("add_url_rule("):
+                continue
+            match = _ADD_URL_RULE_RE.match(raw)
+            if not match:
+                continue
+            path, view_func = match.group(1), match.group(2)
+            methods = _parse_methods(raw)
+
+            handler_fqn = None
+            parent_module = node.fqn.rsplit(".", 1)[0]
+            candidate = f"{parent_module}.{view_func}"
+            if candidate in graph.nodes:
+                handler_fqn = candidate
+            elif view_func in graph.nodes:
+                handler_fqn = view_func
+            else:
+                for fqn in graph.nodes:
+                    if fqn.endswith(f".{view_func}"):
+                        handler_fqn = fqn
+                        break
+
+            if handler_fqn is None:
+                warnings.append(
+                    f"add_url_rule view_func '{view_func}' at path '{path}' unresolved"
+                )
+                continue
+
+            for method in methods:
+                endpoint, edge, entry = _make_endpoint(
+                    path=path,
+                    method=method,
+                    handler_fqn=handler_fqn,
+                )
+                nodes.append(endpoint)
+                edges.append(edge)
+                entry_points.append(entry)
+        return nodes, edges, entry_points, warnings
 
     def get_layer_classification(self) -> LayerRules:
         return LayerRules(

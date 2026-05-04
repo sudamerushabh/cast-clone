@@ -386,3 +386,65 @@ async def test_extract_joins_blueprint_prefix_and_path_with_single_slash(tmp_pat
     endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
     assert endpoints[0].properties["path"] == "/items/<int:item_id>/adjust"
     assert endpoints[0].fqn == "POST:/items/<int:item_id>/adjust"
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_endpoint_from_add_url_rule():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.main.healthcheck",
+            name="healthcheck",
+            kind=NodeKind.FUNCTION,
+            language="python",
+        )
+    )
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.main.__add_url_rule_0",
+            name="__add_url_rule_0",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={
+                "value": (
+                    'add_url_rule("/healthz", endpoint="hc", '
+                    'view_func=healthcheck, methods=["GET"])'
+                )
+            },
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert any(ep.properties["path"] == "/healthz" for ep in endpoints)
+    handles = [e for e in result.edges if e.kind == EdgeKind.HANDLES]
+    assert any(
+        e.source_fqn == "app.main.healthcheck"
+        and e.target_fqn.startswith("GET:/healthz")
+        for e in handles
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_warns_on_unresolvable_add_url_rule_view_func():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.main.__add_url_rule_0",
+            name="__add_url_rule_0",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={
+                "value": 'add_url_rule("/x", view_func=ghost, methods=["GET"])'
+            },
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    assert any("ghost" in w for w in result.warnings)
