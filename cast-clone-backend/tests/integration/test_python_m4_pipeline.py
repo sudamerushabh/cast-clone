@@ -183,7 +183,7 @@ class TestFlaskInventoryRestful:
 
 
 class TestFlaskInventoryModels:
-    """Acceptance: Flask-SQLAlchemy db.Model subclasses produce TABLE + COLUMN + REFERENCES."""
+    """Acceptance: db.Model subclasses produce TABLE + COLUMN + REFERENCES edges."""
 
     @pytest.fixture(scope="class")
     async def ctx(self) -> AnalysisContext:
