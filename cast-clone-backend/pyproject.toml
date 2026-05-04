@@ -56,6 +56,7 @@ norecursedirs = ["tests/fixtures"]
 markers = [
     "integration: marks tests that require external services (Docker)",
     "scip_python: requires scip-python binary and network access",
+    "e2e: end-to-end smoke tests across multiple fixtures",
 ]
 
 [tool.ruff]
