@@ -25,6 +25,7 @@ from app.stages.plugins.flask_plugin.restful import (
     resolve_restful_bindings,
 )
 from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+    extract_flask_sqlalchemy_columns,
     extract_flask_sqlalchemy_tables,
 )
 
@@ -193,6 +194,11 @@ class FlaskPlugin(FrameworkPlugin):
         for table_node, class_fqn in extract_flask_sqlalchemy_tables(graph):
             nodes.append(table_node)
             layer_assignments[class_fqn] = "Data Access"
+
+        col_nodes, has_column_edges, ref_edges = extract_flask_sqlalchemy_columns(graph)
+        nodes.extend(col_nodes)
+        edges.extend(has_column_edges)
+        edges.extend(ref_edges)
 
         log.info(
             "flask_extract_complete",

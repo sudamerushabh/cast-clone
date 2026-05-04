@@ -769,3 +769,144 @@ def test_extract_flask_sqlalchemy_tables_skips_non_model_classes():
     graph.add_node(cls)
 
     assert extract_flask_sqlalchemy_tables(graph) == []
+
+
+def test_extract_flask_sqlalchemy_columns():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+        extract_flask_sqlalchemy_columns,
+    )
+
+    graph = SymbolGraph()
+    cls = GraphNode(
+        fqn="app.models.Item",
+        name="Item",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(cls)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="db.Model", kind=EdgeKind.INHERITS)
+    )
+    graph.add_node(
+        GraphNode(
+            fqn=f"{cls.fqn}.__tablename__",
+            name="__tablename__",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '"items"'},
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=cls.fqn,
+            target_fqn=f"{cls.fqn}.__tablename__",
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+    id_field = GraphNode(
+        fqn=f"{cls.fqn}.id",
+        name="id",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"value": "db.Column(db.Integer, primary_key=True)"},
+    )
+    sku_field = GraphNode(
+        fqn=f"{cls.fqn}.sku",
+        name="sku",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"value": "db.Column(db.String(64), unique=True, nullable=False)"},
+    )
+    graph.add_node(id_field)
+    graph.add_node(sku_field)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn=id_field.fqn, kind=EdgeKind.CONTAINS)
+    )
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn=sku_field.fqn, kind=EdgeKind.CONTAINS)
+    )
+
+    columns, has_column_edges, references = extract_flask_sqlalchemy_columns(graph)
+
+    by_name = {col.name: col for col in columns}
+    assert set(by_name) == {"id", "sku"}
+    assert by_name["id"].properties["type"] == "INTEGER"
+    assert by_name["id"].properties["primary_key"] is True
+    assert by_name["sku"].properties["type"] == "VARCHAR(64)"
+    assert by_name["sku"].properties["unique"] is True
+    assert by_name["sku"].properties["nullable"] is False
+
+    assert len(has_column_edges) == 2
+    assert all(e.kind == EdgeKind.HAS_COLUMN for e in has_column_edges)
+    table_fqn = "table::items"
+    assert all(e.source_fqn == table_fqn for e in has_column_edges)
+    assert references == []
+
+
+def test_extract_flask_sqlalchemy_columns_emits_foreignkey_reference():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+        extract_flask_sqlalchemy_columns,
+    )
+
+    graph = SymbolGraph()
+    item_cls = GraphNode(
+        fqn="app.models.Item",
+        name="Item",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(item_cls)
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=item_cls.fqn,
+            target_fqn="db.Model",
+            kind=EdgeKind.INHERITS,
+        )
+    )
+    graph.add_node(
+        GraphNode(
+            fqn=f"{item_cls.fqn}.__tablename__",
+            name="__tablename__",
+            kind=NodeKind.FIELD,
+            language="python",
+            properties={"value": '"items"'},
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=item_cls.fqn,
+            target_fqn=f"{item_cls.fqn}.__tablename__",
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+    fk_field = GraphNode(
+        fqn=f"{item_cls.fqn}.warehouse_id",
+        name="warehouse_id",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={
+            "value": (
+                "db.Column(db.Integer, "
+                'db.ForeignKey("warehouses.id", ondelete="CASCADE"), '
+                "nullable=False)"
+            )
+        },
+    )
+    graph.add_node(fk_field)
+    graph.add_edge(
+        GraphEdge(
+            source_fqn=item_cls.fqn,
+            target_fqn=fk_field.fqn,
+            kind=EdgeKind.CONTAINS,
+        )
+    )
+
+    _columns, _has, references = extract_flask_sqlalchemy_columns(graph)
+
+    assert len(references) == 1
+    ref = references[0]
+    assert ref.kind == EdgeKind.REFERENCES
+    assert ref.source_fqn == "column::items.warehouse_id"
+    assert ref.target_fqn == "column::warehouses.id"
