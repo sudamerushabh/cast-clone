@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.models.context import AnalysisContext
-from app.models.enums import Confidence, NodeKind
+from app.models.enums import Confidence, EdgeKind, NodeKind
 from app.models.graph import GraphNode
 
 
@@ -62,3 +64,54 @@ def test_detect_high_from_manifest_framework():
     )
     result = FlaskPlugin().detect(ctx)
     assert result.confidence == Confidence.HIGH
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_endpoint_from_app_route():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    handler = GraphNode(
+        fqn="app.wsgi.login",
+        name="login",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ['@app.route("/login", methods=["GET", "POST"])']},
+    )
+    ctx.graph.add_node(handler)
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert len(endpoints) == 2
+    methods = sorted(ep.properties["method"] for ep in endpoints)
+    assert methods == ["GET", "POST"]
+    paths = {ep.properties["path"] for ep in endpoints}
+    assert paths == {"/login"}
+
+    handles = [e for e in result.edges if e.kind == EdgeKind.HANDLES]
+    assert len(handles) == 2
+    assert all(e.source_fqn == handler.fqn for e in handles)
+
+
+@pytest.mark.asyncio
+async def test_extract_defaults_app_route_method_to_get():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.wsgi.home",
+            name="home",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={"annotations": ['@app.route("/")']},
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert len(endpoints) == 1
+    assert endpoints[0].properties["method"] == "GET"
+    assert endpoints[0].properties["path"] == "/"
