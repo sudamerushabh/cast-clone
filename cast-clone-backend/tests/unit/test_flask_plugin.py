@@ -689,3 +689,83 @@ async def test_extract_endpoints_for_methodview_registered_via_add_resource(tmp_
     paths = {(ep.properties["method"], ep.properties["path"]) for ep in endpoints}
     assert ("GET", "/users/<int:user_id>") in paths
     assert ("DELETE", "/users/<int:user_id>") in paths
+
+
+def test_extract_flask_sqlalchemy_tables_uses_tablename_field():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+        extract_flask_sqlalchemy_tables,
+    )
+
+    graph = SymbolGraph()
+    cls = GraphNode(
+        fqn="app.models.Warehouse",
+        name="Warehouse",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(cls)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="db.Model", kind=EdgeKind.INHERITS)
+    )
+    tablename = GraphNode(
+        fqn=f"{cls.fqn}.__tablename__",
+        name="__tablename__",
+        kind=NodeKind.FIELD,
+        language="python",
+        properties={"value": '"warehouses"'},
+    )
+    graph.add_node(tablename)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn=tablename.fqn, kind=EdgeKind.CONTAINS)
+    )
+
+    tables = extract_flask_sqlalchemy_tables(graph)
+
+    assert len(tables) == 1
+    table_node, class_fqn = tables[0]
+    assert table_node.kind == NodeKind.TABLE
+    assert table_node.name == "warehouses"
+    assert class_fqn == cls.fqn
+
+
+def test_extract_flask_sqlalchemy_tables_falls_back_to_snakecased_class_name():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+        extract_flask_sqlalchemy_tables,
+    )
+
+    graph = SymbolGraph()
+    cls = GraphNode(
+        fqn="app.models.PriceTier",
+        name="PriceTier",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(cls)
+    graph.add_edge(
+        GraphEdge(source_fqn=cls.fqn, target_fqn="db.Model", kind=EdgeKind.INHERITS)
+    )
+
+    tables = extract_flask_sqlalchemy_tables(graph)
+
+    assert len(tables) == 1
+    assert tables[0][0].name == "price_tier"
+
+
+def test_extract_flask_sqlalchemy_tables_skips_non_model_classes():
+    from app.models.graph import SymbolGraph
+    from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+        extract_flask_sqlalchemy_tables,
+    )
+
+    graph = SymbolGraph()
+    cls = GraphNode(
+        fqn="app.services.TodoService",
+        name="TodoService",
+        kind=NodeKind.CLASS,
+        language="python",
+    )
+    graph.add_node(cls)
+
+    assert extract_flask_sqlalchemy_tables(graph) == []

@@ -24,6 +24,9 @@ from app.stages.plugins.flask_plugin.restful import (
     enumerate_resource_methods,
     resolve_restful_bindings,
 )
+from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
+    extract_flask_sqlalchemy_tables,
+)
 
 logger = structlog.get_logger()
 
@@ -186,6 +189,10 @@ class FlaskPlugin(FrameworkPlugin):
         edges.extend(rest_edges)
         entry_points.extend(rest_entries)
         warnings.extend(rest_warnings)
+
+        for table_node, class_fqn in extract_flask_sqlalchemy_tables(graph):
+            nodes.append(table_node)
+            layer_assignments[class_fqn] = "Data Access"
 
         log.info(
             "flask_extract_complete",
