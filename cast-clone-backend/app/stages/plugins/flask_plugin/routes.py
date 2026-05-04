@@ -32,7 +32,8 @@ from app.stages.plugins.flask_plugin.sqlalchemy_adapter import (
 logger = structlog.get_logger()
 
 # @<var>.route("/path", methods=["GET", "POST"])
-_ROUTE_DECORATOR_RE = re.compile(r"^@(\w+)\.route\(\s*[\"']([^\"']*)[\"']")
+# Tolerant of @ prefix because PythonExtractor strips it from annotations.
+_ROUTE_DECORATOR_RE = re.compile(r"^@?(\w+)\.route\(\s*[\"']([^\"']*)[\"']")
 _METHODS_KWARG_RE = re.compile(r"methods\s*=\s*\[([^\]]*)\]")
 _METHOD_STRING_RE = re.compile(r"[\"']([A-Za-z]+)[\"']")
 _ADD_URL_RULE_RE = re.compile(
