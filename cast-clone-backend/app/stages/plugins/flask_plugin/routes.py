@@ -126,13 +126,13 @@ class FlaskPlugin(FrameworkPlugin):
                 if not match:
                     continue
                 var_name, path = match.group(1), match.group(2)
-                if var_name not in APP_ROUTE_VARS:
-                    continue
+                blueprint = None if var_name in APP_ROUTE_VARS else var_name
                 for method in _parse_methods(deco):
                     endpoint, edge, entry = _make_endpoint(
                         path=path,
                         method=method,
                         handler_fqn=func.fqn,
+                        blueprint=blueprint,
                     )
                     nodes.append(endpoint)
                     edges.append(edge)

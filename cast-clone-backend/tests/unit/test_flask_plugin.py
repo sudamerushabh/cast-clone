@@ -141,3 +141,55 @@ async def test_extract_normalizes_lowercase_methods():
     assert methods == ["GET", "POST"], (
         "lowercase methods=['get','post'] must produce two upper-cased endpoints"
     )
+
+
+@pytest.mark.asyncio
+async def test_extract_emits_endpoint_from_blueprint_route():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    handler = GraphNode(
+        fqn="app.blueprints.items.list_items",
+        name="list_items",
+        kind=NodeKind.FUNCTION,
+        language="python",
+        properties={"annotations": ['@items_bp.route("", methods=["GET"])']},
+    )
+    ctx.graph.add_node(handler)
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert len(endpoints) == 1
+    ep = endpoints[0]
+    assert ep.properties["method"] == "GET"
+    assert ep.properties["path"] == ""
+    assert ep.properties["blueprint"] == "items_bp"
+
+
+@pytest.mark.asyncio
+async def test_extract_blueprint_route_with_path_converter():
+    from app.stages.plugins.flask_plugin.routes import FlaskPlugin
+
+    ctx = _ctx()
+    ctx.graph.add_node(
+        GraphNode(
+            fqn="app.blueprints.items.adjust_quantity",
+            name="adjust_quantity",
+            kind=NodeKind.FUNCTION,
+            language="python",
+            properties={
+                "annotations": [
+                    '@items_bp.route("/<int:item_id>/adjust", methods=["POST"])'
+                ],
+            },
+        )
+    )
+
+    result = await FlaskPlugin().extract(ctx)
+
+    endpoints = [n for n in result.nodes if n.kind == NodeKind.API_ENDPOINT]
+    assert len(endpoints) == 1
+    assert endpoints[0].properties["path"] == "/<int:item_id>/adjust"
+    assert endpoints[0].properties["method"] == "POST"
+    assert endpoints[0].properties["blueprint"] == "items_bp"
