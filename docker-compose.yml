@@ -70,6 +70,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "0.0.0.0:8000:8000"
+    env_file:
+      - .env.license
     environment:
       DATABASE_URL: "postgresql+asyncpg://codelens:codelens@postgres:5432/codelens"
       NEO4J_URI: "bolt://neo4j:7687"
@@ -85,6 +87,7 @@ services:
       LOG_LEVEL: "info"
     volumes:
       - /home/ubuntu/repos:/home/ubuntu/repos
+      - license_data:/var/lib/changesafe
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,3 +148,4 @@ volumes:
   neo4j_data:
   redis_data:
   minio_data:
+  license_data:
