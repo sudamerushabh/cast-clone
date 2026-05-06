@@ -7,3 +7,7 @@ docs
 .ruff_cache
 .mypy_cache
 .pytest_cache
+# macOS AppleDouble files — Linux GNU tar synthesises these from PAX-encoded xattrs in
+# tarballs produced on macOS, and they contain null bytes that crash Python loaders.
+._*
+.DS_Store

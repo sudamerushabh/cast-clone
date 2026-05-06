@@ -11,6 +11,11 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# NEXT_PUBLIC_* env vars are baked into the client bundle at build time, not runtime.
+# Default empty so production builds (behind Caddy reverse proxy) use relative URLs;
+# dev workflows can still override on the host (npm run dev reads .env.local).
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
 # Production image

@@ -1,3 +1,6 @@
 node_modules
 .next
 .env.local
+# macOS AppleDouble files — Linux tar synthesises these from xattr-bearing macOS tarballs.
+._*
+.DS_Store

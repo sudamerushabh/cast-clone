@@ -1,0 +1,53 @@
+# ============================================================
+#   Cast-Clone — Customer Deployment tfvars
+# ============================================================
+#
+# Copy this file to terraform.tfvars and edit values below.
+#
+# Then:
+#   cd cast-clone-deployment/tiers/tier1-starter
+#   terraform init
+#   terraform apply
+
+# ----- Identity -----
+
+aws_region  = "us-east-1"
+name_prefix = "castclone-prod"
+environment = "prod"
+
+# ----- Sizing -----
+# See CUSTOMER-DEPLOYMENT-GUIDE.md for the sizing matrix.
+instance_type       = "m6i.xlarge"
+data_volume_size_gb = 100
+
+# ----- Container images (DO NOT change unless told otherwise) -----
+# This is our private ECR. Your AWS account has been granted read access.
+image_registry = "317440775524.dkr.ecr.us-east-1.amazonaws.com/cast-clone"
+image_tag      = "v0.0.4-frontfix"
+
+# ----- Network exposure -----
+# IMPORTANT: tighten this to your corporate CIDR for private deployments.
+# Default 0.0.0.0/0 means publicly reachable on the internet (still HTTPS-encrypted,
+# but anyone can attempt to authenticate).
+allow_https_from_cidrs = ["0.0.0.0/0"]
+
+# Empty list = SSM Session Manager only (recommended; no SSH key needed).
+allow_ssh_from_cidrs = []
+# key_name           = "my-ec2-keypair"   # required only if allow_ssh_from_cidrs is non-empty
+
+# ----- AI provider -----
+# Default: AWS Bedrock (Anthropic Claude models, billed via your AWS account).
+# Alternatives: 'anthropic' (requires anthropic_api_key) or 'openai' (requires openai_api_key).
+ai_provider = "bedrock"
+
+# anthropic_api_key = "sk-ant-..."
+# openai_api_key    = "sk-..."
+
+# ----- License -----
+# Leave blank to start in 14-day trial mode (clock begins at first boot).
+# After purchase, paste the JWT we emailed you here, OR update the secret post-deploy
+# via `aws secretsmanager put-secret-value`. See deployment guide for details.
+# license_jwt = "eyJhbGciOiJSUzI1NiIs..."
+
+# ----- Backups -----
+backup_retention_days = 7

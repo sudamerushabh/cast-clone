@@ -1,0 +1,26 @@
+{
+	auto_https off
+}
+
+:443 {
+	tls /certs/server.crt /certs/server.key
+
+	encode gzip
+
+	@websocket {
+		path /ws/* /api/v1/ws/*
+	}
+	reverse_proxy @websocket backend:8000
+
+	@api {
+		path /api/* /docs /openapi.json
+	}
+	reverse_proxy @api backend:8000
+
+	@mcp {
+		path /mcp/*
+	}
+	reverse_proxy @mcp mcp:8090
+
+	reverse_proxy * frontend:3000
+}

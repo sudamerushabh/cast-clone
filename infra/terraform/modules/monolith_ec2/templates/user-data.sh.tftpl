@@ -1,0 +1,164 @@
+#!/bin/bash
+# Cast-Clone T1 monolith bootstrap. Runs once per instance lifetime via cloud-init.
+set -euxo pipefail
+exec > >(tee /var/log/cast-clone-bootstrap.log | logger -t cast-clone -s 2>/dev/console) 2>&1
+
+REGION="${region}"
+DATA_DIR=/var/lib/cast-clone
+APP_DIR=/opt/cast-clone
+
+# 1. Packages
+dnf install -y docker jq
+systemctl enable --now docker
+usermod -aG docker ec2-user || true
+
+# Docker Compose v2 plugin (AL2023 ships docker but not the compose plugin).
+DOCKER_CFG_DIR=/usr/local/lib/docker/cli-plugins
+mkdir -p "$DOCKER_CFG_DIR"
+curl -fsSL https://github.com/docker/compose/releases/download/v2.30.3/docker-compose-linux-x86_64 \
+  -o "$DOCKER_CFG_DIR/docker-compose"
+chmod +x "$DOCKER_CFG_DIR/docker-compose"
+
+# 2. Locate + format + mount the EBS data volume.
+# Race-tolerant: Terraform attaches the data volume slightly after instance launch,
+# so cloud-init may run before the device appears. Poll up to 120s.
+# Note: bare $1 and $2 in awk are NOT Terraform-substituted (Terraform only
+# interpolates dollar-sign-open-brace sequences).
+DATA_DEV=""
+for attempt in $(seq 1 60); do
+  DATA_DEV=$(lsblk -ndpo NAME,TYPE | awk '$2 == "disk" && $1 != "/dev/nvme0n1" && $1 != "/dev/xvda" {print $1; exit}')
+  [ -n "$DATA_DEV" ] && break
+  echo "Waiting for EBS data volume (attempt $attempt/60)..."
+  sleep 2
+done
+
+if [ -z "$DATA_DEV" ]; then
+  echo "FATAL: could not locate EBS data volume after 120s" >&2
+  exit 1
+fi
+echo "Data volume detected: $DATA_DEV"
+
+mkdir -p "$DATA_DIR"
+if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
+  mkfs.xfs "$DATA_DEV"
+fi
+DATA_UUID=$(blkid -s UUID -o value "$DATA_DEV")
+if ! grep -q "$DATA_UUID" /etc/fstab; then
+  echo "UUID=$DATA_UUID $DATA_DIR xfs defaults,nofail 0 2" >> /etc/fstab
+fi
+mount -a
+
+mkdir -p "$DATA_DIR"/{postgres,neo4j,redis,minio,archives,backups,license}
+mkdir -p "$APP_DIR"/certs
+
+# 3. Self-signed TLS cert (10-year validity). Subject Alt Name covers the public IP.
+if [ ! -f "$APP_DIR/certs/server.crt" ]; then
+  TOKEN=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+  PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || echo "127.0.0.1")
+  openssl req -x509 -nodes -newkey rsa:4096 -days 3650 \
+    -keyout "$APP_DIR/certs/server.key" \
+    -out    "$APP_DIR/certs/server.crt" \
+    -subj   "/CN=$PUBLIC_IP/O=Cast-Clone/C=US" \
+    -addext "subjectAltName=IP:$PUBLIC_IP,DNS:cast-clone.local"
+  chmod 600 "$APP_DIR/certs/server.key"
+fi
+
+# 4. Fetch secrets from AWS Secrets Manager.
+fetch_secret() {
+  local arn="$1"
+  if [ -z "$arn" ] || [ "$arn" = "null" ]; then
+    echo ""
+    return 0
+  fi
+  aws secretsmanager get-secret-value --region "$REGION" --secret-id "$arn" --query SecretString --output text
+}
+
+PG_PASSWORD=$(fetch_secret "${pg_password_secret_arn}")
+NEO4J_PASSWORD=$(fetch_secret "${neo4j_password_secret_arn}")
+LICENSE_JWT=$(fetch_secret "${license_jwt_secret_arn}")
+ANTHROPIC_API_KEY=$(fetch_secret "${anthropic_api_key_secret_arn}")
+OPENAI_API_KEY=$(fetch_secret "${openai_api_key_secret_arn}")
+
+# 5. Trial license bootstrap — record first-boot timestamp so the 14-day clock starts on
+# this instance, not at AMI bake time. Persisted on the data volume so it survives instance
+# replacement (tier roots use 'ignore_changes = [user_data]' so reapply doesn't overwrite).
+LICENSE_STATE="$DATA_DIR/license-state.json"
+LICENSE_FILE="$DATA_DIR/license/license.jwt"
+if [ ! -f "$LICENSE_STATE" ]; then
+  if [ "$LICENSE_JWT" = "TRIAL_PLACEHOLDER" ]; then
+    LICENSE_SOURCE=trial
+  else
+    LICENSE_SOURCE=production
+  fi
+  printf '{"first_boot_at":"%s","license_source":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LICENSE_SOURCE" > "$LICENSE_STATE"
+fi
+
+# 5a. Optional: seed the license file from Secrets Manager IF an operator has set a real
+# JWT there (advanced flow). Default flow is customer uploads via the web UI at /settings/license,
+# which writes to the same file path via the persistent license volume bind-mount.
+if [ -n "$LICENSE_JWT" ] && [ "$LICENSE_JWT" != "TRIAL_PLACEHOLDER" ] && [ ! -f "$LICENSE_FILE" ]; then
+  echo "$LICENSE_JWT" > "$LICENSE_FILE"
+  chmod 600 "$LICENSE_FILE"
+  echo "License file seeded from Secrets Manager at $LICENSE_FILE"
+fi
+
+# 6. Write the runtime env file (read by docker-compose at compose-up time).
+# Note: LICENSE_JWT is intentionally NOT exported — the app reads license from
+# LICENSE_FILE_PATH on the persistent volume, not from environment.
+umask 077
+cat > "$APP_DIR/.env" <<ENV_EOF
+POSTGRES_PASSWORD=$PG_PASSWORD
+NEO4J_PASSWORD=$NEO4J_PASSWORD
+AI_PROVIDER=${ai_provider}
+AWS_REGION=${bedrock_region}
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+OPENAI_API_KEY=$OPENAI_API_KEY
+ENV_EOF
+umask 022
+
+# 7. Write docker-compose.yml + Caddyfile (rendered by Terraform's templatefile()).
+# Quoted heredoc: bash will not re-expand any '$' inside.
+cat > "$APP_DIR/docker-compose.yml" <<'COMPOSE_EOF'
+${docker_compose}
+COMPOSE_EOF
+
+cat > "$APP_DIR/Caddyfile" <<'CADDY_EOF'
+${caddyfile}
+CADDY_EOF
+
+# 8. ECR login (best-effort: only fires when the registry hostname matches the ECR pattern).
+if echo "${image_registry}" | grep -qE '\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com'; then
+  ECR_REGION=$(echo "${image_registry}" | sed -nE 's|.*\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com.*|\1|p')
+  ECR_HOST=$(echo "${image_registry}" | cut -d/ -f1)
+  aws ecr get-login-password --region "$ECR_REGION" | \
+    docker login --username AWS --password-stdin "$ECR_HOST" || true
+fi
+
+# 9. Pull and start. Pull is best-effort because Marketplace AMIs ship pre-pulled images.
+cd "$APP_DIR"
+docker compose pull || true
+docker compose up -d
+
+# 10. Persist as a systemd service so containers restart on reboot.
+cat > /etc/systemd/system/cast-clone.service <<'UNIT_EOF'
+[Unit]
+Description=Cast-Clone monolith
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cast-clone
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+systemctl daemon-reload
+systemctl enable cast-clone.service
+
+echo "Cast-Clone T1 bootstrap complete."

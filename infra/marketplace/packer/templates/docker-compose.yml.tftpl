@@ -1,0 +1,167 @@
+# Cast-Clone T1 docker-compose.
+#
+# DUPLICATION NOTE: a near-identical copy lives at
+#   infra/terraform/modules/monolith_ec2/templates/docker-compose.yml.tftpl
+# Difference: this Packer copy treats AI_PROVIDER and AWS_REGION as runtime env-substitutions
+# (compose reads them from /opt/cast-clone/.env), while the Terraform copy substitutes them at
+# apply time. Keep the service definitions identical between the two; only the env-var rendering
+# strategy differs.
+
+# Project name 'changesafe' becomes the container/network prefix:
+#   docker ps  →  changesafe-backend-1, changesafe-frontend-1, etc.
+name: changesafe
+
+networks:
+  changesafe:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/postgres
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/neo4j
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/redis
+  minio_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/minio
+  archives:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/archives
+  # License JWT lives on the host so it persists across container restarts/recreations.
+  # Customers upload via the UI (POST /api/v1/license/upload) — the file lands here.
+  license:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/cast-clone/license
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    networks: [changesafe]
+    environment:
+      POSTGRES_USER: castclone
+      POSTGRES_PASSWORD: $${POSTGRES_PASSWORD}
+      POSTGRES_DB: castclone
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U castclone"]
+      interval: 10s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    networks: [changesafe]
+    environment:
+      NEO4J_AUTH: neo4j/$${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+      NEO4J_dbms_memory_heap_initial__size: 2G
+      NEO4J_dbms_memory_heap_max__size: 4G
+      NEO4J_dbms_memory_pagecache_size: 4G
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:7474/ || exit 1"]
+      interval: 15s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [changesafe]
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    networks: [changesafe]
+    environment:
+      MINIO_ROOT_USER: castclone
+      MINIO_ROOT_PASSWORD: $${POSTGRES_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    image: ${image_registry}/${backend_image_name}:${image_tag}
+    restart: unless-stopped
+    networks: [changesafe]
+    depends_on:
+      postgres: { condition: service_healthy }
+      neo4j:    { condition: service_healthy }
+      redis:    { condition: service_started }
+      minio:    { condition: service_started }
+    environment:
+      DATABASE_URL: postgresql+asyncpg://castclone:$${POSTGRES_PASSWORD}@postgres:5432/castclone
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: $${NEO4J_PASSWORD}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: castclone
+      S3_SECRET_KEY: $${POSTGRES_PASSWORD}
+      # License path is a file on the persistent license volume — survives container
+      # restarts and image upgrades. Customer uploads via the web UI (drag/drop .jwt).
+      LICENSE_FILE_PATH: /var/lib/changesafe/license/license.jwt
+      AI_PROVIDER: $${AI_PROVIDER}
+      AWS_REGION: $${AWS_REGION}
+      ANTHROPIC_API_KEY: $${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: $${OPENAI_API_KEY}
+    volumes:
+      - archives:/var/lib/cast-clone/archives
+      - license:/var/lib/changesafe/license
+
+  frontend:
+    image: ${image_registry}/${frontend_image_name}:${image_tag}
+    restart: unless-stopped
+    networks: [changesafe]
+    depends_on: [backend]
+    environment:
+      NEXT_PUBLIC_API_URL: /api
+
+  mcp:
+    image: ${image_registry}/${mcp_image_name}:${image_tag}
+    restart: unless-stopped
+    networks: [changesafe]
+    depends_on: [backend]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://castclone:$${POSTGRES_PASSWORD}@postgres:5432/castclone
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: $${NEO4J_PASSWORD}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    networks: [changesafe]
+    depends_on: [backend, frontend, mcp]
+    ports:
+      - "443:443"
+    volumes:
+      - /opt/cast-clone/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/cast-clone/certs:/certs:ro

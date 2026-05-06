@@ -1,0 +1,44 @@
+# ----- Identity -----
+aws_region  = "us-east-1"
+name_prefix = "castclone-t1"
+environment = "prod"
+
+# ----- Sizing -----
+# Recommended pairings:
+#   <100k LOC : m6i.large       /  50 GB
+#   <  1M LOC : m6i.xlarge      / 100 GB   (default)
+#   <  5M LOC : m6i.2xlarge     / 250 GB
+#   < 10M LOC : r6i.4xlarge     / 1000 GB  (consider T2 instead)
+instance_type       = "m6i.xlarge"
+data_volume_size_gb = 100
+
+# ----- Container images -----
+# Replace with your registry. For Marketplace builds Packer pre-pulls these into the AMI.
+# For direct Terraform installs, ensure either (a) images are public or (b) the EC2 instance
+# role has cross-account ECR pull permissions on this registry.
+image_registry = "<your-account-id>.dkr.ecr.us-east-1.amazonaws.com/cast-clone"
+image_tag      = "v0.1.0"
+
+# ----- Network exposure -----
+# Tighten allow_https_from_cidrs to your corporate CIDR for private deployments.
+allow_https_from_cidrs = ["0.0.0.0/0"]
+
+# Empty = SSM Session Manager only (recommended). Add CIDRs and set key_name to enable SSH.
+allow_ssh_from_cidrs = []
+# key_name           = "my-keypair"
+
+# ----- AI -----
+ai_provider = "bedrock"
+
+# Optional BYO keys (overrides Bedrock at runtime if ai_provider is anthropic/openai).
+# anthropic_api_key = "sk-ant-..."
+# openai_api_key    = "sk-..."
+
+# ----- License -----
+# Leave commented to start in trial mode (14 days from first boot).
+# After purchase, paste the production JWT below and re-apply, OR update the
+# Secrets Manager value out-of-band and 'systemctl restart cast-clone' on the instance.
+# license_jwt = "eyJhbGciOiJSUzI1NiIs..."
+
+# ----- Backups -----
+backup_retention_days = 7

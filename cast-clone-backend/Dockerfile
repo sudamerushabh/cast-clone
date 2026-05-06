@@ -59,5 +59,7 @@ COPY app/ app/
 
 EXPOSE 8000
 
-# Run migrations then start the server
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Bootstrap or migrate the schema (idempotent), then start the server.
+# db_init handles both fresh installs (create_all + stamp head) and rolling upgrades
+# (alembic upgrade head). See app/db_init.py for the strategy.
+CMD ["sh", "-c", "uv run python -m app.db_init && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
